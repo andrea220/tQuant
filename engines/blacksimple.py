@@ -30,7 +30,7 @@ class BlackScholesPricing(EuropeanOptionPricing):
         dist = tfp.distributions.Normal(0,1)
         call_option_price = self.spot_price * dist.cdf(d1) - self.option.strike_price * tf.exp(-self.risk_free_rate * self.option.maturity) * dist.cdf(d2)
 
-        return call_option_price if self.option.option_type == "Call" else call_option_price - (self.spot_price - self.option.strike_price)
+        return call_option_price if self.option.option_type == "Call" else call_option_price - (self.spot_price - self.option.strike_price)*tf.exp(-self.risk_free_rate * self.option.maturity)
 
     def calculate_aad(self):
         with tf.GradientTape() as tape:
