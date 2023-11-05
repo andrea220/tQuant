@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 import tensorflow as tf
 import tensorflow_probability as tfp
-from instruments.EuropeanOptions import *
+from instruments.simpleeuropeanoption import *
 
 
 class EuropeanOptionPricing(ABC):
