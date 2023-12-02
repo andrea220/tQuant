@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 from interface.coupon import *
 from index.curverateindex import * 
 from utilities.time import Settings
-
+ 
 class FloatingCoupon(Coupon):
     ''' 
     Concrete Floating Coupon object. 
