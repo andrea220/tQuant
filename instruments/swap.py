@@ -6,7 +6,7 @@ class SwapDirection:
     PAYER = 1
     RCEIVER = -1
 
-class Swap:
+class SwapFixedFloating:
     def __init__(self, 
                 float_schedule: Schedule,
                 fix_schedule: Schedule,
@@ -15,14 +15,12 @@ class Swap:
                 gearings: list[float],
                 spreads: list[float],
                 index: CurveRateIndex,
-                fix_coupons,
-                side: SwapDirection
+                fix_coupons
                 ) -> None:
         self.floating_leg = FloatingRateLeg(float_schedule, float_notionals, gearings, spreads, index)
         self.fixed_leg = FixedRateLeg(fix_schedule, fix_notionals, fix_coupons)
-        self.side = side
 
     def price(self, discount_curve, evaluation_date: datetime):
-        return self.side * (self.floating_leg.npv(discount_curve, evaluation_date) - self.fixed_leg.npv(discount_curve, evaluation_date) )   
+        return self.floating_leg.npv(discount_curve, evaluation_date) + self.fixed_leg.npv(discount_curve, evaluation_date)   
         
     
