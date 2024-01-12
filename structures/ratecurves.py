@@ -62,4 +62,10 @@ class DiscountCurveSimple:
         compound = 1.0 / self.discount(term)
         return InterestRate.impliedRate(compound, Compounding.Simple, Frequency.Annual, term).rate
     
+    def inst_fwd(self, t: float):
+        # time-step needed for differentiation
+        dt = 0.01    
+        expr = - (tf.math.log(self.discount(t+dt))- tf.math.log(self.discount(t-dt)))/(2*dt)
+        return expr
+    
 
