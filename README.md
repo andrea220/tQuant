@@ -27,6 +27,8 @@ TensorQuant is a *work in progress* Python financial library, it leverages on Te
 - [ ] Add SimpleCrossAsset simulation kernel
 - [ ] Fine tuning of "simple" objects and documentation.
 - [ ] Create intermediate examples
+    - [ ] portfolio pricing 
+    - [ ] portfolio xva cross-asset simulation
 - [ ] Include convexity adjustments for interest rate indices
 - [ ] Add curve bootstrapping
     - [ ] curve instrument helpers
