@@ -16,9 +16,26 @@ class Schedule:
 class Calendar:
     def __init__(self):
         pass
-   
+
+
+class TimeUnit(Enum):
+    Days = "Days"
+    Weeks = "Weeks"
+    Months = "Months"
+    Years = "Years"
+
+    def __str__(self):
+        return self.value
+
+
 class BusinessDayConvention(Enum):
-    Following = 0
+    Following = "Following"
+    ModifiedFollowing = "Modified Following"
+    HalfMonthModifiedFollowing = "Half-Month Modified Following"
+    Preceding = "Preceding"
+    ModifiedPreceding = "Modified Preceding"
+    Unadjusted = "Unadjusted"
+    Nearest = "Nearest"
 
-
-    
+    def __str__(self):
+        return self.value
