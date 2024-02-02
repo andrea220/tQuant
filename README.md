@@ -19,7 +19,7 @@ TensorQuant is a *work in progress* Python financial library, it leverages on Te
 
 <!-- ROADMAP -->
 ## Roadmap
-
+### 2024
 - [x] Add simple fixed leg handles (01/2024)
 - [x] Add simple index and floating leg handles (01/2024)
 - [x] Add calendar class (02/2024)
@@ -36,7 +36,9 @@ TensorQuant is a *work in progress* Python financial library, it leverages on Te
 - [ ] Add curve bootstrapping
     - [ ] curve instrument helpers
     - [ ] market/zero rates Jacobian
-- [ ] xVA simulation kernel
+### 2025
+- [ ] CrossAsset-xVA simulation kernel
+- [ ] Risk Engine setup
 
 
 
