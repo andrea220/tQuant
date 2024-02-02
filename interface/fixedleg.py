@@ -34,6 +34,49 @@ class FixedCoupon(Coupon):
     def day_counter(self):
         return self._day_counter
     
+    def display(self, 
+                disc_curve,
+                evaluation_date):
+        Settings.evaluation_date = evaluation_date
+
+        if not self.has_occurred(evaluation_date):
+            dt = self.date - evaluation_date
+            dt_year_fraction = dt.days/365
+            disc_factor = (disc_curve.discount(dt_year_fraction)).numpy()
+            amount = self.amount
+            coupon_npv = amount * disc_factor
+            is_expired = False
+        else:
+            coupon_npv = 0
+            disc_factor = 0
+            amount = 0
+            is_expired = True
+
+        coupon_display = pd.DataFrame([self.ref_period_start,
+                                        self.ref_period_end,
+                                        self.date,
+                                        self._nominal,
+                                        self.accrual_period,
+                                        self._day_counter,
+                                        amount,
+                                        disc_factor,
+                                        coupon_npv,
+                                        is_expired
+                                        ]).T
+
+        coupon_display.columns = ['start_period',
+                                'end_period',
+                                'payment_date',
+                                'notional',
+                                'accrual',
+                                'day_counter',
+                                'amount',
+                                'discount_factor',
+                                'coupon_pv',
+                                'is_expired'
+                                ]
+        return coupon_display
+    
     @property
     def amount(self)-> float:
         ''' 
@@ -45,6 +88,10 @@ class FixedCoupon(Coupon):
                                                                  self.ref_period_end
                                                                  ) - 1)
         return self._amount
+    
+    @property
+    def accrual_period(self):
+        return (self.accrual_end_date - self.accrual_start_date).days / 365
     
     @property
     def accruedAmount(self, d: datetime):
@@ -124,21 +171,16 @@ class FixedRateLeg:
                             )
         return leg
     
-    def display_flows(self):
+    def display_flows(self,
+                      disc_curve,
+                      evaluation_date):
         flows = self.leg_flows()
-        period_start_date = []
-        period_end_date = []
+        leg_display = pd.DataFrame()
         for i in range(len(flows)):
-            period_start_date.append(self.schedule[i])
-            period_end_date.append(self.schedule[i+1])
-        amounts = [flows[t].amount for t in range(len(flows))]
-        leg_overview = {}
-        leg_overview['period_start_date'] = period_start_date
-        leg_overview['period_end_date'] = period_end_date
-        leg_overview['notional'] = self.notionals
-        leg_overview['coupon_rate'] = self._rates
-        leg_overview['amounts'] = amounts
-        return pd.DataFrame(leg_overview)
+            coupon_flow = flows[i].display(disc_curve,
+                                           evaluation_date)
+            leg_display = pd.concat([leg_display, coupon_flow], axis = 0)
+        return leg_display
 
     def npv(self, discount_curve, evaluation_date: datetime):
         ''' 

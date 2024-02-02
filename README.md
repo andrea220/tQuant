@@ -20,20 +20,23 @@ TensorQuant is a *work in progress* Python financial library, it leverages on Te
 <!-- ROADMAP -->
 ## Roadmap
 
-- [x] Add simple fixed leg handles
-- [x] Add simple index and floating leg handles
-- [ ] Add calendars and daycounting
-- [ ] Include other ir indices
-- [ ] Add SimpleCrossAsset simulation kernel
+- [x] Add simple fixed leg handles (01/2024)
+- [x] Add simple index and floating leg handles (01/2024)
+- [x] Add calendar class (02/2024)
+- [ ] Add daycounting class
+- [ ] Include ir indices ("Simple" version available with no calendar/daycounting)
+- [ ] Create market data handles
+- [ ] Create portfolio data handles
+- [ ] Produce first pricing examples
+    - [ ] swap portfolio pricing 
+    - [ ] swap AAD zero-sensitivity
+    - [ ] Validation and fine tuning vs QuantLib 
 - [ ] Fine tuning of "simple" objects and documentation.
-- [ ] Create intermediate examples
-    - [ ] portfolio pricing 
-    - [ ] portfolio xva cross-asset simulation
 - [ ] Include convexity adjustments for interest rate indices
 - [ ] Add curve bootstrapping
     - [ ] curve instrument helpers
     - [ ] market/zero rates Jacobian
-
+- [ ] xVA simulation kernel
 
 
 

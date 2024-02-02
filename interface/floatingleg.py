@@ -245,8 +245,8 @@ class FloatingCoupon(Coupon):
             dt = self.date - evaluation_date
             dt_year_fraction = dt.days/365
             disc_factor = (disc_curve.discount(dt_year_fraction)).numpy()
-            coupon_npv = self.amount(term_structure) * disc_factor
             amount = self.amount(term_structure)
+            coupon_npv = amount * disc_factor
             fixing = self.index.fixing(self.fixing_date,
                                         term_structure)
             is_expired = False
