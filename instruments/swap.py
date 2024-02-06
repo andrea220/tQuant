@@ -27,7 +27,7 @@ class SwapDirection:
         
     
 
-class SwapFixedFloating_dev(Trade):
+class SwapFixedFloating(Trade):
     def __init__(self, 
                 float_schedule: Schedule,
                 fix_schedule: Schedule,

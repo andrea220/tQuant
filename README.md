@@ -1,6 +1,6 @@
-# TensorQuant
+# tQuant
 
-TensorQuant is a *work in progress* Python financial library, it leverages on Tensor arrays for dealing with intensive risk management computations and algorithmic differentiation. 
+tQuant is a *work in progress* Python financial library, it leverages on Tensor arrays for dealing with intensive risk management computations and algorithmic differentiation. 
 
 
 ## Dependencies
@@ -22,6 +22,7 @@ TensorQuant is a *work in progress* Python financial library, it leverages on Te
 ### 2024
 - [x] Add simple fixed leg handles (01/2024)
 - [x] Add simple index and floating leg handles (01/2024)
+- [x] Add Swap Instrument (02/2024)
 - [x] Add calendar class (02/2024)
 - [ ] Add daycounting class
 - [ ] Include ir indices ("Simple" version available with no calendar/daycounting)
