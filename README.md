@@ -6,6 +6,7 @@ tQuant is a *work in progress* Python financial library, it leverages on Tensor 
 ## Dependencies
 
 - TensorFlow
+- Pandas
 
 ## Examples
 
@@ -25,26 +26,27 @@ tQuant is a *work in progress* Python financial library, it leverages on Tensor 
 - [x] Add Swap Instrument (02/2024)
 - [x] Add calendar class (02/2024)
 - [ ] Add daycounting class
-- [ ] Include ir indices ("Simple" version available with no calendar/daycounting)
-- [ ] Create market data handles
-- [ ] Create portfolio data handles
+- [x] Include ibor indices (9/02/2024)
+- [x] Create market data handles (10/02/2024)
+- [x] Create portfolio data handles (10/02/2024)
+- [ ] Add curve bootstrapping
+    - [ ] curve instrument helpers
+    - [ ] market/zero rates Jacobian
+- [ ] Architecture design (pricing engines, data, indices)
 - [ ] Intermediate pricing examples
     - [ ] swap portfolio pricing 
     - [ ] swap AAD zero-sensitivity
     - [ ] Validation and fine tuning vs QuantLib 
 - [ ] Fine tuning of "simple" objects and documentation.
+- [ ] Include cds template for pricing
+- [ ] Include inflation swap an zc inflation prices
 - [ ] Include convexity adjustments for interest rate indices
 - [ ] Include pricing engines for all vanilla products
-- [ ] Add curve bootstrapping
-    - [ ] curve instrument helpers
-    - [ ] market/zero rates Jacobian
 - [ ] Final pricing examples
     - [ ] portfolio pricing 
     - [ ] AAD zero-sensitivity
     - [ ] Validation and fine tuning vs QuantLib / Production
-### 2025
-- [ ] CrossAsset-xVA simulation kernel
-- [ ] Risk Engine setup
+
 
 
 
