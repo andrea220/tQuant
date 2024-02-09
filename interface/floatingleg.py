@@ -147,7 +147,7 @@ class FloatingCoupon(Coupon):
         
 class FloatingRateLeg:
     def __init__(self,
-                 schedule: Schedule,
+                 schedule: list[date],
                  notionals: list[float],
                  gearings: list[float],
                  spreads: list[float],
