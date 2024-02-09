@@ -29,8 +29,8 @@ class SwapDirection:
 
 class SwapFixedFloating(Trade):
     def __init__(self, 
-                float_schedule: Schedule,
-                fix_schedule: Schedule,
+                float_schedule: list[date],
+                fix_schedule: list[date],
                 float_notionals: list[float],
                 fix_notionals: list[float],
                 gearings: list[float],
@@ -42,7 +42,7 @@ class SwapFixedFloating(Trade):
         self.floating_leg = FloatingRateLeg(float_schedule, float_notionals, gearings, spreads, index)
         self.fixed_leg = FixedRateLeg(fix_schedule, fix_notionals, fix_coupons)
 
-    def price(self, discount_curve, term_structure, evaluation_date: datetime):
+    def price(self, discount_curve, term_structure, evaluation_date: date):
         return self.floating_leg.npv(discount_curve,
                                      term_structure,
                                      evaluation_date) + self.fixed_leg.npv(discount_curve, 
