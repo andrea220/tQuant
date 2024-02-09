@@ -49,7 +49,7 @@ class IborIndex(Index_dev):
     def __init__(self,
                  name: str,
                  fixing_calendar: Calendar,
-                 tenor,
+                 tenor: int,
                  fixing_days = None,
                  time_series: dict = None) -> None:
         super().__init__(name,
@@ -70,7 +70,12 @@ class IborIndex(Index_dev):
         Settings.evaluation_date = self.term_structure.pillars[0] # da aggiungere date alle curve e settare prima data della curva come evaluation_date 
 
     def _fixing_maturity(self, fixing_date):
-        return fixing_date + timedelta(182) # da implementare calendar.advance
+        return self.fixing_calendar.advance(fixing_date,
+                                            self._tenor, 
+                                            TimeUnit.Months,
+                                            BusinessDayConvention.ModifiedFollowing 
+                                            )
+        # return fixing_date + timedelta(182) # da implementare calendar.advance
 
     def forecast_fixing(self,
                         fixing_date: date,
@@ -86,3 +91,5 @@ class IborIndex(Index_dev):
         df1 = term_structure.discount((d1- Settings.evaluation_date).days / 365).numpy() # il daycounter yearfraction va sviluppato 
         df2 = term_structure.discount((d2 - Settings.evaluation_date).days / 365).numpy() # il daycounter yearfraction va sviluppato 
         return (df1 / df2 -1) / t
+    
+
