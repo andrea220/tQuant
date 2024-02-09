@@ -9,13 +9,6 @@ class DayCounter:
     def __init__(self, name):
         self.name = name
 
-class Schedule:
-    def __init__(self):
-        pass
-
-class Calendar:
-    def __init__(self):
-        pass
 
 
 class TimeUnit(Enum):
