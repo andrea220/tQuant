@@ -1,0 +1,75 @@
+[
+  {
+    "type": "deposit",
+    "name": "depo",
+    "ccy": "EUR",
+    "start_delay": 2,
+    "roll_convention": "ModifiedFollowing",
+    "day_count_convention": "Actual360",
+    "notional": 1.0
+  },
+  {
+    "type": "fra",
+    "name": "fra-6M",
+    "ccy": "EUR",
+    "start_delay": 2,
+    "fixing_days": 2,
+    "index_term": "6M",
+    "roll_convention": "ModifiedFollowing",
+    "notional": 1.0,
+    "day_count_convention": "Actual360",
+    "index_day_count_convention": "Actual360"
+  },
+  {
+    "type": "ois",
+    "name": "ois-6M-1Y",
+    "ccy": "EUR",
+    "start_delay": 2,
+    "fixing_days": 2,
+    "period_fix": "1Y",
+    "period_float": "6M",
+    "roll_convention": "ModifiedFollowing",
+    "notional": 1.0,
+    "day_count_convention_fix": "Actual360",
+    "day_count_convention_flt": "Actual360"
+  },
+   {
+     "type": "swap",
+     "name": "swap-6M-1Y",
+     "ccy": "EUR",
+     "start_delay": 2,
+     "period_fix": "1Y",
+     "period_float": "6M",
+     "roll_convention": "ModifiedFollowing",
+     "notional": 1.0,
+     "margin": 0.0,
+     "day_count_fix": "Actual360",
+     "day_count_float": "Actual360",
+     "day_count_index": "Actual360",
+     "fixing_days": 2
+  },
+     {
+       "type": "basis_swap",
+       "name": "basis_swap-6M-1Y",
+       "ccy": "EUR",
+       "start_delay": 2,
+       "fixing_days": 2,
+       "period_leg_1": "1Y",
+       "period_leg_2": "6M",
+       "roll_convention": "ModifiedFollowing",
+       "notional": 1.0,
+       "day_count_leg_1": "Actual360",
+       "day_count_leg_2": "Actual360",
+       "index_day_count_leg_1": "Actual360",
+       "index_day_count_leg_2": "Actual360"
+  },
+  {
+    "type": "future",
+    "name": "fut-JUN-24",
+    "ccy": "EUR",
+    "notional": 1.0,
+    "period": "6M",
+    "day_count_convention": "Actual360",
+    "roll_convention": "ModifiedFollowing"
+  }
+]
