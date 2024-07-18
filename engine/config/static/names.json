@@ -1,5 +1,0 @@
-{
-    "config.sessionFile": "engine/config/session.json",
-    "config.indexMapping": "engine/config/static/curveindex.json"
-    
-}
