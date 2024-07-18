@@ -47,7 +47,7 @@ pip install .
 
 Here you can find basic examples of how to use `tQuant`:
 
-- **`black_scholes.ipynb`**: Monte Carlo performances vs QuantLib.
+- [**`black_scholes.ipynb`**](https://github.com/andrea220/tQuant/blob/main/examples/10_swap_pricers.ipynb): Monte Carlo performances vs QuantLib.
 - **`legs.ipynb`**: Pricing of single fixed and floating legs.
 - **`simple_shortrate.ipynb`**: A simplified version of Tensor-Monte Carlo simulation for the Hull and White model.
 - **`swap_exposure.ipynb`**: **Under Construction** - Tensor-pricing of multiple fixed and floating legs.
