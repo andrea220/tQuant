@@ -10,7 +10,7 @@
 - [Introduction](#introduction)
 - [Features](#features)
 - [Installation](#installation)
-- [Usage](#🛠️usage)
+- [Usage](#usage)
 - [Contributing](#contributing)
 - [License](#license)
 - [Contact](#contact)
@@ -43,7 +43,7 @@ cd tQuant
 pip install .
 ``` -->
 
-## 🛠️Usage
+## Usage
 
 Here you can find basic examples of how to use `tQuant`:
 
@@ -55,7 +55,7 @@ Here you can find basic examples of how to use `tQuant`:
 
 For more detailed usage and examples, please refer to the [documentation](https://github.com/yourusername/tQuant/wiki).
 
-## 🛤️ Contributing
+## Contributing
 
 <!-- We welcome contributions to `tQuant`! If you're interested in contributing, please read our [contributing guidelines](CONTRIBUTING.md) to get started. -->
 TBD 
