@@ -43,7 +43,7 @@ cd tQuant
 pip install .
 ``` -->
 
-## 🛠️ Usage
+## 🛠️Usage
 
 Here you can find basic examples of how to use `tQuant`:
 
