@@ -47,13 +47,12 @@ pip install .
 
 Here you can find basic examples of how to use `tQuant`:
 
-- [**`1_time_handles`**](https://github.com/andrea220/tQuant/blob/main/examples/10_swap_pricers.ipynb): Monte Carlo performances vs QuantLib.
-- **`legs.ipynb`**: Pricing of single fixed and floating legs.
-- **`simple_shortrate.ipynb`**: A simplified version of Tensor-Monte Carlo simulation for the Hull and White model.
-- **`swap_exposure.ipynb`**: **Under Construction** - Tensor-pricing of multiple fixed and floating legs.
+- [**`time handles`**](https://github.com/andrea220/tQuant/blob/main/examples/1_time_handles.ipynb): how to use time handles.
+- [**`index`**](https://github.com/andrea220/tQuant/blob/main/examples/2_index.ipynb): how to create index objects.
+- [**`market data`**](https://github.com/andrea220/tQuant/blob/main/examples/3_market_data.ipynb): how to handle market data.
 
 
-For more detailed usage and examples, please refer to the [documentation](https://github.com/yourusername/tQuant/wiki).
+<!-- For more detailed usage and examples, please refer to the [documentation](https://github.com/yourusername/tQuant/wiki). -->
 
 ## Contributing
 
