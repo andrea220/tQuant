@@ -28,8 +28,8 @@
 - **Performance**: Optimized for high-performance computations.
 
 ## Installation
-
-To install `tQuant`, simply use pip:
+TBD
+<!-- To install `tQuant`, simply use pip:
 
 ```bash
 pip install tQuant
@@ -41,7 +41,7 @@ Or, if you prefer, clone the repository and install manually:
 git clone https://github.com/yourusername/tQuant.git
 cd tQuant
 pip install .
-```
+``` -->
 
 ## 🛠️ Usage
 
@@ -57,7 +57,8 @@ For more detailed usage and examples, please refer to the [documentation](https:
 
 ## 🛤️ Contributing
 
-We welcome contributions to `tQuant`! If you're interested in contributing, please read our [contributing guidelines](CONTRIBUTING.md) to get started.
+<!-- We welcome contributions to `tQuant`! If you're interested in contributing, please read our [contributing guidelines](CONTRIBUTING.md) to get started. -->
+TBD 
 
 ## License
 
@@ -67,7 +68,7 @@ We welcome contributions to `tQuant`! If you're interested in contributing, plea
 
 For any questions or suggestions, feel free to reach out:
 
-- **Email**: [yourname@example.com](mailto:yourname@example.com)
-- **GitHub Issues**: [tQuant Issues](https://github.com/yourusername/tQuant/issues)
+- **Email**: [carapelliandrea@gmail.com](mailto:carapelliandrea@gmail.com)
+<!-- - **GitHub Issues**: [tQuant Issues](https://github.com/yourusername/tQuant/issues) -->
 
 We hope `tQuant` proves to be a valuable tool in your financial analysis and risk management tasks. Happy computing!
