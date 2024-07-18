@@ -1,0 +1,506 @@
+[
+  {
+    "objectType": "TRADE",
+    "ref": "0-100591652",
+    "productType": "EuropeanVanillaOption",
+    "data": {
+      "book": "FXD",
+      "productType": "EuropeanVanillaOption",
+      "tradeRef": "0-100591652",
+      "currency": "USD",
+      "cpty": "INFORLIFE_SA",
+      "effectiveDate": "2023-11-10",
+      "notional": 892857.14,
+      "nettingSet": "3394522_NS_1_38094060",
+      "dealRef": "0-100591652",
+      "secCurrency": "EUR",
+      "hasBreakClause": false,
+      "isBreakClauseMandatory": false,
+      "bookingCenter": "IMI",
+      "isBuy": true,
+      "isCollateralTrade": false,
+      "OptionOnIndex.componentType": "OptionOnIndex",
+      "OptionOnIndex.productTypeComponent": "EuropeanVanillaOption.OptionOnIndex",
+      "OptionOnIndex.index": "EURUSD-SPOT",
+      "OptionOnIndex.convention": "FX.EURUSD.OPTION",
+      "OptionOnIndex.isActive": true,
+      "OptionOnIndex.isApplicable": true,
+      "OptionOnIndex.schedule.isCustom": false,
+      "OptionOnIndex.schedule.fixingDate": "2024-10-31",
+      "OptionOnIndex.schedule.startDate": "2024-10-31",
+      "OptionOnIndex.schedule.endDate": "2024-11-04",
+      "OptionOnIndex.schedule.payDate": "2024-11-04",
+      "OptionOnIndex.schedule.scheduleType": "fxOptionSinglePeriod",
+      "OptionOnIndex.strike": 1.12,
+      "OptionOnIndex.observationType": "European",
+      "OptionOnIndex.optionType": "Call",
+      "underlying": {
+        "rows": [
+          {
+            "name": "USD",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EUR",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EURUSD-SPOT",
+            "type": "FX",
+            "fieldType": "Index"
+          }
+        ]
+      },
+      "derived.bookType": "Default",
+      "derived.isOtc": true,
+      "derived.productTypeDispName": "EuropeanVanillaOption",
+      "derived.productTypeCategory": "FXOption",
+      "derived.assetClass": "FX",
+      "derived.cptyGroup": "INFORLIFE_SA GR",
+      "derived.cptyParty": "INFORLIFE_SA"
+    }
+  },
+  {
+    "objectType": "TRADE",
+    "ref": "0-103813634",
+    "productType": "EuropeanVanillaOption",
+    "data": {
+      "book": "FXD",
+      "productType": "EuropeanVanillaOption",
+      "tradeRef": "0-103813634",
+      "currency": "USD",
+      "cpty": "INFORLIFE_SA",
+      "effectiveDate": "2024-04-16",
+      "notional": 465116.28,
+      "nettingSet": "3394522_NS_1_40450596",
+      "dealRef": "0-103813634",
+      "secCurrency": "EUR",
+      "hasBreakClause": false,
+      "isBreakClauseMandatory": false,
+      "bookingCenter": "IMI",
+      "isBuy": true,
+      "isCollateralTrade": false,
+      "OptionOnIndex.componentType": "OptionOnIndex",
+      "OptionOnIndex.productTypeComponent": "EuropeanVanillaOption.OptionOnIndex",
+      "OptionOnIndex.index": "EURUSD-SPOT",
+      "OptionOnIndex.convention": "FX.EURUSD.OPTION",
+      "OptionOnIndex.isActive": true,
+      "OptionOnIndex.isApplicable": true,
+      "OptionOnIndex.schedule.isCustom": false,
+      "OptionOnIndex.schedule.fixingDate": "2025-08-27",
+      "OptionOnIndex.schedule.startDate": "2025-08-27",
+      "OptionOnIndex.schedule.endDate": "2025-08-29",
+      "OptionOnIndex.schedule.payDate": "2025-08-29",
+      "OptionOnIndex.schedule.scheduleType": "fxOptionSinglePeriod",
+      "OptionOnIndex.strike": 1.075,
+      "OptionOnIndex.observationType": "European",
+      "OptionOnIndex.optionType": "Call",
+      "underlying": {
+        "rows": [
+          {
+            "name": "USD",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EUR",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EURUSD-SPOT",
+            "type": "FX",
+            "fieldType": "Index"
+          }
+        ]
+      },
+      "derived.bookType": "Default",
+      "derived.isOtc": true,
+      "derived.productTypeDispName": "EuropeanVanillaOption",
+      "derived.productTypeCategory": "FXOption",
+      "derived.assetClass": "FX",
+      "derived.cptyGroup": "INFORLIFE_SA GR",
+      "derived.cptyParty": "INFORLIFE_SA"
+    }
+  },
+  {
+    "objectType": "TRADE",
+    "ref": "0-99606131",
+    "productType": "EuropeanVanillaOption",
+    "data": {
+      "book": "FXD",
+      "productType": "EuropeanVanillaOption",
+      "tradeRef": "0-99606131",
+      "currency": "CHF",
+      "cpty": "INFORLIFE_SA",
+      "effectiveDate": "2023-08-21",
+      "notional": 875000.0,
+      "nettingSet": "3394522_NS_1_37097404",
+      "dealRef": "0-99606131",
+      "secCurrency": "EUR",
+      "hasBreakClause": false,
+      "isBreakClauseMandatory": false,
+      "bookingCenter": "IMI",
+      "isBuy": true,
+      "isCollateralTrade": false,
+      "OptionOnIndex.componentType": "OptionOnIndex",
+      "OptionOnIndex.productTypeComponent": "EuropeanVanillaOption.OptionOnIndex",
+      "OptionOnIndex.index": "EURCHF-SPOT",
+      "OptionOnIndex.convention": "FX.EURCHF.OPTION",
+      "OptionOnIndex.isActive": true,
+      "OptionOnIndex.isApplicable": true,
+      "OptionOnIndex.schedule.isCustom": false,
+      "OptionOnIndex.schedule.fixingDate": "2024-07-30",
+      "OptionOnIndex.schedule.startDate": "2024-07-30",
+      "OptionOnIndex.schedule.endDate": "2024-08-02",
+      "OptionOnIndex.schedule.payDate": "2024-08-02",
+      "OptionOnIndex.schedule.scheduleType": "fxOptionSinglePeriod",
+      "OptionOnIndex.strike": 0.95,
+      "OptionOnIndex.observationType": "European",
+      "OptionOnIndex.optionType": "Call",
+      "underlying": {
+        "rows": [
+          {
+            "name": "CHF",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EUR",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EURCHF-SPOT",
+            "type": "FX",
+            "fieldType": "Index"
+          }
+        ]
+      },
+      "derived.bookType": "Default",
+      "derived.isOtc": true,
+      "derived.productTypeDispName": "EuropeanVanillaOption",
+      "derived.productTypeCategory": "FXOption",
+      "derived.assetClass": "FX",
+      "derived.cptyGroup": "INFORLIFE_SA GR",
+      "derived.cptyParty": "INFORLIFE_SA"
+    }
+  },
+  {
+    "objectType": "TRADE",
+    "ref": "0-103543787",
+    "productType": "EuropeanVanillaOption",
+    "data": {
+      "book": "FXD",
+      "productType": "EuropeanVanillaOption",
+      "tradeRef": "0-103543787",
+      "currency": "USD",
+      "cpty": "INFORLIFE_SA",
+      "effectiveDate": "2024-04-02",
+      "notional": 458715.6,
+      "nettingSet": "3394522_NS_1_40178383",
+      "dealRef": "0-103543787",
+      "secCurrency": "EUR",
+      "hasBreakClause": false,
+      "isBreakClauseMandatory": false,
+      "bookingCenter": "IMI",
+      "isBuy": true,
+      "isCollateralTrade": false,
+      "OptionOnIndex.componentType": "OptionOnIndex",
+      "OptionOnIndex.productTypeComponent": "EuropeanVanillaOption.OptionOnIndex",
+      "OptionOnIndex.index": "EURUSD-SPOT",
+      "OptionOnIndex.convention": "FX.EURUSD.OPTION",
+      "OptionOnIndex.isActive": true,
+      "OptionOnIndex.isApplicable": true,
+      "OptionOnIndex.schedule.isCustom": false,
+      "OptionOnIndex.schedule.fixingDate": "2025-07-25",
+      "OptionOnIndex.schedule.startDate": "2025-07-25",
+      "OptionOnIndex.schedule.endDate": "2025-07-29",
+      "OptionOnIndex.schedule.payDate": "2025-07-29",
+      "OptionOnIndex.schedule.scheduleType": "fxOptionSinglePeriod",
+      "OptionOnIndex.strike": 1.09,
+      "OptionOnIndex.observationType": "European",
+      "OptionOnIndex.optionType": "Call",
+      "underlying": {
+        "rows": [
+          {
+            "name": "USD",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EUR",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EURUSD-SPOT",
+            "type": "FX",
+            "fieldType": "Index"
+          }
+        ]
+      },
+      "derived.bookType": "Default",
+      "derived.isOtc": true,
+      "derived.productTypeDispName": "EuropeanVanillaOption",
+      "derived.productTypeCategory": "FXOption",
+      "derived.assetClass": "FX",
+      "derived.cptyGroup": "INFORLIFE_SA GR",
+      "derived.cptyParty": "INFORLIFE_SA"
+    }
+  },
+  {
+    "objectType": "TRADE",
+    "ref": "0-103813644",
+    "productType": "EuropeanVanillaOption",
+    "data": {
+      "book": "FXD",
+      "productType": "EuropeanVanillaOption",
+      "tradeRef": "0-103813644",
+      "currency": "USD",
+      "cpty": "INFORLIFE_SA",
+      "effectiveDate": "2024-04-16",
+      "notional": 465116.28,
+      "nettingSet": "3394522_NS_1_40450607",
+      "dealRef": "0-103813644",
+      "secCurrency": "EUR",
+      "hasBreakClause": false,
+      "isBreakClauseMandatory": false,
+      "bookingCenter": "IMI",
+      "isBuy": true,
+      "isCollateralTrade": false,
+      "OptionOnIndex.componentType": "OptionOnIndex",
+      "OptionOnIndex.productTypeComponent": "EuropeanVanillaOption.OptionOnIndex",
+      "OptionOnIndex.index": "EURUSD-SPOT",
+      "OptionOnIndex.convention": "FX.EURUSD.OPTION",
+      "OptionOnIndex.isActive": true,
+      "OptionOnIndex.isApplicable": true,
+      "OptionOnIndex.schedule.isCustom": false,
+      "OptionOnIndex.schedule.fixingDate": "2025-09-26",
+      "OptionOnIndex.schedule.startDate": "2025-09-26",
+      "OptionOnIndex.schedule.endDate": "2025-09-30",
+      "OptionOnIndex.schedule.payDate": "2025-09-30",
+      "OptionOnIndex.schedule.scheduleType": "fxOptionSinglePeriod",
+      "OptionOnIndex.strike": 1.075,
+      "OptionOnIndex.observationType": "European",
+      "OptionOnIndex.optionType": "Call",
+      "underlying": {
+        "rows": [
+          {
+            "name": "USD",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EUR",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EURUSD-SPOT",
+            "type": "FX",
+            "fieldType": "Index"
+          }
+        ]
+      },
+      "derived.bookType": "Default",
+      "derived.isOtc": true,
+      "derived.productTypeDispName": "EuropeanVanillaOption",
+      "derived.productTypeCategory": "FXOption",
+      "derived.assetClass": "FX",
+      "derived.cptyGroup": "INFORLIFE_SA GR",
+      "derived.cptyParty": "INFORLIFE_SA"
+    }
+  },
+  {
+    "objectType": "TRADE",
+    "ref": "0-101158281",
+    "productType": "EuropeanVanillaOption",
+    "data": {
+      "book": "FXD",
+      "productType": "EuropeanVanillaOption",
+      "tradeRef": "0-101158281",
+      "currency": "CHF",
+      "cpty": "INFORLIFE_SA",
+      "effectiveDate": "2023-12-27",
+      "notional": 850000.0,
+      "nettingSet": "3394522_NS_1_38668880",
+      "dealRef": "0-101158281",
+      "secCurrency": "EUR",
+      "hasBreakClause": false,
+      "isBreakClauseMandatory": false,
+      "bookingCenter": "IMI",
+      "isBuy": true,
+      "isCollateralTrade": false,
+      "OptionOnIndex.componentType": "OptionOnIndex",
+      "OptionOnIndex.productTypeComponent": "EuropeanVanillaOption.OptionOnIndex",
+      "OptionOnIndex.index": "EURCHF-SPOT",
+      "OptionOnIndex.convention": "FX.EURCHF.OPTION",
+      "OptionOnIndex.isActive": true,
+      "OptionOnIndex.isApplicable": true,
+      "OptionOnIndex.schedule.isCustom": false,
+      "OptionOnIndex.schedule.fixingDate": "2024-10-31",
+      "OptionOnIndex.schedule.startDate": "2024-10-31",
+      "OptionOnIndex.schedule.endDate": "2024-11-04",
+      "OptionOnIndex.schedule.payDate": "2024-11-04",
+      "OptionOnIndex.schedule.scheduleType": "fxOptionSinglePeriod",
+      "OptionOnIndex.strike": 0.952,
+      "OptionOnIndex.observationType": "European",
+      "OptionOnIndex.optionType": "Call",
+      "underlying": {
+        "rows": [
+          {
+            "name": "CHF",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EUR",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EURCHF-SPOT",
+            "type": "FX",
+            "fieldType": "Index"
+          }
+        ]
+      },
+      "derived.bookType": "Default",
+      "derived.isOtc": true,
+      "derived.productTypeDispName": "EuropeanVanillaOption",
+      "derived.productTypeCategory": "FXOption",
+      "derived.assetClass": "FX",
+      "derived.cptyGroup": "INFORLIFE_SA GR",
+      "derived.cptyParty": "INFORLIFE_SA"
+    }
+  },
+  {
+    "objectType": "TRADE",
+    "ref": "0-103543128",
+    "productType": "EuropeanVanillaOption",
+    "data": {
+      "book": "FXD",
+      "productType": "EuropeanVanillaOption",
+      "tradeRef": "0-103543128",
+      "currency": "CHF",
+      "cpty": "INFORLIFE_SA",
+      "effectiveDate": "2024-04-02",
+      "notional": 450000.0,
+      "nettingSet": "3394522_NS_1_40177709",
+      "dealRef": "0-103543128",
+      "secCurrency": "EUR",
+      "hasBreakClause": false,
+      "isBreakClauseMandatory": false,
+      "bookingCenter": "IMI",
+      "isBuy": true,
+      "isCollateralTrade": false,
+      "OptionOnIndex.componentType": "OptionOnIndex",
+      "OptionOnIndex.productTypeComponent": "EuropeanVanillaOption.OptionOnIndex",
+      "OptionOnIndex.index": "EURCHF-SPOT",
+      "OptionOnIndex.convention": "FX.EURCHF.OPTION",
+      "OptionOnIndex.isActive": true,
+      "OptionOnIndex.isApplicable": true,
+      "OptionOnIndex.schedule.isCustom": false,
+      "OptionOnIndex.schedule.fixingDate": "2025-11-26",
+      "OptionOnIndex.schedule.startDate": "2025-11-26",
+      "OptionOnIndex.schedule.endDate": "2025-11-28",
+      "OptionOnIndex.schedule.payDate": "2025-11-28",
+      "OptionOnIndex.schedule.scheduleType": "fxOptionSinglePeriod",
+      "OptionOnIndex.strike": 0.981,
+      "OptionOnIndex.observationType": "European",
+      "OptionOnIndex.optionType": "Call",
+      "underlying": {
+        "rows": [
+          {
+            "name": "CHF",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EUR",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EURCHF-SPOT",
+            "type": "FX",
+            "fieldType": "Index"
+          }
+        ]
+      },
+      "derived.bookType": "Default",
+      "derived.isOtc": true,
+      "derived.productTypeDispName": "EuropeanVanillaOption",
+      "derived.productTypeCategory": "FXOption",
+      "derived.assetClass": "FX",
+      "derived.cptyGroup": "INFORLIFE_SA GR",
+      "derived.cptyParty": "INFORLIFE_SA"
+    }
+  },
+  {
+    "objectType": "TRADE",
+    "ref": "0-99606133",
+    "productType": "EuropeanVanillaOption",
+    "data": {
+      "book": "FXD",
+      "productType": "EuropeanVanillaOption",
+      "tradeRef": "0-99606133",
+      "currency": "CHF",
+      "cpty": "INFORLIFE_SA",
+      "effectiveDate": "2023-08-21",
+      "notional": 875000.0,
+      "nettingSet": "3394522_NS_1_37097407",
+      "dealRef": "0-99606133",
+      "secCurrency": "EUR",
+      "hasBreakClause": false,
+      "isBreakClauseMandatory": false,
+      "bookingCenter": "IMI",
+      "isBuy": true,
+      "isCollateralTrade": false,
+      "OptionOnIndex.componentType": "OptionOnIndex",
+      "OptionOnIndex.productTypeComponent": "EuropeanVanillaOption.OptionOnIndex",
+      "OptionOnIndex.index": "EURCHF-SPOT",
+      "OptionOnIndex.convention": "FX.EURCHF.OPTION",
+      "OptionOnIndex.isActive": true,
+      "OptionOnIndex.isApplicable": true,
+      "OptionOnIndex.schedule.isCustom": false,
+      "OptionOnIndex.schedule.fixingDate": "2024-08-30",
+      "OptionOnIndex.schedule.startDate": "2024-08-30",
+      "OptionOnIndex.schedule.endDate": "2024-09-03",
+      "OptionOnIndex.schedule.payDate": "2024-09-03",
+      "OptionOnIndex.schedule.scheduleType": "fxOptionSinglePeriod",
+      "OptionOnIndex.strike": 0.95,
+      "OptionOnIndex.observationType": "European",
+      "OptionOnIndex.optionType": "Call",
+      "underlying": {
+        "rows": [
+          {
+            "name": "CHF",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EUR",
+            "type": "Currency",
+            "fieldType": "Currency"
+          },
+          {
+            "name": "EURCHF-SPOT",
+            "type": "FX",
+            "fieldType": "Index"
+          }
+        ]
+      },
+      "derived.bookType": "Default",
+      "derived.isOtc": true,
+      "derived.productTypeDispName": "EuropeanVanillaOption",
+      "derived.productTypeCategory": "FXOption",
+      "derived.assetClass": "FX",
+      "derived.cptyGroup": "INFORLIFE_SA GR",
+      "derived.cptyParty": "INFORLIFE_SA"
+    }
+  }
+]

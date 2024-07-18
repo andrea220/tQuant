@@ -1,4 +1,6 @@
-from tquant.utilities import TimeUnit, Settings, TARGET, BusinessDayConvention
+from tquant.timehandles.utils import TimeUnit, Settings, BusinessDayConvention
+from tquant.timehandles.targetcalendar import TARGET
+
 from engine.globalconfig import GlobalConfig
 import pandas as pd
 from datetime import date, datetime
