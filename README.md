@@ -3,7 +3,7 @@
 
 ![tQuant Logo](https://img.shields.io/badge/tQuant-v0.1.0-blue.svg) ![Python](https://img.shields.io/badge/python-v3.7+-blue.svg) ![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg) ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-**tQuant** is a *work-in-progress* Python financial library that leverages Tensor arrays for intensive risk management computations and algorithmic differentiation.
+**tQuant** is a Python financial library that leverages Tensor arrays for intensive risk management computations and algorithmic differentiation.
 
 ## Table of Contents
 
@@ -47,9 +47,9 @@ pip install .
 
 Here you can find basic examples of how to use `tQuant`:
 
-- [**`time handles`**](https://github.com/andrea220/tQuant/blob/main/examples/1_time_handles.ipynb): how to use time handles.
-- [**`index`**](https://github.com/andrea220/tQuant/blob/main/examples/2_index.ipynb): how to create index objects.
-- [**`market data`**](https://github.com/andrea220/tQuant/blob/main/examples/3_market_data.ipynb): how to handle market data.
+- [**`time handles`**](https://github.com/andrea220/tQuant/blob/main/examples/time_handles.ipynb): how to use time handles.
+- [**`index`**](https://github.com/andrea220/tQuant/blob/main/examples/index.ipynb): how to create index objects.
+- [**`market data`**](https://github.com/andrea220/tQuant/blob/main/examples/market_data.ipynb): how to handle market data.
 
 
 <!-- For more detailed usage and examples, please refer to the [documentation](https://github.com/yourusername/tQuant/wiki). -->
