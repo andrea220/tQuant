@@ -1,5 +1,5 @@
 from .fixedflow import *
-# from .floatingflow import *
+from .floatingflow import *
 # from .swapdiscounting import *
 # from .blackcapfloor import *
 # from .cdsdiscounting import *
