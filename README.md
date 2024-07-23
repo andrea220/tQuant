@@ -51,6 +51,7 @@ Here you can find basic examples of how to use `tQuant`:
 - [**`index`**](https://github.com/andrea220/tQuant/blob/main/examples/index.ipynb): how to create index objects.
 - [**`market data`**](https://github.com/andrea220/tQuant/blob/main/examples/market_data.ipynb): how to handle market data.
 - [**`coupons`**](https://github.com/andrea220/tQuant/blob/main/examples/coupons.ipynb): how to handle fixed/floating coupons and legs.
+- [**`coupon pricer`**](https://github.com/andrea220/tQuant/blob/main/examples/coupons_pricer.ipynb): price and sensitivities of fixed/floating coupons and legs.
 
 
 <!-- For more detailed usage and examples, please refer to the [documentation](https://github.com/yourusername/tQuant/wiki). -->

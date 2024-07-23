@@ -3,7 +3,7 @@ from tensorflow.python.framework import dtypes
 import numpy as np
 
 from .interestrate import InterestRate
-from .interpolation import NaturalCubicSpline, LinearInterp
+from ..numericalhandles.interpolation import NaturalCubicSpline, LinearInterp
 from ..timehandles.utils import CompoundingType, Frequency
 
 
