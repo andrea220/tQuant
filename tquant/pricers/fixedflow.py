@@ -21,7 +21,7 @@ class FixedCouponDiscounting(Pricer):
         else:
             return 0
            
-    def price_aad(self, discount_curve: RateCurve, evaluation_date: date):
+    def price_aad(self, discount_curve: RateCurve, evaluation_date: date): #TODO non funziona
         with tf.GradientTape() as tape:
             npv = self.price(discount_curve, evaluation_date)
         return npv, tape
