@@ -47,13 +47,14 @@ pip install .
 
 Here you can find basic examples of how to use `tQuant`:
 
-- [**`time handles`**](https://github.com/andrea220/tQuant/blob/main/examples/time_handles.ipynb): how to use time handles.
-- [**`index`**](https://github.com/andrea220/tQuant/blob/main/examples/index.ipynb): how to create index objects.
-- [**`market data`**](https://github.com/andrea220/tQuant/blob/main/examples/market_data.ipynb): how to handle market data.
-- [**`coupons`**](https://github.com/andrea220/tQuant/blob/main/examples/coupons.ipynb): how to handle fixed/floating coupons and legs.
-- [**`coupon pricer`**](https://github.com/andrea220/tQuant/blob/main/examples/coupons_pricer.ipynb): price and sensitivities of fixed/floating coupons and legs.
-- [**`Forward Rate Agreement`**](https://github.com/andrea220/tQuant/blob/main/examples/fra.ipynb): price and sensitivities of Forward Rate Agreement.
-- [**`Interest Rate Swap`**](https://github.com/andrea220/tQuant/blob/main/examples/swap.ipynb): price and sensitivities of Forward Rate Agreement.
+- [**`Time handles`**](https://github.com/andrea220/tQuant/blob/main/examples/time_handles.ipynb): how to use time handles.
+- [**`Index`**](https://github.com/andrea220/tQuant/blob/main/examples/index.ipynb): how to create index objects.
+- [**`Market data`**](https://github.com/andrea220/tQuant/blob/main/examples/market_data.ipynb): how to handle market data.
+- [**`Coupons`**](https://github.com/andrea220/tQuant/blob/main/examples/coupons.ipynb): how to handle fixed/floating coupons and legs.
+- [**`Coupon pricer`**](https://github.com/andrea220/tQuant/blob/main/examples/coupons_pricer.ipynb): price and sensitivities of fixed/floating coupons and legs.
+- [**`Forward rate agreement`**](https://github.com/andrea220/tQuant/blob/main/examples/fra.ipynb): price and sensitivities of Forward Rate Agreement.
+- [**`Interest rate swaps`**](https://github.com/andrea220/tQuant/blob/main/examples/swap.ipynb): price and sensitivities of interest rate swaps.
+- [**`Credit default swaps`**](https://github.com/andrea220/tQuant/blob/main/examples/cds.ipynb): price and sensitivities of credit default swaps.
 
 
 <!-- For more detailed usage and examples, please refer to the [documentation](https://github.com/yourusername/tQuant/wiki). -->
