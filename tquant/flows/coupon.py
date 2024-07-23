@@ -4,7 +4,7 @@ from ..timehandles.daycounter import DayCounter
 from datetime import date
 
 class Coupon(CashFlow, ABC):
-# TODO rivedere struttura della classe
+
     @abstractmethod
     def __init__(self,
                  payment_date: date,

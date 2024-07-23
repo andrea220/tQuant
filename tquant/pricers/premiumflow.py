@@ -1,41 +1,37 @@
-"""
-Pricing di cash flow floating
-"""
 from .pricer import Pricer 
-from ..flows.floatingcoupon import FloatingCoupon, FloatingRateLeg
+from ..flows.premiumcoupon import PremiumCoupon
+from ..flows.premiumcoupon import PremiumLeg
 from ..markethandles.ircurve import RateCurve
-from ..timehandles.utils import Settings
+from ..markethandles.creditcurve import SurvivalProbabilityCurve
+
 from datetime import date
 import tensorflow as tf
 
 
 
-class FloatingCouponDiscounting(Pricer):
+class PremiumCouponDiscounting(Pricer):
 
     def __init__(self,
-                 coupon: FloatingCoupon,
+                 coupon: PremiumCoupon,
                  convexity_adjustment: bool) -> None:
         self._coupon = coupon
         self._convexity_adj = convexity_adjustment
 
-    def floating_rate(self, fixing_date, term_structure, evaluation_date):
+    def floating_rate(self, 
+                      d1, 
+                      term_structure: SurvivalProbabilityCurve,
+                      evaluation_date
+                      ):
         if self._convexity_adj:
-            raise ValueError("Convexity Adjustment da implementare") #TODO Convexity Adjustment
+            raise ValueError("Convexity Adjustment da implementare") #TODO
         else:
-            if fixing_date >= Settings.evaluation_date: # forecast
-                d2 = self._coupon.index.fixing_maturity(fixing_date)
-                return term_structure.forward_rate(fixing_date, d2, self._coupon.day_counter, evaluation_date) 
-            else: # historical
-                new_date = self._coupon.index.fixing_date(self._coupon.fixing_date)
-                return self._coupon.index.fixing(new_date)
-
-    def amount(self, term_structure, evaluation_date)-> float: 
-        ''' 
-        cash flow futuro non scontato
-        '''
-        a = self._coupon.nominal * (self._coupon._gearing*self.floating_rate(self._coupon.fixing_date,term_structure,evaluation_date) + self._coupon._spread) * self._coupon.accrual_period
-        return a
-
+            return term_structure.survival_probability(d1, self._coupon.day_counter, evaluation_date)
+    
+    def amount(self, term_structure: SurvivalProbabilityCurve, evaluation_date)-> float:
+        d1 = self._coupon.date
+        amount = self._coupon.nominal * self._coupon.spread * self.floating_rate(d1, term_structure, evaluation_date) * self._coupon.accrual_period
+        return amount
+    
     def price(self, discount_curve: RateCurve, estimation_curve, evaluation_date: date):
         if not self._coupon.has_occurred(evaluation_date):
             tau = self._coupon.day_counter.year_fraction(evaluation_date, self._coupon._payment_date)
@@ -49,10 +45,10 @@ class FloatingCouponDiscounting(Pricer):
         return npv, tape
 
 
-class FloatingLegDiscounting(Pricer):
+class PremiumLegDiscount(Pricer):
 
     def __init__(self,
-                 leg: FloatingRateLeg) -> None:
+                 leg: PremiumLeg) -> None:
         self._leg = leg
 
     def price(self, discount_curve, estimation_curve, evaluation_date: date, coupon_pricer: Pricer):

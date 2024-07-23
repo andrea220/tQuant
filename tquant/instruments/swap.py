@@ -6,7 +6,7 @@ from ..flows.floatingcoupon import FloatingRateLeg
 from ..timehandles.utils import DayCounterConvention
 from ..markethandles.utils import Currency
 
-#TODO Generalizzare a leg generiche - per ora le ho separate
+
 
 class InterestRateSwap(Trade):
     def __init__(self, 

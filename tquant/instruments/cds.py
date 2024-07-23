@@ -1,15 +1,15 @@
 from datetime import date
 from .trade import Trade
-from ..interface.index import Index
-from ..flows.premiumleg import PremiumLeg 
-from ..flows.defaultleg import DefaultLeg
-from ..utilities.utils import CompoundingType, SwapType, Frequency
-from ..utilities.daycounter import DayCounter
+from ..index.index import Index
+from ..flows.premiumcoupon import PremiumLeg 
+from ..flows.defaultcoupon import DefaultLeg
+from ..timehandles.utils import CompoundingType, Frequency
+from ..timehandles.daycounter import DayCounter
 
 
 class CreditDefaultSwap(Trade):
     def __init__(self,
-                swap_type: SwapType,
+                swap_type,
                 fixed_schedule,
                 fixed_notional,
                 fixed_spread,
@@ -57,7 +57,7 @@ class CreditDefaultSwap(Trade):
         
     @classmethod
     def from_legs(cls, 
-                  swap_type: SwapType, 
+                  swap_type, 
                   leg1: PremiumLeg, 
                   leg2: DefaultLeg):
 
