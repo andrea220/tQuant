@@ -47,9 +47,12 @@ pip install .
 
 Here you can find basic examples of how to use `tQuant`:
 
+### General Objects
 - [**`Time handles`**](https://github.com/andrea220/tQuant/blob/main/examples/time_handles.ipynb): how to use time handles.
 - [**`Index`**](https://github.com/andrea220/tQuant/blob/main/examples/index.ipynb): how to create index objects.
 - [**`Market data`**](https://github.com/andrea220/tQuant/blob/main/examples/market_data.ipynb): how to handle market data.
+
+### Interest Rate and Credit:
 - [**`Coupons`**](https://github.com/andrea220/tQuant/blob/main/examples/coupons.ipynb): how to handle fixed/floating coupons and legs.
 - [**`Coupon pricer`**](https://github.com/andrea220/tQuant/blob/main/examples/coupons_pricer.ipynb): price and sensitivities of fixed/floating coupons and legs.
 - [**`Forward rate agreement`**](https://github.com/andrea220/tQuant/blob/main/examples/fra.ipynb): price and sensitivities of Forward Rate Agreement.
