@@ -8,9 +8,56 @@ from ..timehandles.utils import CompoundingType, Frequency
 
 
 class RateCurve:
+    def __init__(self, pillars, rates):
+        self.pillars = pillars # list
+        self.rates = [tf.Variable(r, dtype=dtypes.float64) for r in rates]     # tensor list
+
+    def discount(self, term):
+        if term <= self.pillars[0]:
+            nrt = -term * self.rates[0]
+            df = tf.exp(nrt)
+            return df
+        if term >= self.pillars[-1]:
+            nrt = -term * self.rates[-1]
+            df = tf.exp(nrt)
+            return df
+        for i in range(0, len(self.pillars) - 1):
+            if term < self.pillars[i + 1]:
+                dtr = 1 / (self.pillars[i + 1] - self.pillars[i])
+                w1 = (self.pillars[i + 1] - term) * dtr
+                w2 = (term - self.pillars[i]) * dtr
+                r1 = w1 * self.rates[i]
+                r2 = w2 * self.rates[i + 1]
+                rm = r1 + r2
+                nrt = -term * rm
+                df = tf.exp(nrt)
+                return df
+    
+    def forward_rate(self,
+                     d1,
+                     d2,
+                     daycounter,
+                     evaluation_date):
+        ''' 
+        Calcola il tasso forward.
+        '''
+        tau = daycounter.year_fraction(d1, d2)
+        df1 = self.discount(daycounter.year_fraction(evaluation_date, d1))
+        df2 = self.discount(daycounter.year_fraction(evaluation_date, d2))
+        return (df1 / df2 - 1) / tau
+    
+    def inst_fwd(self, t: float):
+        # time-step needed for differentiation
+        dt = 0.01
+        expr = - (tf.math.log(self.discount(t + dt)) - tf.math.log(self.discount(t - dt))) / (2 * dt)
+        return expr
+
+
+
+class RateCurve2:
     def __init__(self, pillars, rates, interp="LINEAR"):
         ''' 
-        classe dummy per le curve
+        vecchia funzione di Andrea
         '''
         self.pillars = pillars  # list
         self.rates = [tf.Variable(r, dtype=dtypes.float64) for r in rates]  # tensor list
