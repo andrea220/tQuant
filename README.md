@@ -58,6 +58,8 @@ Here you can find basic examples of how to use `tQuant`:
 - [**`Forward rate agreement`**](https://github.com/andrea220/tQuant/blob/main/examples/fra.ipynb): price and sensitivities of Forward Rate Agreement.
 - [**`Interest rate swaps`**](https://github.com/andrea220/tQuant/blob/main/examples/swap.ipynb): price and sensitivities of interest rate swaps.
 - [**`Credit default swaps`**](https://github.com/andrea220/tQuant/blob/main/examples/cds.ipynb): price and sensitivities of credit default swaps.
+- [**`Hull and White model`**](https://github.com/andrea220/tQuant/blob/main/examples/hullwhite.ipynb): simulation of the Hull and White model.
+
 
 
 <!-- For more detailed usage and examples, please refer to the [documentation](https://github.com/yourusername/tQuant/wiki). -->
