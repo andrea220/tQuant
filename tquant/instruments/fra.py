@@ -1,12 +1,12 @@
 from datetime import date
-from .trade import Trade
+from .product import Product
 from ..index.index import Index
 from ..timehandles.tqcalendar import Calendar
 from ..timehandles.utils import DayCounterConvention
 from ..markethandles.utils import Position
 
 
-class ForwardRateAgreement(Trade):
+class ForwardRateAgreement(Product): #TODO da aggiustare
     def __init__(self, 
                 start_date: date,
                 maturity_date: date,
@@ -16,7 +16,7 @@ class ForwardRateAgreement(Trade):
                 index: Index,
                 day_counter: DayCounterConvention,
                 calendar: Calendar) -> None:
-        super().__init__()
+        super().__init__("currency", start_date, maturity_date)
         self._start_date = start_date
         self._maturity_date = maturity_date
         self._position = position
@@ -33,23 +33,3 @@ class ForwardRateAgreement(Trade):
     @property
     def fixing_date(self):
         return self._index.fixing_date(self.start_date)
-
-    # @property 
-    # def pricing_engine(self):
-    #     if self._pricing_engine is not None:
-    #         return self._pricing_engine
-    #     else:
-    #         raise ValueError("You must set a valid Pricing-Engine")
-        
-    # @pricing_engine.setter
-    # def pricing_engine(self, value: FraDiscountingEngine):
-    #     self._pricing_engine = value
-
-    # def price(self):
-    #     return self._pricing_engine.price()
-
-    # def price_aad(self):
-    #     return self._pricing_engine.price_aad()
-
-    # def implied_forward(self):
-    #     return self._pricing_engine.implied_rate()

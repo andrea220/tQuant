@@ -1,5 +1,5 @@
 from datetime import date
-from .trade import Trade
+from .product import Product
 from ..index.index import Index
 from ..flows.fixedcoupon import FixedRateLeg 
 from ..flows.floatingcoupon import FloatingRateLeg
@@ -8,7 +8,7 @@ from ..markethandles.utils import Currency
 
 
 
-class InterestRateSwap(Trade):
+class InterestRateSwap(Product): #TODO creare classe generica che gestisca tutte le gambe
     def __init__(self, 
                 float_schedule: list[date],
                 fix_schedule: list[date],
@@ -22,12 +22,12 @@ class InterestRateSwap(Trade):
                 floating_daycounter: DayCounterConvention,
                 currency: Currency = None
                 ) -> None:
-        super().__init__()
+        super().__init__(currency, "start_date", "end_date")
         self.fixed_leg = FixedRateLeg(fix_schedule, fix_notionals, fixed_coupons, fixed_daycounter)
         self.floating_leg = FloatingRateLeg(float_schedule, float_notionals, gearings, spreads, index, floating_daycounter)
-        self._currency = currency
 
-class InterestRateSwap2(Trade):
+
+class InterestRateSwap2(Product):
     def __init__(self, 
                 leg1,
                 leg2,

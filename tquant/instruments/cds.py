@@ -1,5 +1,5 @@
 from datetime import date
-from .trade import Trade
+from .product import Product
 from ..index.index import Index
 from ..flows.premiumcoupon import PremiumLeg 
 from ..flows.defaultcoupon import DefaultLeg
@@ -7,7 +7,7 @@ from ..timehandles.utils import CompoundingType, Frequency
 from ..timehandles.daycounter import DayCounter
 
 
-class CreditDefaultSwap(Trade):
+class CreditDefaultSwap(Product):
     def __init__(self,
                 swap_type,
                 fixed_schedule,

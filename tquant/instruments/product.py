@@ -1,15 +1,44 @@
 from abc import ABC, abstractmethod
+from ..markethandles.utils import Currency
+from datetime import date 
 
-class Trade(ABC):
+class Product(ABC):
     
     @abstractmethod
-    def __init__(self) -> None:
+    def __init__(self, 
+                 currency: Currency,
+                 start_date: date,
+                 end_date: date) -> None:
+        self._currency = currency
+        self._start_date = start_date
+        self._end_date = end_date
         self._trade_id = None
-        self._currency = None
         self._product_type = None
         self._counterparty = None
         self._netting_set = None
-    
+
+    @property
+    def currency(self):
+        if self._currency is not None:
+            return self._currency
+        else:
+            raise ValueError("Currency not assigned")
+
+    @property
+    def start_date(self):
+        if self._start_date is not None:
+            return self._start_date
+        else:
+            raise ValueError("Start date not assigned")
+        
+    @property
+    def end_date(self):
+        if self._end_date is not None:
+            return self._end_date
+        else:
+            raise ValueError("End date not assigned")
+
+        
     @property
     def trade_id(self):
         if self._trade_id is not None:
@@ -19,17 +48,7 @@ class Trade(ABC):
     @trade_id.setter
     def trade_id(self, value):
         self._trade_id = value
-        
-    @property
-    def currency(self):
-        if self._currency is not None:
-            return self._currency
-        else:
-            raise ValueError("Currency not assigned")
-    @currency.setter
-    def currency(self, value):
-        self._currency = value
-        
+
     @property
     def product_type(self):
         if self._product_type is not None:

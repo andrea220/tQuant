@@ -1,12 +1,12 @@
 # from datetime import date
-from .trade import Trade
+from .product import Product
 from ..flows.floatingcoupon import FloatingRateLeg
 # from ..index.index import Index
 # from ..timehandles.tqcalendar import Calendar
 # from ..utilities.utils import DayCounterConvention, Position
 
 
-class IrOption(Trade):
+class IrOption(Product):
     def __init__(self, 
                  leg: FloatingRateLeg,
                  strike: float
