@@ -52,6 +52,47 @@ class RateCurve:
         expr = - (tf.math.log(self.discount(t + dt)) - tf.math.log(self.discount(t - dt))) / (2 * dt)
         return expr
 
+class RateCurveTest:#TODO: testare ad greeks, aggiungere metodie testare per bootstrapping 
+    def __init__(self, pillars, rates, interp: str):
+        self.pillars = pillars # list
+        self.rates = [tf.Variable(r, dtype=dtypes.float64) for r in rates]     # tensor list
+        if interp == "LINEAR":
+            self.interp = LinearInterp(self.pillars, np.array(self.rates))
+        else:
+            raise ValueError("Wrong interpolation type")
+            
+    def discount(self, term):
+        if term <= self.pillars[0]:
+            nrt = -term * self.rates[0]
+            df = tf.exp(nrt)
+            return df
+        if term >= self.pillars[-1]:
+            nrt = -term * self.rates[-1]
+            df = tf.exp(nrt)
+            return df
+        else:
+            nrt = -term * self.interp.interpolate(term)
+            df = tf.exp(nrt)
+            return df
+    
+    def forward_rate(self,
+                     d1,
+                     d2,
+                     daycounter,
+                     evaluation_date):
+        ''' 
+        Calcola il tasso forward.
+        '''
+        tau = daycounter.year_fraction(d1, d2)
+        df1 = self.discount(daycounter.year_fraction(evaluation_date, d1))
+        df2 = self.discount(daycounter.year_fraction(evaluation_date, d2))
+        return (df1 / df2 - 1) / tau
+    
+    def inst_fwd(self, t: float):
+        # time-step needed for differentiation
+        dt = 0.01
+        expr = - (tf.math.log(self.discount(t + dt)) - tf.math.log(self.discount(t - dt))) / (2 * dt)
+        return expr
 
 
 class RateCurve2:

@@ -4,24 +4,50 @@ import tensorflow as tf
 from typing import Optional, List, Union
 from enum import Enum
 
-#TODO da rivedere interpolazioni
+
+
 class LinearInterp:
     def __init__(self, x: np.ndarray, y: np.ndarray):
         self.x = x
         self.y = y
 
-    def interpolate(self, x_new):
-        if x_new <= self.x[0]:
-            return self.y[0]
-        elif x_new >= self.x[-1]:
-            return self.y[-1]
-        else:
-            i = np.searchsorted(self.x, x_new) - 1
-            w1 = (self.x[i + 1] - x_new) / (self.x[i + 1] - self.x[i])
-            w2 = 1.0 - w1
-            r1 = self.y[i]
-            r2 = self.y[i + 1]
-            return w1 * r1 + w2 * r2
+    def interpolate(self, term):
+        for i in range(0, len(self.x) - 1):
+            if term < self.x[i + 1]:
+                dtr = 1 / (self.x[i + 1] - self.x[i])
+                w1 = (self.x[i + 1] - term) * dtr
+                w2 = (term - self.x[i]) * dtr
+                r1 = w1 * self.y[i]
+                r2 = w2 * self.y[i + 1]
+                return r1 + r2
+
+
+
+
+
+
+
+
+
+###############################################
+#TODO da rivedere interpolazioni
+# class LinearInterp:
+#     def __init__(self, x: np.ndarray, y: np.ndarray):
+#         self.x = x
+#         self.y = y
+
+#     def interpolate(self, x_new):
+#         if x_new <= self.x[0]:
+#             return self.y[0]
+#         elif x_new >= self.x[-1]:
+#             return self.y[-1]
+#         else:
+#             i = np.searchsorted(self.x, x_new) - 1
+#             w1 = (self.x[i + 1] - x_new) / (self.x[i + 1] - self.x[i])
+#             w2 = 1.0 - w1
+#             r1 = self.y[i]
+#             r2 = self.y[i + 1]
+#             return w1 * r1 + w2 * r2
 
 
 
