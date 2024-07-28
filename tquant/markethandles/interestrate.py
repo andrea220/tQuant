@@ -42,8 +42,6 @@ class InterestRate:
             t = args[0]
         elif len(args) == 4:
             d1, d2, refStart, refEnd = args
-            # tau_i = (d2 - d1) 
-            # t = tau_i.days/365 #dc_.yearFraction(d1, d2, refStart, refEnd)
             t = self._daycounter.year_fraction(d1, d2)
             return self.compound_factor(t)
         else:

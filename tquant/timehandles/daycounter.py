@@ -46,6 +46,8 @@ class DayCounter:
     def day_count(self,
                   d1:date,
                   d2:date):
+        if d1 == d2:
+            return 0.0
         if self.day_counter_convention == DayCounterConvention.Actual360:
             return (d2-d1).days + self.include_last_day
         elif self.day_counter_convention == DayCounterConvention.Actual365 or self.day_counter_convention == DayCounterConvention.ActualActual:

@@ -14,7 +14,7 @@ class Deposit(Product):
                  end_date: date,
                  notional: float,
                  day_count_convention: DayCounterConvention,
-                 quote = None):
+                 quote: float):
         super().__init__(currency, start_date, end_date)
         self.issue_date = issue_date
         self.notional = notional
@@ -31,3 +31,20 @@ class Deposit(Product):
                 "notional: " + str(self.notional) + ",\n" \
                 "day_count_convention: " + str(self.day_count_convention) + ",\n" \
                 "quote: " + str(self.quote) + " }"
+
+
+if __name__ == "__main__":
+    from dateutil.relativedelta import relativedelta
+    from ..markethandles.ircurve import RateCurve
+    from ..pricers.deposit import DepositEngine
+    
+    today = date(2024, 4, 30)
+    spot_date = date(2024, 5, 2)
+    maturity = spot_date + relativedelta(months=6)
+    deposit = Deposit(Currency.EUR, today, spot_date, maturity, 100, DayCounterConvention.Actual360, 0.01)
+    disc_curve = RateCurve([1.0/365, 1.0, 2.0, 4.0], [0.01, 0.02, 0.022, 0.03])
+    pricer = DepositEngine(deposit)
+    pv, tape = pricer.price_aad(disc_curve, today)
+    sensitivities = tape.gradient(pv, [disc_curve.rates])
+    print(pv)
+    print(sensitivities)

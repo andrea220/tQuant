@@ -7,6 +7,9 @@ from enum import Enum
 
 
 class LinearInterp:
+    ''' 
+    interpolazione lineare per tensorflow
+    '''
     def __init__(self, x, y):
         self.x = x
         self.y = y

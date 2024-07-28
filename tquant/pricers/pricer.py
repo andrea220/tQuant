@@ -6,7 +6,3 @@ class Pricer(ABC):
     def price(self):
         return 
 
-    @abstractmethod
-    def price_aad(self):
-        return
-    
