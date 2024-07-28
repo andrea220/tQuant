@@ -7,7 +7,7 @@ from enum import Enum
 
 
 class LinearInterp:
-    def __init__(self, x: np.ndarray, y: np.ndarray):
+    def __init__(self, x, y):
         self.x = x
         self.y = y
 
@@ -20,11 +20,6 @@ class LinearInterp:
                 r1 = w1 * self.y[i]
                 r2 = w2 * self.y[i + 1]
                 return r1 + r2
-
-
-
-
-
 
 
 

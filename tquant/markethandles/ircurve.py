@@ -57,7 +57,7 @@ class RateCurveTest:#TODO: testare ad greeks, aggiungere metodie testare per boo
         self.pillars = pillars # list
         self.rates = [tf.Variable(r, dtype=dtypes.float64) for r in rates]     # tensor list
         if interp == "LINEAR":
-            self.interp = LinearInterp(self.pillars, np.array(self.rates))
+            self.interp = LinearInterp(self.pillars, self.rates)
         else:
             raise ValueError("Wrong interpolation type")
             
