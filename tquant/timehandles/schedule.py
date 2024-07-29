@@ -4,14 +4,14 @@ from .tqcalendar import Calendar
 from .utils import TimeUnit, BusinessDayConvention
 
 
-class ScheduleGenerator: #TODO review schedule generator
+class ScheduleGenerator: 
     def generate(self,
                  start: date,
                  end: date,
                  tenor: int,
                  time_unit: TimeUnit,
                  calendar: Calendar,
-                 business_day_convention: BusinessDayConvention): #TODO da valutare se togliere la bd e recuperarla altrove(calendario?)
+                 business_day_convention: BusinessDayConvention):
         schedule = []
         current_date = start
         schedule.append(current_date)
@@ -24,3 +24,27 @@ class ScheduleGenerator: #TODO review schedule generator
                 break
         return schedule
 
+
+class ScheduleGeneratorTest: 
+    def __init__(self,
+                 calendar: Calendar,
+                 business_day_convention: BusinessDayConvention):
+        self.calendar = calendar
+        self.business_day_convention = business_day_convention
+
+    def generate(self,
+                 start: date,
+                 end: date,
+                 tenor: int,
+                 time_unit: TimeUnit): 
+        schedule = []
+        current_date = start
+        schedule.append(current_date)
+        while True:
+            current_date = self.calendar.advance(current_date, tenor, time_unit, self.business_day_convention)
+            if current_date < end:
+                schedule.append(current_date)
+            else:
+                schedule.append(end)
+                break
+        return schedule

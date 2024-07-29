@@ -4,6 +4,75 @@ from ..timehandles.utils import BusinessDayConvention, TimeUnit
 from .index import Index
 from ..timehandles.tqcalendar import Calendar
 
+class OvernightIndex(Index):
+    """
+    Represents an Overnight index.
+
+    Attributes:
+    -----------
+        name: str
+            The name of the index.
+        fixing_calendar: Calendar
+            The calendar used for determining fixing dates.
+        fixing_days: int, optional
+            The number of days for fixing. Defaults to None.
+        time_series: dict, optional
+            A dictionary containing time series data. Defaults to None.
+
+    Note:
+    -----------
+        Inherits from Index abstract class.
+
+    """
+    def __init__(self,
+                 name: str,
+                 fixing_calendar: Calendar,
+                 fixing_days: int = None,
+                 time_series: dict = None) -> None:
+        super().__init__(name,
+                         fixing_calendar,
+                         time_series)      
+        self._fixing_days = fixing_days
+    
+    @property
+    def fixing_days(self) -> int:
+        """
+        Get the number of fixing days for the index.
+
+        Returns:
+        -----------
+            int: The number of fixing days if set, otherwise 0.
+
+        """
+        if self._fixing_days == None:
+            return 0
+        else:
+            return self._fixing_days
+    
+    def fixing_maturity(self, fixing_date: date) -> date:
+        """
+        Calculate the fixing maturity date based on the fixing date and index conventions.
+
+        Parameters:
+        -----------
+            fixing_date: date
+                The fixing date.
+
+        Returns:
+        -----------
+            date: The maturity date for the fixing helper.
+
+        """
+        return self.fixing_calendar.advance(fixing_date,
+                                            1, 
+                                            TimeUnit.Days,
+                                            BusinessDayConvention.ModifiedFollowing 
+                                            )
+
+    def fixing_date(self, value_date: date) -> date:
+        return self.fixing_calendar.advance(value_date, self.fixing_days, TimeUnit.Days, BusinessDayConvention.ModifiedFollowing)
+   
+
 
 
 class IborIndex(Index):
