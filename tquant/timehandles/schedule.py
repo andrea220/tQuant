@@ -4,7 +4,7 @@ from .tqcalendar import Calendar
 from .utils import TimeUnit, BusinessDayConvention
 
 
-class ScheduleGenerator: 
+class ScheduleGeneratorAP: 
     def generate(self,
                  start: date,
                  end: date,
@@ -25,7 +25,7 @@ class ScheduleGenerator:
         return schedule
 
 
-class ScheduleGeneratorTest: 
+class ScheduleGenerator: 
     def __init__(self,
                  calendar: Calendar,
                  business_day_convention: BusinessDayConvention):

@@ -1,5 +1,6 @@
 from enum import Enum
 from datetime import date
+import re
 
 
 class Settings:
@@ -21,6 +22,24 @@ class TimeUnit(Enum):
     def __str__(self):
         return self.value
 
+def decode_term(term: str):
+    match = re.match(r'(\d+)([A-Za-z]+)', term)
+    if match:
+        period = int(match.group(1))
+        unit = match.group(2)
+    else:
+        raise ValueError("Wrong term: " + term)
+    if unit == 'd' or unit == 'D':
+        time_unit = TimeUnit.Days
+    elif unit == 'w' or unit == 'W':
+        time_unit = TimeUnit.Weeks
+    elif unit == 'm' or unit == 'M':
+        time_unit = TimeUnit.Months
+    elif unit == 'y' or unit == 'Y':
+        time_unit = TimeUnit.Years
+    else:
+        raise ValueError
+    return period, time_unit
 
 class DayCounterConvention(Enum):
     Actual360 = "Actual360"
@@ -73,3 +92,39 @@ class Frequency(Enum):
     Daily = 365
     OtherFrequency = 999
 
+
+
+# class Tenor(Enum):
+#     """
+#     Enumeration of tenors.
+#     """
+#     ON = "O/N"
+#     TN = "T/N"
+#     SN = "S/N"
+#     W1 = "1W"
+#     W2 = "2W"
+#     W3 = "3W"
+#     W4 = "4W"
+#     M1 = "1M"
+#     M2 = "2M"
+#     M3 = "3M"
+#     M4 = "4M"
+#     M5 = "5M"
+#     M6 = "6M"
+#     M7 = "7M"
+#     M8 = "8M"
+#     M9 = "9M"
+#     M10 = "10M"
+#     M11 = "11M"
+#     Y1 = "1Y"
+#     Y1 = "1Y"
+#     Y1 = "1Y"
+#     Y1 = "1Y"
+#     Y1 = "1Y"
+#     Y1 = "1Y"
+#     Y1 = "1Y"
+#     Y1 = "1Y"
+
+#     def __str__(self):
+#         return self.value
+    

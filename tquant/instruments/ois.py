@@ -8,7 +8,7 @@ from ..timehandles.utils import DayCounterConvention
 from ..flows.fixedcoupon import FixedRateLeg 
 from ..flows.floatingcoupon import FloatingRateLeg
 
-class Ois(Product):
+class OisAP(Product):
     def __init__(self,
                  ccy: str,
                  start_date: date,
@@ -57,10 +57,43 @@ class Ois(Product):
                 "day_counter_fix " + str(self.day_counter_fix) + ",\n" \
                 "day_counter_flt " + str(self.day_counter_flt) + "}"
 
-class OisTest(Product):
+class Ois(Product):
+    def __init__(self,
+                schedule: list[date],
+                notional: float,
+                index: Index,
+                fixed_rate: float,
+                fixed_daycounter: DayCounterConvention,
+                swap_type: SwapType = SwapType.Payer, 
+                currency: Currency = None):
+        super().__init__(currency, schedule[0], schedule[-1])
+        self.swap_type = swap_type
+        notionals = [notional]*(len(schedule) - 1)
+        fix_rates = [fixed_rate]*(len(schedule) - 1)
+
+        gearings = [1.0]*(len(schedule) - 1)
+        spreads = [0.0]*(len(schedule) - 1)
+
+        self.fixed_leg = FixedRateLeg(schedule, notionals, fix_rates, fixed_daycounter)
+        self.floating_leg = FloatingRateLeg(schedule, notionals, gearings, spreads, index, fixed_daycounter) #TODO correggere il floating dc
+
+        self._price = None
+
+    @property
+    def price(self):
+        if self._price is not None:
+            return self._price
+        else:
+            raise ValueError("price not assigned")
+    @price.setter
+    def price(self, value):
+        self._price = value
+
+
+class OisBck(Product):
     def __init__(self,
                 float_schedule: list[date],
-                fix_schedule: list[date],
+                fix_schedule: list[date],#TODO capire se la schedule degli ois sia sempre fi
                 notional: float,
                 index: Index,
                 fixed_rate: float,
@@ -72,7 +105,7 @@ class OisTest(Product):
         self.swap_type = swap_type
         fix_notionals = [notional]*(len(fix_schedule) - 1)
         fix_rates = [fixed_rate]*(len(fix_schedule) - 1)
-        
+
         flt_notionals = [notional]*(len(float_schedule) - 1)
         gearings = [1.0]*(len(float_schedule) - 1)
         spreads = [0.0]*(len(float_schedule) - 1)

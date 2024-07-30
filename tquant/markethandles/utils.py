@@ -1,4 +1,5 @@
 from enum import Enum
+from tensorflow import Tensor
 
 class Position(Enum):
     Long = 1
@@ -25,3 +26,9 @@ class Currency(Enum):
 
     def __str__(self):
         return self.value
+
+def extract_value(x):
+    if isinstance(x, Tensor):
+        return x.numpy()  # Extract value from TensorFlow tensor
+    else:
+        return x
