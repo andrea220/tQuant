@@ -165,8 +165,6 @@ class OisPricerTest(AbstractPricerAP):
               curves):
         if isinstance(product, OisAP):
             ois = product
-            # discount = {"CCY": ois.ccy, "USAGE": "DISCOUNT"}
-            # dc_name = self.curve_assignment.get_curve_name(discount)
             dc = curves[self.curve_name]
             act365 = DayCounterConvention.Actual365
             day_counter = DayCounter(act365)
@@ -194,11 +192,6 @@ class OisPricerTest(AbstractPricerAP):
                             day_counter.year_fraction(as_of_date, ois.end_dates_flt[i]))
                         rate = (growing_factor1 * growing_factor2 - 1.0) / yf
                     else:
-                        # rate = calculate_forward(as_of_date,
-                        #                          dc,
-                        #                          ois.start_dates_flt[i],
-                        #                          ois.end_dates_flt[i],
-                        #                          yf)
                         rate = dc.forward_rate(ois.start_dates_flt[i],
                                                ois.end_dates_flt[i],
                                                ois.day_counter_flt,
