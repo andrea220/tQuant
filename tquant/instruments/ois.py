@@ -1,6 +1,6 @@
 from datetime import date
 
-from .product import Product
+from .product import Product, ProductAP
 from ..timehandles.daycounter import DayCounter
 from ..markethandles.utils import Currency, SwapType
 from ..index.index import Index
@@ -8,7 +8,7 @@ from ..timehandles.utils import DayCounterConvention
 from ..flows.fixedcoupon import FixedRateLeg 
 from ..flows.floatingcoupon import FloatingRateLeg
 
-class OisAP(Product):
+class OisAP(ProductAP):
     def __init__(self,
                  ccy: str,
                  start_date: date,
@@ -25,7 +25,7 @@ class OisAP(Product):
                  notional: float,
                  day_counter_fix: DayCounter,
                  day_counter_flt: DayCounter):
-        super().__init__(ccy, start_date, end_date)
+        super().__init__(ccy, start_date, end_date, quote)
         self.start_dates_fix = start_dates_fix
         self.end_dates_fix = end_dates_fix
         self.pay_dates_fix = pay_dates_fix
@@ -37,25 +37,6 @@ class OisAP(Product):
         self.notional = notional
         self.day_counter_fix = day_counter_fix
         self.day_counter_flt = day_counter_flt
-        self.quote = quote
-
-    def __str__(self) -> str:
-        return "{name: ois, \n" \
-                "ccy: " + str(self.currency) + ",\n" \
-                "start: " + str(self.start_date) + ",\n" \
-                "end: " + str(self.end_date) + ",\n" \
-                "start_dates_fix: " + str(self.start_dates_fix) + ",\n" \
-                "end_dates_fix: " + str(self.end_dates_fix) + ",\n" \
-                "pay_dates_fix: " + str(self.pay_dates_fix) + ",\n" \
-                "start_dates_flt: " + str(self.start_dates_flt) + ",\n" \
-                "end_dates_flt: " + str(self.end_dates_flt) + ",\n" \
-                "pay_dates_flt: " + str(self.pay_dates_flt) + ",\n" \
-                "fixing_dates: " + str(self.fixing_dates) + ",\n" \
-                "fixing_rates: " + str(self.fixing_rates) + ",\n" \
-                "notional: " + str(self.notional) + ",\n" \
-                "quote: " + str(self.quote) + ",\n" \
-                "day_counter_fix " + str(self.day_counter_fix) + ",\n" \
-                "day_counter_flt " + str(self.day_counter_flt) + "}"
 
 class Ois(Product):
     def __init__(self,

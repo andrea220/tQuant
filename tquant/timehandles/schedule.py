@@ -1,17 +1,14 @@
 from datetime import date
 
 from .tqcalendar import Calendar
+from .targetcalendar  import TARGET
 from .utils import TimeUnit, BusinessDayConvention
 
 
-class ScheduleGeneratorAP: 
-    def generate(self,
-                 start: date,
-                 end: date,
-                 tenor: int,
-                 time_unit: TimeUnit,
-                 calendar: Calendar,
+class ScheduleGeneratorAP:
+    def generate(self, start: date, end: date, tenor: int, time_unit: TimeUnit,
                  business_day_convention: BusinessDayConvention):
+        calendar = TARGET()
         schedule = []
         current_date = start
         schedule.append(current_date)
@@ -23,7 +20,6 @@ class ScheduleGeneratorAP:
                 schedule.append(end)
                 break
         return schedule
-
 
 class ScheduleGenerator: 
     def __init__(self,

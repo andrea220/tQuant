@@ -6,3 +6,11 @@ class Pricer(ABC):
     def price(self):
         return 
 
+
+class AbstractPricerAP:
+    @abstractmethod
+    def price(self,
+              product,
+              trade_date,
+              curves):
+        pass
