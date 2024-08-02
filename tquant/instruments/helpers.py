@@ -8,9 +8,9 @@ from ..timehandles.utils import BusinessDayConvention, DayCounterConvention, Tim
 from ..timehandles.daycounter import DayCounter
 from ..timehandles.schedule import ScheduleGenerator, ScheduleGeneratorAP
 from ..timehandles.targetcalendar import TARGET
-
+from ..index.curverateindex import OvernightIndex
 from ..instruments.deposit import Deposit, DepositAP
-from ..instruments.ois import Ois, OisAP
+from ..instruments.ois import Ois, OisAP, OisTest
 
 import re
 
@@ -308,3 +308,87 @@ class OisBuilderAP(ProductBuilderAP):
                    self.notional,
                    day_count_fix,
                    day_count_flt)
+
+
+
+class OisBuilderTest(ProductBuilderAP):
+    def __init__(self,
+                 name: str,
+                 ccy: str,
+                 start_delay: int,
+                 fixing_days: int,
+                 period_fix: str,
+                 period_flt: str,
+                 roll_convention: BusinessDayConvention,
+                 notional: float,
+                 day_count_convention_fix: DayCounterConvention,
+                 day_count_convention_flt: DayCounterConvention):
+        super().__init__(name, ccy, notional)
+        self.start_delay = start_delay
+        self.fixing_days = fixing_days
+        self.period_fix = period_fix
+        self.period_flt = period_flt
+        self.roll_convention = roll_convention
+        self.notional = notional
+        self.day_count_convention_fix = day_count_convention_fix
+        self.day_count_convention_flt = day_count_convention_flt
+
+    def build(self, trade_date: date, quote: float, term: str):
+        calendar = TARGET()
+        index = OvernightIndex("ESTR", calendar)
+        
+        start_date = calendar.advance(
+            trade_date, self.start_delay, TimeUnit.Days, self.roll_convention)
+
+        period_maturity, time_unit = decode_term(term)
+        maturity = calendar.advance(start_date, period_maturity, time_unit, self.roll_convention)
+
+        period_fix, time_unit_fix = decode_term(self.period_fix)
+        period_float, time_unit_float = decode_term(self.period_flt)
+
+        schedule_generator = ScheduleGeneratorAP()
+
+        schedule_fix = schedule_generator.generate(
+            start_date, maturity, period_fix, time_unit_fix, self.roll_convention)
+
+        schedule_float = schedule_generator.generate(
+            start_date, maturity, period_float, time_unit_float, self.roll_convention)
+
+        start_fix = []
+        end_fix = []
+        pay_fix = []
+        for i in range(len(schedule_fix) - 1):
+            start_fix.append(schedule_fix[i])
+            end_fix.append(schedule_fix[i + 1])
+            pay_fix.append(calendar.adjust(schedule_fix[i + 1], self.roll_convention))
+
+        day_count_fix = DayCounter(self.day_count_convention_fix)
+        day_count_flt = DayCounter(self.day_count_convention_flt)
+
+        start_flt = []
+        end_flt = []
+        pay_flt = []
+        for i in range(len(schedule_float) - 1):
+            start_flt.append(schedule_float[i])
+            end_flt.append(schedule_float[i + 1])
+            pay_flt.append(calendar.adjust(schedule_float[i + 1], self.roll_convention))
+
+        fixing_dates = []
+        fixing_rates = []
+
+        return OisTest(self.ccy,
+                   start_date,
+                   maturity,
+                   start_fix,
+                   end_fix,
+                   pay_fix,
+                   start_flt,
+                   end_flt,
+                   pay_flt,
+                   fixing_dates,
+                   fixing_rates,
+                   quote,
+                   self.notional,
+                   day_count_fix,
+                   day_count_flt,
+                   index)

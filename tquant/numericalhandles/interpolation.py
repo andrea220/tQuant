@@ -199,37 +199,3 @@ def interpolate(ax: List[float],
     else:
         return tf.cast(polint(xx,yy,x), dtype=tf.float64)
     
-
-if __name__ == "__main__":
-    x = [0, 1, 2, 3, 4]
-    y = [0, 1, 0, 1, 0]
-
-    cs = CubicSpline(x, y, bc_type='natural')
-    test_points = np.array([0.0, 0.5, 1.5, 2.5, 3.5, 4.5])
-    test_values = cs(test_points)
-    print(test_values.tolist())
-
-    ncs = NaturalCubicSpline(x, y)
-    comparison = []
-    for x in test_points:
-        comparison.append(ncs.interpolate(x))
-
-    print(comparison)
-
-
-    # natural cubic spline example
-    x = np.array([1, 2])
-    y = np.array([100, 200, 300])
-    v = np.array([[0.2, 0.3, 0.4],
-                  [0.5, 0.6, 0.7]])
-
-    interpolator = LinearCubicInterpolator(x, y, v)
-
-    for xi in x:
-        for yi in y:
-            print("Point=(" + str(xi) + "," + str(yi) + ")")
-            print(interpolator.interpolate(xi, yi))
-
-    cs = CubicSpline(y, v[0])
-    for i in range(100, 300, 10):
-        print("Python spline= " + str(cs(i)) + " | My spline= " + str(interpolator.interpolate(1, i)))
