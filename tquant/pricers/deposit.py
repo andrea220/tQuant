@@ -90,8 +90,6 @@ class DepositPricerTest(AbstractPricerAP):
               curves):
         if isinstance(product, DepositAP):
             deposit = product
-            # instance = {"CCY": deposit.ccy, "USAGE": "DISCOUNT"}
-            # curve_name = self.curve_assignment.get_curve_name(instance)
             curve = curves[self.curve_name]
             act365 = DayCounterConvention.Actual365
             day_counter = DayCounter(act365)

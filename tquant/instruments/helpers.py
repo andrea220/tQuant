@@ -309,8 +309,6 @@ class OisBuilderAP(ProductBuilderAP):
                    day_count_fix,
                    day_count_flt)
 
-
-
 class OisBuilderTest(ProductBuilderAP):
     def __init__(self,
                  name: str,
@@ -336,7 +334,7 @@ class OisBuilderTest(ProductBuilderAP):
     def build(self, trade_date: date, quote: float, term: str):
         calendar = TARGET()
         index = OvernightIndex("ESTR", calendar)
-        
+
         start_date = calendar.advance(
             trade_date, self.start_delay, TimeUnit.Days, self.roll_convention)
 
@@ -392,3 +390,4 @@ class OisBuilderTest(ProductBuilderAP):
                    day_count_fix,
                    day_count_flt,
                    index)
+
