@@ -110,3 +110,13 @@ class DepositPricerTest(AbstractPricerAP):
             return start_cashflow * df_s - end_cashflow * df_e
         else:
             raise TypeError("Wrong product type")
+        
+    def price_aad(self, 
+                    product,
+                    as_of_date: date,
+                    curves):
+        with tf.GradientTape() as tape:
+            npv = self.price(product,
+                            as_of_date,
+                            curves)
+        return npv, tape

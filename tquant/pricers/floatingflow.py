@@ -38,6 +38,11 @@ class OisCouponDiscounting(Pricer):
             return self.amount(term_structure, evaluation_date) * term_structure.discount(payment_time)
         else:
             return 0
+        
+    def price_aad(self, term_structure: RateCurve, evaluation_date: date):
+        with tf.GradientTape() as tape:
+            npv = self.price(term_structure, evaluation_date)
+        return npv, tape
            
 
 
@@ -119,3 +124,9 @@ class OisLegDiscounting(Pricer):
                 pricer = OisCouponDiscounting(cf)
                 npv += pricer.price(term_structure, evaluation_date)
         return npv
+    
+    def price_aad(self, term_structure, evaluation_date: date):
+        with tf.GradientTape() as tape:
+            npv = self.price(term_structure, evaluation_date)
+        return npv, tape
+    

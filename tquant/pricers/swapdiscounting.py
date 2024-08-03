@@ -264,3 +264,11 @@ class OisPricerTestLegs(AbstractPricerAP):
             return pv_flt - pv_fix
         else:
             raise TypeError("Wrong product type")
+
+    def price_aad(self, product,
+              as_of_date: date,
+              curves):
+        with tf.GradientTape() as tape:
+            npv = self.price(product, as_of_date, curves)
+        return npv, tape
+           

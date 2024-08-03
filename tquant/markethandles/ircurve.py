@@ -52,7 +52,7 @@ from ..timehandles.utils import CompoundingType, Frequency
 #         expr = - (tf.math.log(self.discount(t + dt)) - tf.math.log(self.discount(t - dt))) / (2 * dt)
 #         return expr
 
-class RateCurve:#TODO: testare ad greeks, aggiungere metodie testare per bootstrapping 
+class RateCurve:
     def __init__(self, pillars, rates, interp: str):
         self.pillars = pillars # list
         self.rates = [tf.Variable(r, dtype=dtypes.float64) for r in rates]     # tensor list
@@ -95,12 +95,13 @@ class RateCurve:#TODO: testare ad greeks, aggiungere metodie testare per bootstr
         expr = - (tf.math.log(self.discount(t + dt)) - tf.math.log(self.discount(t - dt))) / (2 * dt)
         return expr
     
-    def set_rates(self, rates): #TODO non funziona
+    def set_rates(self, rates): 
         self.rates = [tf.Variable(r, dtype=dtypes.float64) for r in rates]
-        if self.interpolation_type == "LINEAR":
-            self.interp = LinearInterp(self.pillars, self.rates)
-        else:
-            raise ValueError("Wrong interpolation type")
+        self.interp.y = self.rates
+        # if self.interpolation_type == "LINEAR":
+        #     self.interp = LinearInterp(self.pillars, self.rates)
+        # else:
+        #     raise ValueError("Wrong interpolation type")
 
 class LinearInterpAP:
     def __init__(self, x: np.ndarray, y: np.ndarray):
