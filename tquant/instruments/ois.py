@@ -5,8 +5,8 @@ from ..timehandles.daycounter import DayCounter
 from ..markethandles.utils import Currency, SwapType
 from ..index.index import Index
 from ..timehandles.utils import DayCounterConvention
-from ..flows.fixedcoupon import FixedRateLeg 
-from ..flows.floatingcoupon import FloatingRateLeg
+from ..flows.fixedcoupon import FixedRateLeg, FixedRateLegTest
+from ..flows.floatingcoupon import FloatingRateLeg, FloatingRateLegTest
 
 class OisAP(ProductAP):
     def __init__(self,
@@ -70,7 +70,6 @@ class Ois(Product):
     def price(self, value):
         self._price = value
 
-
 class OisTest(ProductAP):
     def __init__(self,
                  ccy: str,
@@ -103,13 +102,13 @@ class OisTest(ProductAP):
         self.day_counter_flt = day_counter_flt
 
         # self.swap_type = swap_type
-        fix_notionals = [notional]*len(pay_dates_fix) 
-        fix_rates = [quote]*len(pay_dates_fix) 
+        self._notionals = [notional]*len(pay_dates_fix)
+        self._rates = [quote]*len(pay_dates_fix)
+        self._gearings = [1]*len(pay_dates_flt)
+        self._margins = [0]*len(pay_dates_flt)
+        self._index = index
 
-        flt_notionals = [notional]*len(pay_dates_flt) 
-        gearings = [1.0]*len(pay_dates_flt) 
-        spreads = [0.0]*len(pay_dates_flt) 
-
-        self.fixed_leg = FixedRateLeg(pay_dates_fix, fix_notionals, fix_rates, day_counter_fix)
-        self.floating_leg = FloatingRateLeg(pay_dates_flt, flt_notionals, gearings, spreads, index, day_counter_flt) 
-
+        self.fixed_leg = FixedRateLegTest(pay_dates_fix, start_dates_fix, end_dates_fix,
+                                    self._notionals, self._rates, day_counter_fix)         
+        self.floating_leg = FloatingRateLegTest(pay_dates_flt, start_dates_flt, end_dates_flt,
+                                    self._notionals, self._gearings, self._margins, index, day_counter_flt)      

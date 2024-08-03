@@ -188,3 +188,45 @@ class FloatingRateLeg:
         return leg_display
 
         
+class FloatingRateLegTest:
+    def __init__(self,
+                 payment_dates: list[date],
+                 period_start_dates: list[date],
+                 period_end_dates: list[date],
+                 notionals: list[float],
+                 gearings: list[float],
+                 spreads: list[float],
+                 index: IborIndex,
+                 daycounter: DayCounter
+                 ) -> None:
+        self._notionals = notionals
+        self._gearings = gearings
+        self._spreads = spreads 
+        self._index = index
+        self._daycounter = daycounter
+
+        self.leg_flows = []
+        for i in range(len(payment_dates)):
+            self.leg_flows.append(FloatingCoupon(payment_dates[i],
+                                                self._notionals[i],
+                                                period_start_dates[i],
+                                                period_end_dates[i],
+                                                self._index,
+                                                self._gearings[i],
+                                                self._spreads[i],
+                                                period_start_dates[i],
+                                                period_end_dates[i],
+                                                self._daycounter
+                                                )
+                                        )
+    
+   
+    def display_flows(self):
+        flows = self.leg_flows
+        leg_display = pd.DataFrame()
+        for i in range(len(flows)):
+            coupon_flow = flows[i].display()
+            leg_display = pd.concat([leg_display, coupon_flow], axis = 0)
+        return leg_display
+
+        

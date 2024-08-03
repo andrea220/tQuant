@@ -2,8 +2,10 @@ from .pricer import Pricer, AbstractPricerAP
 from ..instruments.swap import InterestRateSwap
 from ..instruments.ois import Ois, OisAP, OisTest
 from ..markethandles.utils import SwapType
-from .floatingflow import FloatingLegDiscounting, FloatingCouponDiscounting
+from .floatingflow import FloatingLegDiscounting, FloatingCouponDiscounting, OisLegDiscounting
 from .fixedflow import FixedLegDiscounting, FixedCouponDiscounting
+from ..flows.fixedcoupon import FixedRateLegTest
+from ..flows.floatingcoupon import FloatingRateLegTest
 from datetime import date 
 from ..timehandles.utils import DayCounterConvention
 from ..timehandles.daycounter import DayCounter
@@ -205,4 +207,60 @@ class OisPricerTest(AbstractPricerAP):
             raise TypeError("Wrong product type")
 
 
+class OisPricerTestLegs(AbstractPricerAP):
+    def __init__(self, curve_name):
+        super().__init__()
+        self.curve_name = curve_name
 
+    def price(self,
+              product,
+              as_of_date: date,
+              curves):
+        if isinstance(product, OisTest):
+            ois = product
+            dc = curves[self.curve_name]
+
+            floating_leg_pricer = OisLegDiscounting(ois.floating_leg)
+            fixed_leg_pricer = FixedLegDiscounting(ois.fixed_leg)
+
+            pv_flt = floating_leg_pricer.price(dc, as_of_date)
+            pv_fix = fixed_leg_pricer.price(dc, as_of_date)#, tq.FixedCouponDiscounting)
+
+
+            # pv_fix = 0.0
+            # for i in range(len(ois.pay_dates_fix)):
+            #     pay_date = ois.pay_dates_fix[i]
+            #     if pay_date > as_of_date:
+            #         yf = ois.day_counter_fix.year_fraction(ois.start_dates_fix[i], ois.end_dates_fix[i])
+            #         cashflow = ois.notional * ois.quote * yf
+            #         pv_fix += cashflow * dc.discount(ois.day_counter_fix.year_fraction(as_of_date, pay_date))
+
+            # pv_flt = 0.0
+            # for i in range(len(ois.pay_dates_flt)):
+            #     pay_date = ois.pay_dates_flt[i]
+            #     if pay_date > as_of_date:
+            #         yf = ois.day_counter_flt.year_fraction(ois.start_dates_flt[i],
+            #                                                ois.end_dates_flt[i])
+            #         if ois.start_dates_flt[i] < as_of_date:
+            #             growing_factor1 = compute_growing_factor(ois,
+            #                                                     ois.fixing_dates,
+            #                                                      ois.fixing_rates,
+            #                                                      ois.start_dates_flt[i],
+            #                                                      as_of_date)
+            #             growing_factor2 = 1.0 / dc.discount(
+            #                 ois.day_counter_flt.year_fraction(as_of_date, ois.end_dates_flt[i]))
+            #             rate = (growing_factor1 * growing_factor2 - 1.0) / yf
+            #         else:
+            #             rate = dc.forward_rate(ois.start_dates_flt[i],
+            #                                    ois.end_dates_flt[i],
+            #                                    ois.day_counter_flt,
+            #                                    as_of_date)
+                        
+            #         cashflow = ois.notional * rate * yf
+            #         pv_flt += cashflow * dc.discount(ois.day_counter_flt.year_fraction(as_of_date, pay_date))
+
+            self.pv_flt = pv_flt
+            self.pv_fix = pv_fix
+            return pv_flt - pv_fix
+        else:
+            raise TypeError("Wrong product type")

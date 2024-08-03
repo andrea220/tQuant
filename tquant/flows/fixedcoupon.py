@@ -155,3 +155,47 @@ class FixedRateLeg:
             leg_display = pd.concat([leg_display, coupon_flow], axis = 0)
         return leg_display
 
+
+class FixedRateLegTest:
+    def __init__(self,
+                 payment_dates: list[date],
+                 period_start_dates: list[date],
+                 period_end_dates: list[date],
+                 notionals: list[float],
+                 coupon_rates: list[float], 
+                 daycounter: DayCounter,
+                 compounding: CompoundingType = CompoundingType.Simple,
+                 frequency: Frequency = Frequency.Annual) -> None:
+
+        self._notionals = notionals
+        self._rates = coupon_rates
+        self._daycounter = daycounter
+        self._compounding = compounding
+        self._frequency = frequency
+        self._payment_dates = payment_dates
+        self._period_start_dates = period_start_dates
+        self._period_end_dates = period_end_dates
+
+        self.leg_flows = []
+        for i in range(len(payment_dates)):
+            self.leg_flows.append(FixedCoupon(payment_dates[i],
+                                    notionals[i],
+                                    period_start_dates[i],
+                                    period_end_dates[i],
+                                    period_start_dates[i],
+                                    period_end_dates[i],
+                                    coupon_rates[i],
+                                    daycounter)
+                                        )
+    @property
+    def coupon_rates(self):
+        return [InterestRate(r, self._daycounter, self._compounding, self._frequency) for r in self._rates]
+
+    def display_flows(self):
+        flows = self.leg_flows
+        leg_display = pd.DataFrame()
+        for i in range(len(flows)):
+            coupon_flow = flows[i].display()
+            leg_display = pd.concat([leg_display, coupon_flow], axis = 0)
+        return leg_display
+
