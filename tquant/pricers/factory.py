@@ -2,18 +2,22 @@
 from ..instruments.product import Product
 
 from ..instruments.deposit import Deposit
-from .deposit import DepositEngine
+from .deposit import DepositPricer
 
 from ..instruments.ois import Ois
-from .swapdiscounting import SwapAnalyticEngine, OisAnalyticEngine
+from .swapdiscounting import OisPricer
 
 
 class PricerAssignment:
+    """ 
+    passa il curve_name
+    
+    """
     @staticmethod
-    def create(product: Product):
+    def create(product: Product, curve_name: str):
         if type(product) == Deposit:
-            return DepositEngine(product)
+            return DepositPricer(curve_name)
         elif type(product) == Ois:
-            return OisAnalyticEngine(product)
+            return OisPricer(curve_name)
         else:
-            raise TypeError("Wrong product type")
+            raise TypeError(f"{product} is a wrong product type")

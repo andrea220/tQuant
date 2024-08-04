@@ -4,8 +4,8 @@ from ..instruments.ois import Ois, OisAP, OisTest
 from ..markethandles.utils import SwapType
 from .floatingflow import FloatingLegDiscounting, FloatingCouponDiscounting, OisLegDiscounting
 from .fixedflow import FixedLegDiscounting, FixedCouponDiscounting
-from ..flows.fixedcoupon import FixedRateLegTest
-from ..flows.floatingcoupon import FloatingRateLegTest
+# from ..flows.fixedcoupon import FixedRateLeg
+# from ..flows.floatingcoupon import FloatingRateLeg
 from datetime import date 
 from ..timehandles.utils import DayCounterConvention
 from ..timehandles.daycounter import DayCounter
@@ -259,6 +259,37 @@ class OisPricerTestLegs(AbstractPricerAP):
             #         cashflow = ois.notional * rate * yf
             #         pv_flt += cashflow * dc.discount(ois.day_counter_flt.year_fraction(as_of_date, pay_date))
 
+            self.pv_flt = pv_flt
+            self.pv_fix = pv_fix
+            return pv_flt - pv_fix
+        else:
+            raise TypeError("Wrong product type")
+
+    def price_aad(self, product,
+              as_of_date: date,
+              curves):
+        with tf.GradientTape() as tape:
+            npv = self.price(product, as_of_date, curves)
+        return npv, tape
+           
+class OisPricer(AbstractPricerAP):
+    def __init__(self, curve_name):
+        super().__init__()
+        self.curve_name = curve_name
+
+    def price(self,
+              product,
+              as_of_date: date,
+              curves):
+        if isinstance(product, Ois):
+            ois = product
+            dc = curves[self.curve_name]
+
+            floating_leg_pricer = OisLegDiscounting(ois.floating_leg)
+            fixed_leg_pricer = FixedLegDiscounting(ois.fixed_leg)
+
+            pv_flt = floating_leg_pricer.price(dc, as_of_date)
+            pv_fix = fixed_leg_pricer.price(dc, as_of_date)
             self.pv_flt = pv_flt
             self.pv_fix = pv_fix
             return pv_flt - pv_fix

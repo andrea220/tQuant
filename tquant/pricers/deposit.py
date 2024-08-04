@@ -120,3 +120,47 @@ class DepositPricerTest(AbstractPricerAP):
                             as_of_date,
                             curves)
         return npv, tape
+    
+
+class DepositPricer(Pricer):
+    def __init__(self,
+                 curve_name):
+        super().__init__()
+        self.curve_name = curve_name
+
+    def price(self,
+              product,
+              as_of_date: date,
+              curves):
+        if isinstance(product, Deposit):
+            deposit = product
+            curve = curves[self.curve_name]
+            act365 = DayCounterConvention.Actual365
+            day_counter = DayCounter(act365)
+            ts = day_counter.year_fraction(as_of_date, deposit.start_date)
+            te = day_counter.year_fraction(as_of_date, deposit.end_date)
+            df_s = curve.discount(ts)
+            df_e = curve.discount(te)
+            start_cashflow = 0.0
+            if ts >= 0.0:
+                start_cashflow = 1.0
+            end_cashflow = 0.0
+            if te > 0.0:
+                yf = deposit.day_counter.year_fraction(deposit.start_date, deposit.end_date)
+                end_cashflow = 1.0 + deposit.quote * yf
+            start_cashflow *= deposit.notional
+            end_cashflow *= deposit.notional
+
+            return start_cashflow * df_s - end_cashflow * df_e
+        else:
+            raise TypeError("Wrong product type")
+        
+    def price_aad(self, 
+                    product,
+                    as_of_date: date,
+                    curves):
+        with tf.GradientTape() as tape:
+            npv = self.price(product,
+                            as_of_date,
+                            curves)
+        return npv, tape

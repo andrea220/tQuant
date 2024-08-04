@@ -3,7 +3,10 @@ from abc import ABC, abstractmethod
 class Pricer(ABC):
 
     @abstractmethod
-    def price(self):
+    def price(self,
+              product,
+              trade_date,
+              curves):
         return 
 
 

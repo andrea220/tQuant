@@ -80,83 +80,83 @@ class FixedCoupon(Coupon):
                                                             ) - 1)
 
 
-class FixedRateLeg:
-    def __init__(self,
-                 schedule: list[date],
-                 notionals: list[float],
-                 coupon_rates: list[float], 
-                 daycounter: DayCounter,
-                 compounding: CompoundingType = CompoundingType.Simple,
-                 frequency: Frequency = Frequency.Annual) -> None:
-        self._schedule = schedule
-        self._notionals = notionals
-        self._rates = coupon_rates
-        self._daycounter = daycounter
-        self._compounding = compounding
-        self._frequency = frequency
+# class FixedRateLeg:
+#     def __init__(self,
+#                  schedule: list[date],
+#                  notionals: list[float],
+#                  coupon_rates: list[float], 
+#                  daycounter: DayCounter,
+#                  compounding: CompoundingType = CompoundingType.Simple,
+#                  frequency: Frequency = Frequency.Annual) -> None:
+#         self._schedule = schedule
+#         self._notionals = notionals
+#         self._rates = coupon_rates
+#         self._daycounter = daycounter
+#         self._compounding = compounding
+#         self._frequency = frequency
   
-    @property
-    def schedule(self):
-        return self._schedule
+#     @property
+#     def schedule(self):
+#         return self._schedule
     
-    @property
-    def notionals(self):
-        return self._notionals
+#     @property
+#     def notionals(self):
+#         return self._notionals
     
-    @property
-    def frequency(self):
-        return self._frequency
+#     @property
+#     def frequency(self):
+#         return self._frequency
     
-    @property
-    def compounding(self):
-        return self._compounding
+#     @property
+#     def compounding(self):
+#         return self._compounding
 
-    @property
-    def coupon_rates(self):
-        return [InterestRate(r, self._daycounter, self._compounding, self._frequency) for r in self._rates]
+#     @property
+#     def coupon_rates(self):
+#         return [InterestRate(r, self._daycounter, self._compounding, self._frequency) for r in self._rates]
 
-    @property
-    def payment_adjustment(self):
-        return self._payment_adjustment 
+#     @property
+#     def payment_adjustment(self):
+#         return self._payment_adjustment 
     
-    @payment_adjustment.setter
-    def payment_adjustment(self, payment_adjustment: float):
-        self._payment_adjustment = payment_adjustment
+#     @payment_adjustment.setter
+#     def payment_adjustment(self, payment_adjustment: float):
+#         self._payment_adjustment = payment_adjustment
 
 
-    def leg_flows(self):
-        ''' 
-        Define the leg as a list of FixedCoupon objects
-        TBD: definire bene tutti gli accrual 
-        '''
-        leg = []
-        for i in range(1, len(self._schedule)):
-            period_start_date = self._schedule[i-1]
-            payment_date = self.schedule[i]
-            nom = self._notionals[i-1]
-            r = self._rates[i-1]
+#     def leg_flows(self):
+#         ''' 
+#         Define the leg as a list of FixedCoupon objects
+#         TBD: definire bene tutti gli accrual 
+#         '''
+#         leg = []
+#         for i in range(1, len(self._schedule)):
+#             period_start_date = self._schedule[i-1]
+#             payment_date = self.schedule[i]
+#             nom = self._notionals[i-1]
+#             r = self._rates[i-1]
 
-            leg.append(FixedCoupon(payment_date,
-                                    nom,
-                                    period_start_date,
-                                    payment_date,
-                                    period_start_date,
-                                    payment_date,
-                                    r,
-                                    self._daycounter)
-                            )
-        return leg
+#             leg.append(FixedCoupon(payment_date,
+#                                     nom,
+#                                     period_start_date,
+#                                     payment_date,
+#                                     period_start_date,
+#                                     payment_date,
+#                                     r,
+#                                     self._daycounter)
+#                             )
+#         return leg
     
-    def display_flows(self):
-        flows = self.leg_flows()
-        leg_display = pd.DataFrame()
-        for i in range(len(flows)):
-            coupon_flow = flows[i].display()
-            leg_display = pd.concat([leg_display, coupon_flow], axis = 0)
-        return leg_display
+#     def display_flows(self):
+#         flows = self.leg_flows()
+#         leg_display = pd.DataFrame()
+#         for i in range(len(flows)):
+#             coupon_flow = flows[i].display()
+#             leg_display = pd.concat([leg_display, coupon_flow], axis = 0)
+#         return leg_display
 
 
-class FixedRateLegTest:
+class FixedRateLeg:
     def __init__(self,
                  payment_dates: list[date],
                  period_start_dates: list[date],

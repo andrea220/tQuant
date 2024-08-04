@@ -2,7 +2,7 @@
 Pricing di cash flow fissi
 """
 from .pricer import Pricer 
-from ..flows.fixedcoupon import FixedCoupon, FixedRateLegTest
+from ..flows.fixedcoupon import FixedCoupon, FixedRateLeg
 from ..markethandles.ircurve import RateCurve
 from datetime import date
 import tensorflow as tf
@@ -30,7 +30,7 @@ class FixedCouponDiscounting(Pricer):
 class FixedLegDiscounting(Pricer):
 
     def __init__(self,
-                 leg: FixedRateLegTest) -> None:
+                 leg: FixedRateLeg) -> None:
         self._leg = leg
 
     def price(self,
