@@ -4,10 +4,12 @@ from ..instruments.product import Product
 from ..pricers.pricer import Pricer
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
 from ..timehandles.utils import BusinessDayConvention
+from ..timehandles.targetcalendar import TARGET
 from ..instruments.helpers import DepositGenerator, OisGenerator
 from ..pricers.factory import PricerAssignment
 from ..numericalhandles.newton import newton
 from ..markethandles.utils import Currency
+from ..index.curverateindex import OvernightIndex, IborIndex
 import numpy as np
 
 class CurveBootstrap:
@@ -16,13 +18,15 @@ class CurveBootstrap:
                  daycount_convention: DayCounterConvention) -> None:
         self.evaluation_date = evaluation_date
         self.day_counter = DayCounter(daycount_convention)
+        target_calendar = TARGET()
 
         eur_depo_builder = DepositGenerator(
                                 "EUR",
                                 2,
                                 BusinessDayConvention.ModifiedFollowing,
                                 DayCounterConvention.Actual360,
-                                1.0)
+                                1.0,
+                                target_calendar)
         eur_ois_builder = OisGenerator(
                                 "EUR",
                                 2,
@@ -32,7 +36,9 @@ class CurveBootstrap:
                                 BusinessDayConvention.ModifiedFollowing,
                                 1.0,
                                 DayCounterConvention.Actual360,
-                                DayCounterConvention.Actual360)
+                                DayCounterConvention.Actual360,
+                                target_calendar,
+                                OvernightIndex("ESTR", target_calendar))
         
         self.eur_generator_map = {"depo": eur_depo_builder, 
                               "ois": eur_ois_builder}

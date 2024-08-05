@@ -7,10 +7,11 @@ from ..index.curverateindex import OvernightIndex
 from ..timehandles.utils import BusinessDayConvention, DayCounterConvention, TimeUnit
 from ..timehandles.daycounter import DayCounter
 from ..timehandles.schedule import ScheduleGenerator, ScheduleGeneratorAP
-from ..timehandles.targetcalendar import TARGET
+from ..timehandles.targetcalendar import TARGET, Calendar
 from ..index.curverateindex import OvernightIndex
 from ..instruments.deposit import Deposit, DepositAP
 from ..instruments.ois import Ois, OisAP, OisTest
+from ..index.curverateindex import IborIndex, OvernightIndex, Index
 
 import re
 
@@ -278,29 +279,28 @@ class DepositGenerator(ProductGenerator):
                  start_delay: int,
                  roll_convention: BusinessDayConvention,
                  day_count_convention: DayCounterConvention,
-                 notional: float):
-        super().__init__(name='depo', ccy=ccy, notional=notional)
+                 notional: float,
+                 calendar: Calendar):
+        super().__init__('depo', ccy, notional)
         self.start_delay = start_delay
         self.roll_convention = roll_convention
         self.day_count_convention = day_count_convention
+        self.calendar = calendar
 
     def build(self, trade_date: date, quote: float, term: str):
-
-        calendar = TARGET()
-
         if term == 'O/N' or term == 'ON':
             start_date = trade_date
-            maturity = calendar.advance(start_date, 1, TimeUnit.Days, self.roll_convention)
+            maturity = self.calendar.advance(start_date, 1, TimeUnit.Days, self.roll_convention)
         elif term == 'T/N' or term == 'TN':
-            start_date = calendar.advance(trade_date, 1, TimeUnit.Days, self.roll_convention)
-            maturity = calendar.advance(start_date, 1, TimeUnit.Days, self.roll_convention)
+            start_date = self.calendar.advance(trade_date, 1, TimeUnit.Days, self.roll_convention)
+            maturity = self.calendar.advance(start_date, 1, TimeUnit.Days, self.roll_convention)
         elif term == 'S/N' or term == 'SN':
-            start_date = calendar.advance(trade_date, 2, TimeUnit.Days, self.roll_convention)
-            maturity = calendar.advance(start_date, 1, TimeUnit.Days, self.roll_convention)
+            start_date = self.calendar.advance(trade_date, 2, TimeUnit.Days, self.roll_convention)
+            maturity = self.calendar.advance(start_date, 1, TimeUnit.Days, self.roll_convention)
         else:
             tenor, time_unit = decode_term(term)
-            start_date = calendar.advance(trade_date, 2, TimeUnit.Days, self.roll_convention)
-            maturity = calendar.advance(trade_date, tenor, time_unit, self.roll_convention)
+            start_date = self.calendar.advance(trade_date, 2, TimeUnit.Days, self.roll_convention)
+            maturity = self.calendar.advance(trade_date, tenor, time_unit, self.roll_convention)
 
         return Deposit(self.ccy,
                        quote,
@@ -322,7 +322,9 @@ class OisGenerator(ProductGenerator):
                  roll_convention: BusinessDayConvention,
                  notional: float,
                  day_count_convention_fix: DayCounterConvention,
-                 day_count_convention_flt: DayCounterConvention):
+                 day_count_convention_flt: DayCounterConvention,
+                 calendar: Calendar,
+                 index: Index):
         super().__init__('ois', ccy, notional)
         self.start_delay = start_delay
         self.fixing_days = fixing_days
@@ -332,27 +334,29 @@ class OisGenerator(ProductGenerator):
         self.notional = notional
         self.day_count_convention_fix = day_count_convention_fix
         self.day_count_convention_flt = day_count_convention_flt
+        self.calendar = calendar
+        self.index = index
 
     def build(self, trade_date: date, quote: float, term: str):
-        calendar = TARGET()
-        index = OvernightIndex("ESTR", calendar)
 
-        start_date = calendar.advance(
+        start_date = self.calendar.advance(
             trade_date, self.start_delay, TimeUnit.Days, self.roll_convention)
 
         period_maturity, time_unit = decode_term(term)
-        maturity = calendar.advance(start_date, period_maturity, time_unit, self.roll_convention)
+        maturity = self.calendar.advance(start_date, period_maturity, time_unit, self.roll_convention)
 
         period_fix, time_unit_fix = decode_term(self.period_fix)
         period_float, time_unit_float = decode_term(self.period_flt)
 
-        schedule_generator = ScheduleGeneratorAP()
+        # schedule_generator = ScheduleGeneratorAP()
+        schedule_generator = ScheduleGenerator(self.calendar, self.roll_convention)
+        schedule_fix = schedule_generator.generate(start_date, maturity, period_fix, time_unit_fix)
+        # schedule_fix = schedule_generator.generate(
+        #     start_date, maturity, period_fix, time_unit_fix, self.roll_convention)
 
-        schedule_fix = schedule_generator.generate(
-            start_date, maturity, period_fix, time_unit_fix, self.roll_convention)
-
-        schedule_float = schedule_generator.generate(
-            start_date, maturity, period_float, time_unit_float, self.roll_convention)
+        schedule_float = schedule_generator.generate(start_date, maturity, period_float, time_unit_float)
+        # schedule_float = schedule_generator.generate(
+        #     start_date, maturity, period_float, time_unit_float, self.roll_convention)
 
         start_fix = []
         end_fix = []
@@ -360,7 +364,7 @@ class OisGenerator(ProductGenerator):
         for i in range(len(schedule_fix) - 1):
             start_fix.append(schedule_fix[i])
             end_fix.append(schedule_fix[i + 1])
-            pay_fix.append(calendar.adjust(schedule_fix[i + 1], self.roll_convention))
+            pay_fix.append(self.calendar.adjust(schedule_fix[i + 1], self.roll_convention))
 
         day_count_fix = DayCounter(self.day_count_convention_fix)
         day_count_flt = DayCounter(self.day_count_convention_flt)
@@ -371,7 +375,7 @@ class OisGenerator(ProductGenerator):
         for i in range(len(schedule_float) - 1):
             start_flt.append(schedule_float[i])
             end_flt.append(schedule_float[i + 1])
-            pay_flt.append(calendar.adjust(schedule_float[i + 1], self.roll_convention))
+            pay_flt.append(self.calendar.adjust(schedule_float[i + 1], self.roll_convention))
 
         fixing_dates = []
         fixing_rates = []
@@ -391,4 +395,4 @@ class OisGenerator(ProductGenerator):
                    self.notional,
                    day_count_fix,
                    day_count_flt,
-                   index)
+                   self.index)
