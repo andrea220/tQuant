@@ -274,13 +274,12 @@ class ProductGenerator(ABC):
 
 class DepositGenerator(ProductGenerator):
     def __init__(self,
-                 name: str,
                  ccy: str,
                  start_delay: int,
                  roll_convention: BusinessDayConvention,
                  day_count_convention: DayCounterConvention,
                  notional: float):
-        super().__init__(name, ccy, notional)
+        super().__init__(name='depo', ccy=ccy, notional=notional)
         self.start_delay = start_delay
         self.roll_convention = roll_convention
         self.day_count_convention = day_count_convention
@@ -315,7 +314,6 @@ class DepositGenerator(ProductGenerator):
 
 class OisGenerator(ProductGenerator):
     def __init__(self,
-                 name: str,
                  ccy: str,
                  start_delay: int,
                  fixing_days: int,
@@ -325,7 +323,7 @@ class OisGenerator(ProductGenerator):
                  notional: float,
                  day_count_convention_fix: DayCounterConvention,
                  day_count_convention_flt: DayCounterConvention):
-        super().__init__(name, ccy, notional)
+        super().__init__('ois', ccy, notional)
         self.start_delay = start_delay
         self.fixing_days = fixing_days
         self.period_fix = period_fix

@@ -2,8 +2,81 @@ from datetime import date
 from .ircurve import RateCurve
 from ..instruments.product import Product
 from ..pricers.pricer import Pricer
+from ..timehandles.daycounter import DayCounter, DayCounterConvention
+from ..timehandles.utils import BusinessDayConvention
+from ..instruments.helpers import DepositGenerator, OisGenerator
+from ..pricers.factory import PricerAssignment
+from ..numericalhandles.newton import newton
+from ..markethandles.utils import Currency
 import numpy as np
 
+class CurveBootstrap:
+    def __init__(self,
+                 evaluation_date: date,
+                 daycount_convention: DayCounterConvention) -> None:
+        self.evaluation_date = evaluation_date
+        self.day_counter = DayCounter(daycount_convention)
+
+        eur_depo_builder = DepositGenerator(
+                                "EUR",
+                                2,
+                                BusinessDayConvention.ModifiedFollowing,
+                                DayCounterConvention.Actual360,
+                                1.0)
+        eur_ois_builder = OisGenerator(
+                                "EUR",
+                                2,
+                                2,
+                                "1Y",
+                                "1Y",
+                                BusinessDayConvention.ModifiedFollowing,
+                                1.0,
+                                DayCounterConvention.Actual360,
+                                DayCounterConvention.Actual360)
+        
+        self.eur_generator_map = {"depo": eur_depo_builder, 
+                              "ois": eur_ois_builder}
+
+    def strip(self,
+              generators: list[str],
+              maturities: list[str],
+              quotes: list[float],
+              curve_name: str,
+              currency: Currency,
+              interpolation: str = 'LINEAR',
+              market_data: dict = {},
+              is_spread_curve: bool = False):
+        if currency == Currency.EUR:
+            generator_map = self.eur_generator_map
+        products = []
+        pricers = []
+        for i, generator in enumerate(generators):
+            builder = generator_map[generator]
+            product = builder.build(self.evaluation_date, quotes[i], maturities[i])
+            products.append(product)
+            pricer = PricerAssignment.create(product, curve_name)
+            pricers.append(pricer)
+        pillars = []
+        zero_rates = []
+        for i in range(len(maturities)):
+            pillars.append(self.day_counter.year_fraction(self.evaluation_date, products[i].maturity))
+            zero_rates.append(0.01)
+        if is_spread_curve:
+            # base_curve = market_data[base_curve_name]
+            # bootstrapping_curve = SpreadCurve(pillars, zero_rates, base_curve)
+            pass
+        else:
+            bootstrapping_curve = RateCurve(pillars, zero_rates, interpolation)
+        market_data[curve_name] = bootstrapping_curve
+        func = ObjectiveFunction(self.evaluation_date,
+                                bootstrapping_curve,
+                                products,
+                                pricers,
+                                market_data)
+        x = np.array(zero_rates).astype(np.float64) # initial guess
+        bootstrapped_rates, rates_jac = newton(func, x)
+        bootstrapping_curve.set_rates(bootstrapped_rates)
+        return bootstrapping_curve
 
 
 class ObjectiveFunction:
