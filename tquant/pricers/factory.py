@@ -7,6 +7,9 @@ from .deposit import DepositPricer
 from ..instruments.ois import Ois
 from .swapdiscounting import OisPricer
 
+from ..instruments.forward import Fra
+from .fradiscounting import FraPricer
+
 
 class PricerAssignment:
     """ 
@@ -14,10 +17,12 @@ class PricerAssignment:
     
     """
     @staticmethod
-    def create(product: Product, curve_name: str):
+    def create(product: Product, curve_map: dict):
         if type(product) == Deposit:
-            return DepositPricer(curve_name)
+            return DepositPricer(curve_map)
         elif type(product) == Ois:
-            return OisPricer(curve_name)
+            return OisPricer(curve_map)
+        elif type(product) == Fra:
+            return FraPricer(curve_map)
         else:
             raise TypeError(f"{product} is a wrong product type")

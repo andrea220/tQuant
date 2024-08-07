@@ -3,6 +3,7 @@ from datetime import date
 from ..timehandles.utils import BusinessDayConvention, TimeUnit
 from .index import Index
 from ..timehandles.tqcalendar import Calendar
+from ..markethandles.utils import Currency
 
 class OvernightIndex(Index):
     """
@@ -25,14 +26,15 @@ class OvernightIndex(Index):
 
     """
     def __init__(self,
-                 name: str,
                  fixing_calendar: Calendar,
+                 currency: Currency = None,
                  fixing_days: int = None,
                  time_series: dict = None) -> None:
-        super().__init__(name,
+        super().__init__(currency.value + ":ON",
                          fixing_calendar,
                          time_series)      
         self._fixing_days = fixing_days
+        self._currency = currency
     
     @property
     def fixing_days(self) -> int:
@@ -100,18 +102,20 @@ class IborIndex(Index):
 
     """
     def __init__(self,
-                 name: str,
                  fixing_calendar: Calendar,
                  tenor: int,
                  time_unit: TimeUnit,
+                 currency: Currency,
                  fixing_days: int = None,
                  time_series: dict = None) -> None:
-        super().__init__(name,
+        # self._name = currency.value + ":" + str(tenor) +  time_unit.value[0]
+        super().__init__(currency.value + ":" + str(tenor) +  time_unit.value[0],
                          fixing_calendar,
                          time_series)      
         self._fixing_days = fixing_days
         self._tenor = tenor 
-        self._time_unit = time_unit        
+        self._time_unit = time_unit
+        self._currency = currency        
     
     @property
     def fixing_days(self) -> int:
@@ -127,7 +131,8 @@ class IborIndex(Index):
             return 0
         else:
             return self._fixing_days
-    
+
+
     def fixing_maturity(self, fixing_date: date) -> date:
         """
         Calculate the fixing maturity date based on the fixing date and index conventions.

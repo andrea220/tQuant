@@ -11,6 +11,7 @@ from ..timehandles.targetcalendar import TARGET, Calendar
 from ..index.curverateindex import OvernightIndex
 from ..instruments.deposit import Deposit, DepositAP
 from ..instruments.ois import Ois, OisAP, OisTest
+from ..instruments.forward import Fra
 from ..index.curverateindex import IborIndex, OvernightIndex, Index
 
 import re
@@ -275,7 +276,7 @@ class ProductGenerator(ABC):
 
 class DepositGenerator(ProductGenerator):
     def __init__(self,
-                 ccy: str,
+                 ccy: Currency,
                  start_delay: int,
                  roll_convention: BusinessDayConvention,
                  day_count_convention: DayCounterConvention,
@@ -395,4 +396,62 @@ class OisGenerator(ProductGenerator):
                    self.notional,
                    day_count_fix,
                    day_count_flt,
+                   self.index)
+    
+
+class FraGenerator(ProductGenerator):
+    def __init__(self,
+                 ccy: str,
+                 start_delay: int,
+                 fixing_days: int,
+                 index_term: str,
+                 roll_convention: BusinessDayConvention,
+                 notional: float,
+                 day_count_convention: DayCounterConvention,
+                 calendar: Calendar,
+                 index: Index):
+        super().__init__('fra', ccy, notional)
+        self.ccy = ccy
+        self.start_delay = start_delay
+        self.fixing_days = fixing_days
+        self.index_term = index_term
+        self.roll_convention = roll_convention
+        self.notional = notional
+        self.day_count_convention = day_count_convention
+        # self.index_day_count_convention = index_day_count_convention
+        self.calendar = calendar
+        self.index = index
+
+    def build(self, trade_date: date, quote: float, term: str):
+
+        shifters = term.split('-')
+        if len(shifters) != 2:
+            raise ValueError("Wrong term specified: " + term)
+
+        settlement_date = self.calendar.advance(
+            trade_date, self.start_delay, TimeUnit.Days, self.roll_convention)
+
+        start_period, start_time_unit = decode_term(shifters[0])
+        start_date = self.calendar.advance(settlement_date, start_period, start_time_unit, self.roll_convention)
+
+        end_period, end_time_unit = decode_term(shifters[1])
+        end_date = self.calendar.advance(settlement_date, end_period, end_time_unit, self.roll_convention)
+
+        day_counter = DayCounter(self.day_count_convention)
+        # index_day_counter = DayCounter(self.index_day_count_convention)
+
+        # fixing_date = calendar.advance(start_date, -self.fixing_days, TimeUnit.Days, self.roll_convention)
+        # index_start_date = calendar.advance(
+        #     fixing_date, self.start_delay, TimeUnit.Days, self.roll_convention)
+
+        # index_period, index_time_unit = decode_term(self.index_term)
+        # index_end_date = calendar.advance(
+        #     index_start_date, index_period, index_time_unit, self.roll_convention)
+
+        return Fra(self.ccy,
+                   start_date,
+                   end_date,
+                   self.notional,
+                   quote,
+                   day_counter,
                    self.index)

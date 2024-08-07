@@ -124,9 +124,9 @@ class DepositPricerTest(AbstractPricerAP):
 
 class DepositPricer(Pricer):
     def __init__(self,
-                 curve_name):
+                 curve_map):
         super().__init__()
-        self.curve_name = curve_name
+        self._curve_map = curve_map
 
     def price(self,
               product,
@@ -134,7 +134,12 @@ class DepositPricer(Pricer):
               curves):
         if isinstance(product, Deposit):
             deposit = product
-            curve = curves[self.curve_name]
+            try:
+                curve_usage = product.ccy.value + ":ON"
+                curve_ccy, curve_tenor = curve_usage.split(":")
+                curve = curves[self._curve_map[curve_ccy][curve_tenor]]
+            except:
+                raise ValueError("Unknown Curve")
             act365 = DayCounterConvention.Actual365
             day_counter = DayCounter(act365)
             ts = day_counter.year_fraction(as_of_date, deposit.start_date)

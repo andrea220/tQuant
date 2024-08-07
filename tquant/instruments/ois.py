@@ -2,7 +2,7 @@ from datetime import date
 
 from .product import Product, ProductAP
 from ..timehandles.daycounter import DayCounter
-# from ..markethandles.utils import Currency, SwapType
+from ..markethandles.utils import Currency#, SwapType
 from ..index.index import Index
 # from ..timehandles.utils import DayCounterConvention
 from ..flows.fixedcoupon import FixedRateLeg
@@ -85,7 +85,7 @@ class OisTest(ProductAP):
 
 class Ois(Product):
     def __init__(self,
-                 ccy: str,
+                 ccy: Currency,
                  start_date: date,
                  end_date: date,
                  start_dates_fix: list[date],

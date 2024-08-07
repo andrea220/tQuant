@@ -8,7 +8,7 @@ from ..markethandles.utils import Currency
 
 class Deposit(Product):
     def __init__(self,
-                 ccy: str,
+                 ccy: Currency,
                  quote: float,
                  trade_date: date,
                  start_date: date,

@@ -272,10 +272,10 @@ class OisPricerTestLegs(AbstractPricerAP):
             npv = self.price(product, as_of_date, curves)
         return npv, tape
            
-class OisPricer(AbstractPricerAP):
-    def __init__(self, curve_name):
+class OisPricer(Pricer):
+    def __init__(self, curve_map):
         super().__init__()
-        self.curve_name = curve_name
+        self._curve_map = curve_map
 
     def price(self,
               product,
@@ -283,7 +283,12 @@ class OisPricer(AbstractPricerAP):
               curves):
         if isinstance(product, Ois):
             ois = product
-            dc = curves[self.curve_name]
+            try:
+                curve_usage = product._index.name
+                curve_ccy, curve_tenor = curve_usage.split(":")
+                dc = curves[self._curve_map[curve_ccy][curve_tenor]]
+            except:
+                raise ValueError("Unknown Curve")
 
             floating_leg_pricer = OisLegDiscounting(ois.floating_leg)
             fixed_leg_pricer = FixedLegDiscounting(ois.fixed_leg)

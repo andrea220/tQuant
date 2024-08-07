@@ -3,9 +3,9 @@ from .ircurve import RateCurve
 from ..instruments.product import Product
 from ..pricers.pricer import Pricer
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
-from ..timehandles.utils import BusinessDayConvention
+from ..timehandles.utils import BusinessDayConvention, TimeUnit
 from ..timehandles.targetcalendar import TARGET
-from ..instruments.helpers import DepositGenerator, OisGenerator
+from ..instruments.helpers import DepositGenerator, OisGenerator, FraGenerator
 from ..pricers.factory import PricerAssignment
 from ..numericalhandles.newton import newton
 from ..markethandles.utils import Currency
@@ -15,20 +15,22 @@ import numpy as np
 class CurveBootstrap:
     def __init__(self,
                  evaluation_date: date,
-                 daycount_convention: DayCounterConvention) -> None:
+                 daycount_convention: DayCounterConvention,
+                 curve_map: dict) -> None:
         self.evaluation_date = evaluation_date
         self.day_counter = DayCounter(daycount_convention)
+        self._curve_map = curve_map
         target_calendar = TARGET()
 
         eur_depo_builder = DepositGenerator(
-                                "EUR",
+                                Currency.EUR,
                                 2,
                                 BusinessDayConvention.ModifiedFollowing,
                                 DayCounterConvention.Actual360,
                                 1.0,
                                 target_calendar)
         eur_ois_builder = OisGenerator(
-                                "EUR",
+                                Currency.EUR,
                                 2,
                                 2,
                                 "1Y",
@@ -38,10 +40,20 @@ class CurveBootstrap:
                                 DayCounterConvention.Actual360,
                                 DayCounterConvention.Actual360,
                                 target_calendar,
-                                OvernightIndex("ESTR", target_calendar))
+                                OvernightIndex(target_calendar, Currency.EUR))
+        eur_fra_builder = FraGenerator(Currency.EUR,
+                            2,
+                            2,
+                            "6M",
+                            BusinessDayConvention.ModifiedFollowing,
+                            1.0,
+                            DayCounterConvention.Actual360, 
+                            target_calendar,
+                            IborIndex(target_calendar, 6, TimeUnit.Months, Currency.EUR))
         
         self.eur_generator_map = {"depo": eur_depo_builder, 
-                              "ois": eur_ois_builder}
+                                  "ois": eur_ois_builder,
+                                  "fra": eur_fra_builder}
 
     def strip(self,
               generators: list[str],
@@ -60,7 +72,7 @@ class CurveBootstrap:
             builder = generator_map[generator]
             product = builder.build(self.evaluation_date, quotes[i], maturities[i])
             products.append(product)
-            pricer = PricerAssignment.create(product, curve_name)
+            pricer = PricerAssignment.create(product, self._curve_map)
             pricers.append(pricer)
         pillars = []
         zero_rates = []
