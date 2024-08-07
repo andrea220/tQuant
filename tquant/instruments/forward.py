@@ -19,4 +19,4 @@ class Fra(Product):
         self.end_date = end_date
         self.notional = notional
         self.day_counter = day_counter
-        self.index = index
+        self._index = index

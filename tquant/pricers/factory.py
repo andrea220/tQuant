@@ -10,6 +10,9 @@ from .swapdiscounting import OisPricer
 from ..instruments.forward import Fra
 from .fradiscounting import FraPricer
 
+from ..instruments.swap import Swap
+from .swapdiscounting import SwapPricer
+
 
 class PricerAssignment:
     """ 
@@ -24,5 +27,7 @@ class PricerAssignment:
             return OisPricer(curve_map)
         elif type(product) == Fra:
             return FraPricer(curve_map)
+        elif type(product) == Swap:
+            return SwapPricer(curve_map)
         else:
             raise TypeError(f"{product} is a wrong product type")

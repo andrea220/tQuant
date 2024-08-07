@@ -15,7 +15,7 @@ class ProductAP(ABC):
 
 class Product(ABC):
     def __init__(self,
-                 ccy: str,
+                 ccy: Currency,
                  start_date: date,
                  maturity: date,
                  quote: float):

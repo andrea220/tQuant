@@ -5,7 +5,7 @@ from ..pricers.pricer import Pricer
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
 from ..timehandles.utils import BusinessDayConvention, TimeUnit
 from ..timehandles.targetcalendar import TARGET
-from ..instruments.helpers import DepositGenerator, OisGenerator, FraGenerator
+from ..instruments.helpers import DepositGenerator, OisGenerator, FraGenerator,SwapGenerator
 from ..pricers.factory import PricerAssignment
 from ..numericalhandles.newton import newton
 from ..markethandles.utils import Currency
@@ -51,9 +51,22 @@ class CurveBootstrap:
                             target_calendar,
                             IborIndex(target_calendar, 6, TimeUnit.Months, Currency.EUR))
         
+        eur_swap6m_builder = SwapGenerator(Currency.EUR,
+                                           2,
+                                           "1Y",
+                                           "6M",
+                                           BusinessDayConvention.ModifiedFollowing,
+                                           1.0,
+                                           DayCounterConvention.Actual360,
+                                           DayCounterConvention.Actual360,
+                                           target_calendar,
+                                           IborIndex(target_calendar, 6, TimeUnit.Months, Currency.EUR)
+                                           )
+        
         self.eur_generator_map = {"depo": eur_depo_builder, 
                                   "ois": eur_ois_builder,
-                                  "fra": eur_fra_builder}
+                                  "fra": eur_fra_builder,
+                                  "swap": eur_swap6m_builder}
 
     def strip(self,
               generators: list[str],

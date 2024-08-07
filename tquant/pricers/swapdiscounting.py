@@ -1,6 +1,7 @@
 from .pricer import Pricer, AbstractPricerAP
 from ..instruments.swap import InterestRateSwap
 from ..instruments.ois import Ois, OisAP, OisTest
+from ..instruments.swap import Swap
 from ..markethandles.utils import SwapType
 from .floatingflow import FloatingLegDiscounting, FloatingCouponDiscounting, OisLegDiscounting
 from .fixedflow import FixedLegDiscounting, FixedCouponDiscounting
@@ -294,6 +295,46 @@ class OisPricer(Pricer):
             fixed_leg_pricer = FixedLegDiscounting(ois.fixed_leg)
 
             pv_flt = floating_leg_pricer.price(dc, as_of_date)
+            pv_fix = fixed_leg_pricer.price(dc, as_of_date)
+            self.pv_flt = pv_flt
+            self.pv_fix = pv_fix
+            return pv_flt - pv_fix
+        else:
+            raise TypeError("Wrong product type")
+
+    def price_aad(self, product,
+              as_of_date: date,
+              curves):
+        with tf.GradientTape() as tape:
+            npv = self.price(product, as_of_date, curves)
+        return npv, tape
+           
+class SwapPricer(Pricer):
+    def __init__(self, curve_map):
+        super().__init__()
+        self._curve_map = curve_map
+
+    def price(self,
+              product,
+              as_of_date: date,
+              curves):
+        if isinstance(product, Swap):
+            ois = product
+            try:
+                curve_usage = product.ccy.value + ":ON"
+                curve_ccy, curve_tenor = curve_usage.split(":")
+                dc = curves[self._curve_map[curve_ccy][curve_tenor]]
+
+                curve_usage = product._index.name
+                curve_ccy, curve_tenor = curve_usage.split(":")
+                fc = curves[self._curve_map[curve_ccy][curve_tenor]]
+            except:
+                raise ValueError("Unknown Curve")
+
+            floating_leg_pricer = FloatingLegDiscounting(ois.floating_leg)
+            fixed_leg_pricer = FixedLegDiscounting(ois.fixed_leg)
+
+            pv_flt = floating_leg_pricer.price(dc, fc, as_of_date)
             pv_fix = fixed_leg_pricer.price(dc, as_of_date)
             self.pv_flt = pv_flt
             self.pv_fix = pv_fix
