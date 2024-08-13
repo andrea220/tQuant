@@ -8,6 +8,16 @@ from ..timehandles.daycounter import DayCounter
 from ..markethandles.utils import Currency, SwapType
 
 class Swap(Product):
+    """
+    Represents an interest rate swap.
+
+    An interest rate swap is a financial derivative contract in which two parties agree 
+    to exchange interest rate payments on a notional amount over a specified period. 
+    Typically, one party pays a fixed rate while the other pays a floating rate. This 
+    class models the swap with both fixed and floating legs, including attributes for 
+    payment dates, notional amounts, and relevant day count conventions.
+    """ 
+
     def __init__(self,
                  ccy: Currency,
                  start_date: date,
@@ -22,7 +32,41 @@ class Swap(Product):
                  notional: float,
                  day_counter_fix: DayCounter,
                  day_counter_flt: DayCounter,
-                 index: Index):
+                 index: Index) -> None:
+        """
+        Initializes a Swap instance with the specified attributes.
+
+        Parameters:
+        -----------
+        ccy: Currency
+            The currency in which the swap is denominated.
+        start_date: date
+            The date on which the swap starts.
+        end_date: date
+            The date on which the swap ends.
+        start_dates_fix: list[date]
+            The start dates for the fixed leg periods.
+        end_dates_fix: list[date]
+            The end dates for the fixed leg periods.
+        pay_dates_fix: list[date]
+            The payment dates for the fixed leg.
+        start_dates_flt: list[date]
+            The start dates for the floating leg periods.
+        end_dates_flt: list[date]
+            The end dates for the floating leg periods.
+        pay_dates_flt: list[date]
+            The payment dates for the floating leg.
+        quote: float
+            The fixed interest rate agreed upon in the swap contract.
+        notional: float
+            The principal or face value on which the interest payments are calculated.
+        day_counter_fix: DayCounter
+            The day count convention used for the fixed leg.
+        day_counter_flt: DayCounter
+            The day count convention used for the floating leg.
+        index: Index
+            The floating rate index used in the swap, such as LIBOR or EURIBOR.
+        """
         super().__init__(ccy, start_date, end_date, quote)
         self.start_dates_fix = start_dates_fix
         self.end_dates_fix = end_dates_fix
@@ -48,7 +92,9 @@ class Swap(Product):
         self.floating_leg = FloatingRateLeg(pay_dates_flt, start_dates_flt, end_dates_flt,
                                     self._float_notionals, self._gearings, self._margins, index, day_counter_flt)      
 
-class InterestRateSwap(Product): #TODO creare classe generica che gestisca tutte le gambe
+
+# DEPRECATED
+class InterestRateSwap(Product): 
     ''' 
     classe custom che gestisce schedule in input
     '''
@@ -81,7 +127,7 @@ class InterestRateSwap(Product): #TODO creare classe generica che gestisca tutte
     def price(self, value):
         self._price = value
 
-
+# DEPRECATED
 class InterestRateSwap2(Product):
     def __init__(self, 
                 leg1,

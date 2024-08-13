@@ -6,7 +6,7 @@ from ..timehandles.utils import DayCounterConvention
 from ..markethandles.utils import Position
 
 
-class ForwardRateAgreement(Product): #TODO da aggiustare
+class ForwardRateAgreement(Product): #TODO da eliminare, deprecata
     def __init__(self, 
                 start_date: date,
                 maturity_date: date,

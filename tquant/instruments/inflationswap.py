@@ -1,3 +1,5 @@
+
+## DEPRECATED
 from datetime import date
 from ..interface.trade import Trade
 from ..interface.index import Index

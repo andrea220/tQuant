@@ -8,16 +8,10 @@ from ..timehandles.utils import Settings
 
 class Index(ABC):
     """
-    Abstract class representing an index.
+    An abstract base class representing a financial index.
 
-    Attributes:
-    -----------
-        _name: str
-            The name of the index.
-        _fixing_calendar Calendar
-            The calendar used for determining fixing dates.
-        _fixing_time_series: dict
-            A dictionary containing fixing time series data.
+    This class serves as a blueprint for specific index implementations, providing 
+    core attributes and methods for handling index fixings and related data.
 
     """
     @abstractmethod
@@ -26,6 +20,18 @@ class Index(ABC):
                  fixing_calendar: Calendar,
                  fixing_time_series: dict 
                  ) -> None:
+        """
+        Initializes an Index instance with the specified attributes.
+
+        Parameters:
+        -----------
+        name: str
+            The name of the index.
+        fixing_calendar: Calendar
+            The calendar used for determining fixing dates.
+        fixing_time_series: dict
+            A dictionary containing the fixing time series data.
+        """
         self._name = name
         self._fixing_calendar = fixing_calendar
         self._fixing_time_series = fixing_time_series
@@ -33,77 +39,80 @@ class Index(ABC):
     @property
     def name(self) -> str:
         """
-        Get the name of the index.
+        Gets the name of the index.
 
         Returns:
         -----------
-            str: The name of the index.
-
+        str: The name of the index.
         """
         return self._name
     
     @property
     def fixing_time_series(self)-> dict:
         """
-        Get the fixing time series data.
+        Gets the fixing time series data.
 
         Returns:
         -----------
-            dict: A dictionary containing fixing time series data.
-
+        dict: A dictionary containing the fixing time series data.
         """
         return self._fixing_time_series  
     
     @fixing_time_series.setter
-    def fixing_time_series(self, input_fixings)-> None:
+    def fixing_time_series(self, input_fixings: dict)-> None:
         """
-        Set the fixing time series data.
+        Sets the fixing time series data.
 
         Parameters:
         -----------
-            input_fixings: The fixing time series data to be set.
+        input_fixings: dict
+            A dictionary containing the fixing time series data to be set.
         """
         self._fixing_time_series = input_fixings
  
     @property
     def fixing_calendar(self) -> Calendar:
         """
-        Get the fixing calendar of the index.
+        Gets the fixing calendar of the index.
 
         Returns:
         -----------
-            str: The fixing calendar of the index.
-
+        Calendar: The fixing calendar of the index.
         """
         return self._fixing_calendar
 
     def is_valid_fixing_date(self, date: date) -> bool:
         """
-        Check if the given date is a valid fixing date.
+        Checks if the given date is a valid fixing date based on the index's calendar.
 
         Parameters:
         -----------
-            date: date
-                The date to be checked.
+        date: date
+            The date to be checked.
 
         Returns:
         -----------
-            bool: True if the date is a valid fixing date, False otherwise.
+        bool: True if the date is a valid fixing date, False otherwise.
 
+        Note:
+        -----------
+        This method is currently a placeholder and always returns True.
         """
-        # TODO da implementare la funzione in modo che valuti se la data in input sia valida dato un calendario
+        # TODO: Implement logic to evaluate if the input date is valid given the calendar.
         return True 
     
-    def add_fixing(self, date: date, value: float)-> None:
+    def add_fixing(self,
+                   date: date,
+                   value: float)-> None:
         """
-        Add a fixing value for a specific date to the fixing time series data.
+        Adds a fixing value for a specific date to the fixing time series data.
 
         Parameters:
         -----------
-            date: date
-                The date of the fixing.
-            value: float
-                The fixing value.
+        date: date
+            The date of the fixing.
+        value: float
+            The fixing value.
         """
         fixing_point = {
             self.name: {
@@ -119,20 +128,20 @@ class Index(ABC):
 
     def past_fixing(self, date: date)-> bool:
         """
-        Get the past fixing value for a specific date.
+        Retrieves the past fixing value for a specific date.
 
         Parameters:
         -----------
-            date: date
-                The date for which past fixing is requested.
+        date: date
+            The date for which the past fixing is requested.
 
         Returns:
         -----------
-            bool: The past fixing value for the given date.
+        float: The past fixing value for the given date.
 
         Raises:
-            ValueError: If the given date is not a valid fixing date.
-
+        -----------
+        ValueError: If the given date is not a valid fixing date or the fixing is missing.
         """
         past_fixings = self.fixing_time_series
         if self.is_valid_fixing_date(date):
@@ -141,24 +150,24 @@ class Index(ABC):
             raise ValueError("Not a valid fixing date!")
 
     def fixing(self,
-               date
+               date: date
                )-> float:
         """
-        Get the fixing value for a specific date.
+        Retrieves the fixing value for a specific date.
 
         Parameters:
         -----------
-            date: date
-                The date for which fixing is requested.
+        date: date
+            The date for which the fixing is requested.
 
         Returns:
         -----------
-            float: The fixing value for the given date.
+        float: The fixing value for the given date.
 
         Raises:
         -----------
-            ValueError: If the given date is not a valid date.
-
+        ValueError: If the given date is not a valid date, if fixings are missing, or 
+                    if the requested date is a future date.
         """
         if not self.is_valid_fixing_date:
             raise ValueError("Not a valid date")
