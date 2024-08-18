@@ -22,6 +22,9 @@ class DayCounter:
     def year_fraction(self,
                   d1:date,
                   d2:date):
+        if d1 == d2:
+            return 0.0 
+        
         if self.day_counter_convention == DayCounterConvention.Actual360:
             return self.day_count(d1,d2) / 360.0
         elif self.day_counter_convention == DayCounterConvention.Actual365:
@@ -32,16 +35,14 @@ class DayCounter:
             return self.day_count(d1,d2) / 360.0
         elif self.day_counter_convention == DayCounterConvention.ActualActual:
             
-            if d1.year == d2.year:
-                return self.day_count(d1,d2)/self.year_days(d1.year)
-            else:
-                yearfraction = (date(d1.year,12,31) - d1).days/self.year_days(d1.year)
-                date_year = d1.year
-                while date_year < d2.year:
-                    yearfraction = yearfraction + 1
-                    date_year = date_year + 1
-                yearfraction = (d2 - date(d2.year,1,1))/self.year_days(d2.year)
-                return yearfraction
+            # if d1.year == d2.year:
+            #     return self.day_count(d1,d2)/self.year_days(d1.year)
+            y1 = d1.year
+            y2 = d2.year
+            sum = y2-y1-1
+            sum += self.day_count(d1, date(y1+1,1,1))/self.year_days(y1)
+            sum += self.day_count(date(y2,1,1), d2)/self.year_days(y2)
+            return sum
 
     def day_count(self,
                   d1:date,

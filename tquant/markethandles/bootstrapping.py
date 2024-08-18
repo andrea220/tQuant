@@ -49,8 +49,7 @@ class CurveBootstrap:
                             1.0,
                             DayCounterConvention.Actual360, 
                             target_calendar,
-                            IborIndex(target_calendar, 6, TimeUnit.Months, Currency.EUR))
-        
+                            IborIndex(target_calendar, 6, TimeUnit.Months, Currency.EUR))      
         eur_swap6m_builder = SwapGenerator(Currency.EUR,
                                            2,
                                            "1Y",
@@ -97,7 +96,8 @@ class CurveBootstrap:
             # bootstrapping_curve = SpreadCurve(pillars, zero_rates, base_curve)
             pass
         else:
-            bootstrapping_curve = RateCurve(pillars, zero_rates, interpolation)
+            # bootstrapping_curve = RateCurve(pillars, zero_rates, interpolation)
+            bootstrapping_curve = RateCurve(self.evaluation_date, pillars, zero_rates, interpolation)
         market_data[curve_name] = bootstrapping_curve
         func = ObjectiveFunction(self.evaluation_date,
                                 bootstrapping_curve,
@@ -106,7 +106,8 @@ class CurveBootstrap:
                                 market_data)
         x = np.array(zero_rates).astype(np.float64) # initial guess
         bootstrapped_rates, rates_jac = newton(func, x)
-        bootstrapping_curve.set_rates(bootstrapped_rates)
+        bootstrapping_curve._set_rates(bootstrapped_rates)
+        bootstrapping_curve.jacobian = rates_jac
         return bootstrapping_curve
 
 
@@ -124,12 +125,12 @@ class ObjectiveFunction:
         self.curves = curves
 
     def __call__(self, x):
-        self.rate_curve.set_rates(x)
+        self.rate_curve._set_rates(x)
         res = np.zeros(len(self.pricers))
         jac = np.zeros((len(x), len(x)))
         for i, (pricer, product) in enumerate(zip(self.pricers, self.products)):
             pv, tape = pricer.price_aad(product, self.trade_date, self.curves)
-            gradients = tape.gradient(pv, [self.rate_curve.rates])
+            gradients = tape.gradient(pv, [self.rate_curve._rates])
             res[i] = pv
             jac[i,:] = np.array(gradients[0])
         return res, np.nan_to_num(jac, nan=0.0)

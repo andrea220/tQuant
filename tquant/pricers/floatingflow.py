@@ -20,7 +20,7 @@ class OisCouponDiscounting(Pricer):
                     term_structure: RateCurve,
                     evaluation_date: date):
         if start_date >= evaluation_date: # forecast
-            return term_structure.forward_rate(start_date, end_date, self._coupon.day_counter, evaluation_date) 
+            return term_structure.forward_rate(start_date, end_date)#, self._coupon.day_counter, evaluation_date) 
         else: # historical
             new_date = self._coupon.index.fixing_date(self._coupon.fixing_date)
             return self._coupon.index.fixing(new_date)
@@ -56,7 +56,7 @@ class FloatingCouponDiscounting(Pricer):
                     term_structure: RateCurve,
                     evaluation_date: date):
         if start_date >= evaluation_date: # forecast
-            return term_structure.forward_rate(start_date, end_date, self._coupon.day_counter, evaluation_date) 
+            return term_structure.forward_rate(start_date, end_date)#, self._coupon.day_counter, evaluation_date) 
         else: # historical
             new_date = self._coupon.index.fixing_date(self._coupon.fixing_date)
             return self._coupon.index.fixing(new_date)

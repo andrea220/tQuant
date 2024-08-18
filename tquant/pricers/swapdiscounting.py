@@ -1,4 +1,4 @@
-from .pricer import Pricer, AbstractPricerAP
+from .pricer import Pricer#, AbstractPricerAP
 from ..instruments.swap import InterestRateSwap
 from ..instruments.ois import Ois#, OisAP, OisTest
 from ..instruments.swap import Swap
