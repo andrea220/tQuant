@@ -57,6 +57,7 @@ Here you can find basic examples of how to use `tQuant`:
 - [**`Coupon pricer`**](https://github.com/andrea220/tQuant/blob/main/examples/coupons_pricer.ipynb): price and sensitivities of fixed/floating coupons and legs.
 - [**`Forward rate agreement`**](https://github.com/andrea220/tQuant/blob/main/examples/fra.ipynb): price and sensitivities of Forward Rate Agreement.
 - [**`Interest rate swaps`**](https://github.com/andrea220/tQuant/blob/main/examples/swap.ipynb): price and sensitivities of interest rate swaps.
+- [**`Bootstrapping`**](https://github.com/andrea220/tQuant/blob/main/examples/bootstrapping.ipynb): bootstrapping example.
 - [**`Credit default swaps`**](https://github.com/andrea220/tQuant/blob/main/examples/cds.ipynb): price and sensitivities of credit default swaps.
 - [**`Hull and White model`**](https://github.com/andrea220/tQuant/blob/main/examples/hullwhite.ipynb): simulation of the Hull and White model.
 
