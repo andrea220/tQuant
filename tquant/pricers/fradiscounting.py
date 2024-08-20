@@ -1,5 +1,6 @@
 from .pricer import Pricer
 from ..instruments.forward import Fra
+from ..markethandles.ircurve import RateCurve
 
 from datetime import date 
 import tensorflow as tf
@@ -35,7 +36,7 @@ class FraPricer(Pricer):
     def price(self,
               product: Fra,
               as_of_date: date,
-              curves):
+              curves: dict[RateCurve]):
         if isinstance(product, Fra):
             fra = product
             try:
@@ -52,12 +53,9 @@ class FraPricer(Pricer):
             pv = 0.0
             if fra.start_date > as_of_date:
                 accrual = fra.day_counter.year_fraction(fra.start_date, fra.end_date)
-                pv += fra.notional * accrual * (fc.forward_rate(fra.start_date,
-                                                                fra.end_date,
-                                                                fra.day_counter,
-                                                                as_of_date) - fra.quote) * dc.discount(fra.day_counter.year_fraction(as_of_date, fra.end_date))
-
-            return pv #TODO check pricing function quantlib
+                fwd = fc.forward_rate(fra.start_date, fra.end_date) #TODO quantlib check del forward
+                pv += fra.notional * accrual * (fwd - fra.quote) * dc.discount(fra.day_counter.year_fraction(as_of_date, fra.end_date))
+            return pv / (1 + fwd*accrual) 
         else:
             raise TypeError("Wrong product type")
 

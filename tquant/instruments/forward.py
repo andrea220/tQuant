@@ -1,6 +1,6 @@
 from datetime import date
 from .product import Product
-from ..index.index import Index
+from ..index.curverateindex import IborIndex
 from ..timehandles.utils import DayCounterConvention
 from ..timehandles.tqcalendar import Calendar
 from ..markethandles.utils import Currency
@@ -22,7 +22,7 @@ class Fra(Product):
                  notional: float,
                  quote: float,
                  day_counter: DayCounterConvention,
-                 index: Index):
+                 index: IborIndex):
         """
         Initializes an Fra instance with the specified attributes.
 
@@ -49,3 +49,7 @@ class Fra(Product):
         self.notional = notional
         self.day_counter = day_counter
         self._index = index
+
+    @property
+    def fixing_date(self):
+        return self._index.fixing_date(self.start_date)

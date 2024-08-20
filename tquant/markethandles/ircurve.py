@@ -220,7 +220,7 @@ class RateCurve:
         -----------
         float: The forward rate between d1 and d2.
         """
-        if isinstance(d1, date) and isinstance(d2, date):
+        if isinstance(d1, date) and isinstance(d2, date): #TODO aggiungere anche daycounter
             tau = self._daycounter.year_fraction(d1, d2)
             df1 = self.discount(self._daycounter.year_fraction(self._reference_date, d1))
             df2 = self.discount(self._daycounter.year_fraction(self._reference_date, d2))
