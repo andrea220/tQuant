@@ -1,17 +1,6 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from ..markethandles.utils import Currency
 from datetime import date 
-
-# class ProductAP(ABC):
-#     def __init__(self,
-#                  ccy: str,
-#                  start_date: date,
-#                  maturity: date,
-#                  quote: float):
-#         self.ccy = ccy
-#         self.start_date = start_date
-#         self.maturity = maturity
-#         self.quote = quote
 
 class Product(ABC):
     """

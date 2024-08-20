@@ -1,3 +1,6 @@
+# Tree-based implementation of curve assignment
+# not used at the moment
+ 
 import math
 
 def entropy(data):

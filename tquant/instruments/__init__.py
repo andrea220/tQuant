@@ -1,5 +1,5 @@
 from .swap import *
-from .fra import *
+from .forward import *
 from .cds import *
 from .helpers import *
 from .deposit import *

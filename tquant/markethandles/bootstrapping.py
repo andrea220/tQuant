@@ -22,34 +22,32 @@ class CurveBootstrap:
         self._curve_map = curve_map
         target_calendar = TARGET()
 
-        eur_depo_builder = DepositGenerator(
-                                Currency.EUR,
-                                2,
-                                BusinessDayConvention.ModifiedFollowing,
-                                DayCounterConvention.Actual360,
-                                1.0,
-                                target_calendar)
-        eur_ois_builder = OisGenerator(
-                                Currency.EUR,
-                                2,
-                                2,
-                                "1Y",
-                                "1Y",
-                                BusinessDayConvention.ModifiedFollowing,
-                                1.0,
-                                DayCounterConvention.Actual360,
-                                DayCounterConvention.Actual360,
-                                target_calendar,
-                                OvernightIndex(target_calendar, Currency.EUR))
+        eur_depo_builder = DepositGenerator(Currency.EUR,
+                                            2,
+                                            BusinessDayConvention.ModifiedFollowing,
+                                            DayCounterConvention.Actual360,
+                                            1.0,
+                                            target_calendar)
+        eur_ois_builder = OisGenerator(Currency.EUR,
+                                        2,
+                                        2,
+                                        "1Y",
+                                        "1Y",
+                                        BusinessDayConvention.ModifiedFollowing,
+                                        1.0,
+                                        DayCounterConvention.Actual360,
+                                        DayCounterConvention.Actual360,
+                                        target_calendar,
+                                        OvernightIndex(target_calendar, Currency.EUR))
         eur_fra_builder = FraGenerator(Currency.EUR,
-                            2,
-                            2,
-                            "6M",
-                            BusinessDayConvention.ModifiedFollowing,
-                            1.0,
-                            DayCounterConvention.Actual360, 
-                            target_calendar,
-                            IborIndex(target_calendar, 6, TimeUnit.Months, Currency.EUR))      
+                                        2,
+                                        2,
+                                        "6M",
+                                        BusinessDayConvention.ModifiedFollowing,
+                                        1.0,
+                                        DayCounterConvention.Actual360, 
+                                        target_calendar,
+                                        IborIndex(target_calendar, 6, TimeUnit.Months, Currency.EUR))      
         eur_swap6m_builder = SwapGenerator(Currency.EUR,
                                            2,
                                            "1Y",
@@ -96,7 +94,6 @@ class CurveBootstrap:
             # bootstrapping_curve = SpreadCurve(pillars, zero_rates, base_curve)
             pass
         else:
-            # bootstrapping_curve = RateCurve(pillars, zero_rates, interpolation)
             bootstrapping_curve = RateCurve(self.evaluation_date, pillars, zero_rates, interpolation)
         market_data[curve_name] = bootstrapping_curve
         func = ObjectiveFunction(self.evaluation_date,

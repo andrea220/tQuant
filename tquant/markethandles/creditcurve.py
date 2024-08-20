@@ -1,3 +1,5 @@
+# DEPRECATED
+
 import tensorflow as tf
 from .interestrate import InterestRate
 from ..timehandles.daycounter import DayCounter

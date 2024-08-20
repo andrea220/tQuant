@@ -1,3 +1,5 @@
+# DEPRECATED
+
 from .pricer import Pricer
 from ..instruments.cds import CreditDefaultSwap
 from .defaultflow import DefaultLegDiscount, DefaultCouponDiscounting

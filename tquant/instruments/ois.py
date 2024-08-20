@@ -3,7 +3,7 @@ from datetime import date
 from .product import Product
 from ..timehandles.daycounter import DayCounter
 from ..markethandles.utils import Currency
-# from ..index.index import Index
+from ..index.curverateindex import OvernightIndex
 from ..flows.fixedcoupon import FixedRateLeg
 from ..flows.floatingcoupon import FloatingRateLeg
 
@@ -33,7 +33,7 @@ class Ois(Product):
                  notional: float,
                  day_counter_fix: DayCounter,
                  day_counter_flt: DayCounter,
-                 index):
+                 index: OvernightIndex): #TODO add swaptype
         """
         Initializes an Ois instance with the specified attributes.
 

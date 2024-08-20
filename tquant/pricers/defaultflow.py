@@ -1,6 +1,5 @@
-"""
-Pricing di cash flow floating
-"""
+# DEPRECATED
+
 from .pricer import Pricer 
 from ..flows.defaultcoupon import DefaultCoupon
 from ..flows.defaultcoupon import DefaultLeg

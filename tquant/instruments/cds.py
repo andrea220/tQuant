@@ -1,3 +1,5 @@
+## DEPRECATED
+
 from datetime import date
 from .product import Product
 from ..index.index import Index

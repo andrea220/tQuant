@@ -2,7 +2,6 @@ from datetime import date
 from .product import Product
 from ..index.curverateindex import IborIndex
 from ..timehandles.utils import DayCounterConvention
-from ..timehandles.tqcalendar import Calendar
 from ..markethandles.utils import Currency
 
 class Fra(Product):

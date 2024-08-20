@@ -26,7 +26,6 @@ class FixedCouponDiscounting(Pricer):
             npv = self.price(discount_curve, evaluation_date)
         return npv, tape
     
-
 class FixedLegDiscounting(Pricer):
 
     def __init__(self,
@@ -35,7 +34,7 @@ class FixedLegDiscounting(Pricer):
 
     def price(self,
               discount_curve: RateCurve,
-              evaluation_date: date):#, coupon_pricer: Pricer):
+              evaluation_date: date):
         if len(self._leg.leg_flows) == 0:
             return 0
         npv = 0

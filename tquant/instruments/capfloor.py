@@ -1,4 +1,5 @@
-# from datetime import date
+## DEPRECATED
+
 from .product import Product
 from ..flows.floatingcoupon import FloatingRateLeg
 # from ..index.index import Index
