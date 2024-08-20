@@ -1,3 +1,5 @@
+# DEPRECATED
+
 from .pricer import Pricer 
 from ..flows.premiumcoupon import PremiumCoupon
 from ..flows.premiumcoupon import PremiumLeg

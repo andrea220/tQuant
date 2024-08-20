@@ -11,7 +11,6 @@ class DayCounter:
         self.day_counter_convention = day_counter_convention
         self.include_last_day = 1 if include_last_day else 0
 
-
     def year_days(self,
                   year: int):
         if year % 4 == 0:

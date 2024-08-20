@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 
-class Pricer(ABC):
 
+class Pricer(ABC):
     @abstractmethod
     def price(self,
               product,
@@ -9,11 +9,3 @@ class Pricer(ABC):
               curves):
         return 
 
-
-class AbstractPricerAP:
-    @abstractmethod
-    def price(self,
-              product,
-              trade_date,
-              curves):
-        pass
