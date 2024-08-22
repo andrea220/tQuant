@@ -14,7 +14,7 @@ class DepositPricer(Pricer):
         super().__init__()
         self._curve_map = curve_map
 
-    def price(self,
+    def calculate_price(self,
               product,
               as_of_date: date,
               curves):
@@ -46,12 +46,3 @@ class DepositPricer(Pricer):
         else:
             raise TypeError("Wrong product type")
         
-    def price_aad(self, 
-                    product,
-                    as_of_date: date,
-                    curves):
-        with tf.GradientTape() as tape:
-            npv = self.price(product,
-                            as_of_date,
-                            curves)
-        return npv, tape

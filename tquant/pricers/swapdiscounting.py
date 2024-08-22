@@ -15,7 +15,7 @@ class OisPricer(Pricer):
         super().__init__()
         self._curve_map = curve_map
 
-    def price(self,
+    def calculate_price(self,
               product,
               as_of_date: date,
               curves):
@@ -31,30 +31,24 @@ class OisPricer(Pricer):
             floating_leg_pricer = OisLegDiscounting(ois.floating_leg)
             fixed_leg_pricer = FixedLegDiscounting(ois.fixed_leg)
 
-            pv_flt = floating_leg_pricer.price(dc, as_of_date)
-            pv_fix = fixed_leg_pricer.price(dc, as_of_date)
+            pv_flt = floating_leg_pricer.calculate_price(dc, as_of_date)
+            pv_fix = fixed_leg_pricer.calculate_price(dc, as_of_date)
             self.pv_flt = pv_flt
             self.pv_fix = pv_fix
             return pv_flt - pv_fix
         else:
             raise TypeError("Wrong product type")
 
-    def price_aad(self, product,
-              as_of_date: date,
-              curves):
-        with tf.GradientTape() as tape:
-            npv = self.price(product, as_of_date, curves)
-        return npv, tape
            
 class SwapPricer(Pricer):
     def __init__(self, curve_map):
         super().__init__()
         self._curve_map = curve_map
 
-    def price(self,
-              product,
-              as_of_date: date,
-              curves):
+    def calculate_price(self,
+                        product,
+                        as_of_date: date,
+                        curves):
         if isinstance(product, Swap):
             ois = product
             try:
@@ -71,18 +65,12 @@ class SwapPricer(Pricer):
             floating_leg_pricer = FloatingLegDiscounting(ois.floating_leg)
             fixed_leg_pricer = FixedLegDiscounting(ois.fixed_leg)
 
-            pv_flt = floating_leg_pricer.price(dc, fc, as_of_date)
-            pv_fix = fixed_leg_pricer.price(dc, as_of_date)
+            pv_flt = floating_leg_pricer.calculate_price(dc, fc, as_of_date)
+            pv_fix = fixed_leg_pricer.calculate_price(dc, as_of_date)
             self.pv_flt = pv_flt
             self.pv_fix = pv_fix
             return pv_flt - pv_fix
         else:
             raise TypeError("Wrong product type")
 
-    def price_aad(self, product,
-              as_of_date: date,
-              curves):
-        with tf.GradientTape() as tape:
-            npv = self.price(product, as_of_date, curves)
-        return npv, tape
            

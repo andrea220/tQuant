@@ -11,7 +11,7 @@ class FraPricer(Pricer):
         super().__init__()
         self._curve_map = curve_map
 
-    def price(self,
+    def calculate_price(self,
               product: Fra,
               as_of_date: date,
               curves: dict[RateCurve]):

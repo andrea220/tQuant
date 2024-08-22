@@ -126,7 +126,7 @@ class ObjectiveFunction:
         res = np.zeros(len(self.pricers))
         jac = np.zeros((len(x), len(x)))
         for i, (pricer, product) in enumerate(zip(self.pricers, self.products)):
-            pv, tape = pricer.price_aad(product, self.trade_date, self.curves)
+            pv, tape = pricer.price(product, self.trade_date, self.curves, True)
             gradients = tape.gradient(pv, [self.rate_curve._rates])
             res[i] = pv
             jac[i,:] = np.array(gradients[0])
