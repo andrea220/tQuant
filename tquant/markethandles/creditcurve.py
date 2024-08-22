@@ -3,7 +3,7 @@
 import tensorflow as tf
 from .interestrate import InterestRate
 from ..timehandles.daycounter import DayCounter
-from ..numericalhandles.interpolation import interpolate
+# from ..numericalhandles.interpolation import interpolate
 from tensorflow.python.framework import dtypes
 from datetime import date, timedelta
 
