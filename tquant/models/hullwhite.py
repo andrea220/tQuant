@@ -1,8 +1,11 @@
 import tensorflow as tf
 import math
 from tensorflow.python.framework import dtypes
+from .stochasticprocess import StochasticProcess
+from .ornsteinuhlenbeck import OrnsteinUhlenbeckProcess
+from ..markethandles.ircurve import RateCurve
 
-class HullWhiteProcess:
+class HullWhiteProcessOld:
     def __init__(self, mean_rev: float, sigma: float, market_curve) -> None:
         self.sigma = tf.Variable(mean_rev, dtype=dtypes.float64)
         self.mean_rev = tf.Variable(sigma, dtype=dtypes.float64)
@@ -24,7 +27,6 @@ class HullWhiteProcess:
         f = self.market_curve.inst_fwd(t)
         return f + self.sigma**2 / (2 * self.mean_rev**2) * (1 - math.exp(- self.mean_rev*t))**2
         
-
     def conditional_moments(self, s: float, t: float, r_s: tf.Tensor) -> tuple[tf.Tensor, float]:
         """ 
         This function returns the conditional mean
@@ -99,3 +101,61 @@ class HullWhiteProcess:
         return A*tf.exp(-B*rs)
     
 
+class HullWhiteProcess(StochasticProcess):
+    def __init__(self,
+                 term_structure: RateCurve,
+                 a: float,
+                 sigma: float):
+        self._process = OrnsteinUhlenbeckProcess(mr_speed=a, volatility=sigma, x0=term_structure.inst_fwd(0))
+        self._a = tf.Variable(a, dtype=dtypes.float64)
+        self._sigma = tf.Variable(sigma, dtype=dtypes.float64)
+        self._term_structure = term_structure
+
+    def size(self):
+        return self._process.size()
+    
+    def initial_values(self):
+        return self._process.x0
+    
+    @property
+    def a(self):
+        return self._a.numpy()
+
+    @property
+    def sigma(self):
+        return self._sigma.numpy()
+
+    @property
+    def x0(self):
+        return self._process.x0.numpy()
+    
+    def drift(self, t, x):
+        alpha_drift = self._sigma**2 / (2 * self._a) * (1 - tf.exp(-2 * self._a * t))
+        shift = 0.0001
+        f = self._term_structure.forward_rate(t, t)
+        fup = self._term_structure.forward_rate(t + shift, t + shift)
+        f_prime = (fup - f) / shift
+        alpha_drift += self._a * f + f_prime
+        return self._process.drift(t, x) + alpha_drift
+
+    def diffusion(self, t, x):
+        return self._process.diffusion(t, x) # perché diffusion ha (t,x) se sul c++ ritorna sempre volatility_?
+
+    def expectation(self, t0, x0, dt):
+        return (self._process.expectation(x0=x0, dt=dt) 
+                + self.alpha(t0 + dt) - self.alpha(t0) * tf.exp(-self._a * dt))
+
+    def std_deviation(self, dt, t0=None, x0=None):
+        return self._process.std_deviation(dt=dt)
+
+    def variance(self, dt):
+        return self._process.variance(dt)
+
+    def alpha(self, t):
+        if self.a > 1e-10:
+            alfa = (self._sigma / self._a) * (1 - tf.exp(-self._a * t))
+        else:
+            alfa = self._sigma * t
+        alfa = 0.5 * alfa**2
+        alfa += self._term_structure.inst_fwd(t)
+        return alfa

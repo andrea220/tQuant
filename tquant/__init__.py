@@ -6,3 +6,4 @@ from .flows import *
 from .models import *
 from .pricers import *
 from .instruments import *
+from .analytics import *

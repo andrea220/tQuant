@@ -1,3 +1,5 @@
+# DEPRECATED
+
 from .hullwhite import HullWhiteProcess
 import numpy as np
 import math
@@ -28,7 +30,7 @@ class GaussianRateKernel1D:
         if time_grid is None:
             time_grid = np.linspace(start=0.0, stop=last_grid_time, num=time_steps, retstep=False)
         W = tf.random.normal(shape=(nPaths, len(time_grid)), mean=0, stddev=1, dtype= tf.float64)
-        pillars_dfs = self.process.market_curve.pillars
+        pillars_dfs = self.process.market_curve._pillars
 
         rates = []
         zb_tensor = []
