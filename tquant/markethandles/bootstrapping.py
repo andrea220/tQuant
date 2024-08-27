@@ -60,10 +60,10 @@ class CurveBootstrap:
                                            IborIndex(target_calendar, 6, TimeUnit.Months, Currency.EUR)
                                            )
         
-        self.eur_generator_map = {"depo": eur_depo_builder, 
-                                  "ois": eur_ois_builder,
-                                  "fra": eur_fra_builder,
-                                  "swap": eur_swap6m_builder}
+        self.eur_generator_map = {"Dp": eur_depo_builder, 
+                                  "Os": eur_ois_builder,
+                                  "Fr": eur_fra_builder,
+                                  "Sw": eur_swap6m_builder} 
 
     def strip(self,
               generators: list[str],
