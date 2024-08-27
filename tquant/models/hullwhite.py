@@ -139,8 +139,8 @@ class HullWhiteProcess(StochasticProcess):
         return self._process.drift(t, x) + alpha_drift
 
     def diffusion(self, t, x):
-        return self._process.diffusion(t, x) # perché diffusion ha (t,x) se sul c++ ritorna sempre volatility_?
-
+        return self._process.diffusion(t, x) 
+    
     def expectation(self, t0, x0, dt):
         return (self._process.expectation(x0=x0, dt=dt) 
                 + self.alpha(t0 + dt) - self.alpha(t0) * tf.exp(-self._a * dt))
