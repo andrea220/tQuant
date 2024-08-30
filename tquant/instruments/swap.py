@@ -7,7 +7,7 @@ from ..timehandles.utils import DayCounterConvention
 from ..timehandles.daycounter import DayCounter
 from ..markethandles.utils import Currency, SwapType
 
-class Swap(Product):
+class Swap(Product): #TODO create non standard swap object (custom flows/dates)
     """
     Represents an interest rate swap.
 
@@ -32,7 +32,7 @@ class Swap(Product):
                  notional: float,
                  day_counter_fix: DayCounter,
                  day_counter_flt: DayCounter,
-                 index: Index) -> None:
+                 index: Index) -> None: #TODO inserire payer/receiver 
         """
         Initializes a Swap instance with the specified attributes.
 

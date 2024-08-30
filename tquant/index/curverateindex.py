@@ -181,7 +181,7 @@ class IborIndex(Index):
         -----------
         date: The calculated fixing date.
         """
-        return self.fixing_calendar.advance(value_date, self.fixing_days, TimeUnit.Days, BusinessDayConvention.ModifiedFollowing)
+        return self.fixing_calendar.advance(value_date, -self.fixing_days, TimeUnit.Days, BusinessDayConvention.ModifiedFollowing)
    
 
 

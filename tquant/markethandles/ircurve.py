@@ -43,7 +43,8 @@ class RateCurve:
                  reference_date: date,
                  pillars: Union[list[date], list[float]], 
                  rates: list[float],
-                 interp: str):
+                 interp: str,
+                 daycounter_convention: DayCounterConvention):
         """
         Initializes a RateCurve instance with the specified attributes.
 
@@ -57,16 +58,19 @@ class RateCurve:
             The interest rates corresponding to the pillars.
         interp: str
             The interpolation method used to estimate rates between the pillars.
+        daycounter_convention: DayCounterConvention
+            The daycounter convention used to estimate time fractions.
         """
         self._reference_date = reference_date
-        self._daycounter = DayCounter(DayCounterConvention.ActualActual)
+        self._daycounter_convention = daycounter_convention
+        self._daycounter = DayCounter(daycounter_convention)
         if all(isinstance(d, date) for d in pillars):
             self._dates = pillars
             self._pillars = [self._daycounter.year_fraction(reference_date, d) for d in pillars]
             self._pillar_days = [self._daycounter.day_count(reference_date, d) for d in self._dates]
         elif all(isinstance(d, float) for d in pillars):
             self._dates = [reference_date + timedelta(days=d*365) for d in pillars]
-            self._pillars = pillars #[self._daycounter.year_fraction(reference_date, d) for d in self._dates]
+            self._pillars = pillars 
             self._pillar_days = [self._daycounter.day_count(reference_date, d) for d in self._dates]
         else:
             raise TypeError("Pillars must be a list of either date or float types")
@@ -85,7 +89,8 @@ class RateCurve:
                  reference_date: date,
                  pillars: Union[list[date], list[int]],
                  discount_factors: list[float],
-                 interp: str):
+                 interp: str,
+                 daycounter_convention: DayCounterConvention):
         """
         Creates a RateCurve instance from zero-coupon bond (ZCB) discount factors.
 
@@ -99,12 +104,14 @@ class RateCurve:
             The discount factors corresponding to the pillars.
         interp: str
             The interpolation method used to estimate rates between the pillars.
+        daycounter_convention: DayCounterConvention
+            The daycounter convention used to estimate time fractions.
 
         Returns:
         -----------
         RateCurve: A new RateCurve instance.
         """
-        daycounter = DayCounter(DayCounterConvention.ActualActual)
+        daycounter = DayCounter(daycounter_convention)
         if all(isinstance(d, date) for d in pillars):
             dates = pillars
             pillars = [daycounter.year_fraction(reference_date, d) for d in pillars]
@@ -115,7 +122,7 @@ class RateCurve:
             raise TypeError("dates must be a list of either date or float types")
         # pillars = [daycounter.year_fraction(reference_date, d) for d in dates]
         rates = [-np.log(df) / tau if tau > 0 else 0 for df, tau in zip(discount_factors, pillars)]
-        return cls(reference_date, dates, rates, interp)
+        return cls(reference_date, dates, rates, interp, daycounter_convention)
     
     @property
     def nodes(self):

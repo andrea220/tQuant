@@ -1,1 +1,1 @@
-from .gaussiankernel import GaussianPathGenerator
+from .gaussiankernel import *

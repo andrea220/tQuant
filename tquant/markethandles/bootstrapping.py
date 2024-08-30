@@ -73,7 +73,8 @@ class CurveBootstrap:
               currency: Currency,
               interpolation: str = 'LINEAR',
               market_data: dict = {},
-              is_spread_curve: bool = False):
+              is_spread_curve: bool = False, 
+              daycounter_convention = DayCounterConvention.ActualActual):
         if currency == Currency.EUR:
             generator_map = self.eur_generator_map
         products = []
@@ -94,7 +95,7 @@ class CurveBootstrap:
             # bootstrapping_curve = SpreadCurve(pillars, zero_rates, base_curve)
             pass
         else:
-            bootstrapping_curve = RateCurve(self.evaluation_date, pillars, zero_rates, interpolation)
+            bootstrapping_curve = RateCurve(self.evaluation_date, pillars, zero_rates, interpolation, daycounter_convention)
         market_data[curve_name] = bootstrapping_curve
         func = ObjectiveFunction(self.evaluation_date,
                                 bootstrapping_curve,

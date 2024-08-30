@@ -173,10 +173,8 @@ class Index(ABC):
             raise ValueError("Not a valid date")
         
         if date >= Settings.evaluation_date:
-            # time series empty, try to forecast the fixing 
             raise ValueError("Fixing are only available for historical dates.")
-            # return self.forecast_fixing(date, term_structure)
-        
+       
         elif date < Settings.evaluation_date:
             if self.fixing_time_series is None:
                 raise ValueError(f"Missing {self.name} fixing for {date}") 

@@ -258,15 +258,9 @@ class SwapGenerator(ProductGenerator):
         period_fix, time_unit_fix = decode_term(self.period_fix)
         period_float, time_unit_float = decode_term(self.period_flt)
 
-        # schedule_generator = ScheduleGeneratorAP()
         schedule_generator = ScheduleGenerator(self.calendar, self.roll_convention)
         schedule_fix = schedule_generator.generate(start_date, maturity, period_fix, time_unit_fix)
-        # schedule_fix = schedule_generator.generate(
-        #     start_date, maturity, period_fix, time_unit_fix, self.roll_convention)
-
         schedule_float = schedule_generator.generate(start_date, maturity, period_float, time_unit_float)
-        # schedule_float = schedule_generator.generate(
-        #     start_date, maturity, period_float, time_unit_float, self.roll_convention)
 
         start_fix = []
         end_fix = []
