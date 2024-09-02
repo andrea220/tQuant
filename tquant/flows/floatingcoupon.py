@@ -1,10 +1,10 @@
-from datetime import date, timedelta
+from datetime import date
 from .coupon import Coupon
 from ..timehandles.daycounter import DayCounter
+from ..timehandles.utils import TimeUnit, BusinessDayConvention
 from ..index.curverateindex import IborIndex
 import pandas as pd
 from pandas import DataFrame
-# from ..pricers.pricer import Pricer
 
         
 class FloatingCoupon(Coupon):
@@ -142,7 +142,10 @@ class FloatingCoupon(Coupon):
             ref_date = self.accrual_end_date 
         else:
             ref_date = self.accrual_start_date
-        return ref_date + timedelta(self.fixing_days)
+        return self._index.fixing_calendar.advance(ref_date,
+                                                    -self._index.fixing_days,
+                                                    TimeUnit.Days,
+                                                    BusinessDayConvention.Preceding)
         
     @property
     def accrual_period(self) -> float: 
@@ -173,74 +176,40 @@ class FloatingCoupon(Coupon):
         pandas.DataFrame
             A DataFrame summarizing the floating coupon's details.
         """
-        coupon_display = pd.DataFrame([self.ref_period_start,
+        coupon_display = pd.DataFrame([self.accrual_start_date,
+                                       self.accrual_end_date,
+                                        self.ref_period_start,
                                         self.ref_period_end,
+                                        self.day_counter, 
+                                        self.accrual_period,
+                                        self.fixing_date,
                                         self.date,
                                         self._nominal,
-                                        self.fixing_date,
-                                        self._fixing_days,
                                         self._index.name,
-                                        self.accrual_period,
-                                        self.is_in_arrears,
-                                        self._gearing,
+                                        None,
                                         self._spread,
-                                        self._daycounter.day_counter_convention.name
+                                        self._gearing,
+                                        None, None
                                         ]).T
 
-        coupon_display.columns = ['start_period',
+        coupon_display.columns = ['accr_start',
+                                  'accr_end',
+                                'start_period',
                                 'end_period',
-                                'payment_date',
-                                'notional',
-                                'fixing_date',
-                                'fixing_days',
-                                'index',
+                                'dc',
                                 'accrual',
-                                'in_arrears',
-                                'gearing',
+                                'fixing_date',
+                                'pay_date',
+                                'notional',
+                                'index',
+                                'rate',
                                 'spread',
-                                'day_counter'
+                                'gearing',
+                                'amount',
+                                'convexity'
                                 ]
         return coupon_display
-    
-    # def amount(self, coupon_pricer)-> float: 
-    #     """
-    #     Calculates and returns the amount of the floating coupon.
-
-    #     The amount is calculated using the nominal value, gearing, spread, and the rate 
-    #     determined by the provided `coupon_pricer`.
-
-    #     Parameters:
-    #     -------
-    #     coupon_pricer: 
-    #         The pricer used to forecast the floating rate.
-
-    #     Returns:
-    #     -------
-    #     float
-    #         The total amount of the floating coupon payment.
-    #     """
-    #     a = self.nominal * (self._gearing * self.rate(coupon_pricer) + self._spread) * self.accrual_period
-    #     return a
-    
-    # def rate(self, coupon_pricer):
-    #     """
-    #     Retrieves and returns the forecasted rate for the floating coupon.
-
-    #     The rate is determined using the provided `coupon_pricer`.
-
-    #     Parameters:
-    #     -------
-    #     coupon_pricer: 
-    #         The pricer used to forecast the floating rate.
-
-    #     Returns:
-    #     -------
-    #     float
-    #         The forecasted rate for the floating coupon.
-    #     """
-    #     self._rate = coupon_pricer.forecasted_rate
-    #     return coupon_pricer.forecasted_rate
-    
+        
     @property
     def amount(self)-> float: 
         """
@@ -314,7 +283,8 @@ class FloatingRateLeg:
                  gearings: list[float],
                  spreads: list[float],
                  index: IborIndex,
-                 daycounter: DayCounter
+                 daycounter: DayCounter,
+                 is_in_arrears: bool = False
                  ) -> None:
         """
         Initializes a FloatingRateLeg instance with the specified attributes.
@@ -343,6 +313,7 @@ class FloatingRateLeg:
         self._spreads = spreads 
         self._index = index
         self._daycounter = daycounter
+        self._is_in_arrears = is_in_arrears
 
         self.leg_flows = []
         for i in range(len(payment_dates)):

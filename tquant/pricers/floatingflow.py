@@ -46,6 +46,8 @@ class FloatingCouponDiscounting:
     def __init__(self,
                  coupon: FloatingCoupon) -> None:
         self._coupon = coupon
+        self._future_cashflow = None
+        self._discount_factor = None
 
     def floating_rate(self, 
                     start_date: date,
@@ -56,8 +58,7 @@ class FloatingCouponDiscounting:
             # d2 = self._coupon.index.fixing_maturity(fixing_date) #TODO maturity date should be defined by index maturity + convexity(if present)
             return term_structure.forward_rate(start_date, end_date) 
         else: # historical
-            new_date = self._coupon.index.fixing_date(self._coupon.fixing_date)
-            return self._coupon.index.fixing(new_date)
+            return self._coupon.index.fixing(self._coupon.fixing_date) # return past fixing
 
     def amount(self, term_structure, evaluation_date)-> float: 
         ''' 
@@ -68,15 +69,26 @@ class FloatingCouponDiscounting:
 
     def calculate_price(self, disc_curve: RateCurve, est_curve: RateCurve, evaluation_date: date):
         if not self._coupon.has_occurred(evaluation_date):
-            payment_time = self._coupon.day_counter.year_fraction(evaluation_date, self._coupon._payment_date)
-            return self.amount(est_curve, evaluation_date) * disc_curve.discount(payment_time)
+            if self._future_cashflow == None or self._discount_factor == None:
+                self._calc(disc_curve, est_curve, evaluation_date)
+            # payment_time = self._coupon.day_counter.year_fraction(evaluation_date, self._coupon._payment_date)
+            # return self.amount(est_curve, evaluation_date) * disc_curve.discount(payment_time)
+            return self._future_cashflow * self._discount_factor
         else:
             return 0
+    
+    def _calc(self, disc_curve: RateCurve, est_curve: RateCurve, evaluation_date: date):
+        """ cache results"""
+        self._future_cashflow = self.amount(est_curve, evaluation_date)
+        payment_time = self._coupon.day_counter.year_fraction(evaluation_date, self._coupon._payment_date)
+        self._discount_factor = disc_curve.discount(payment_time)
+
+
         
-    def price_aad(self, disc_curve: RateCurve, est_curve: RateCurve, evaluation_date: date):
-        with tf.GradientTape() as tape:
-            npv = self.calculate_price(disc_curve, est_curve, evaluation_date)
-        return npv, tape
+    # def price_aad(self, disc_curve: RateCurve, est_curve: RateCurve, evaluation_date: date):
+    #     with tf.GradientTape() as tape:
+    #         npv = self.calculate_price(disc_curve, est_curve, evaluation_date)
+    #     return npv, tape
            
 
 class FloatingLegDiscounting:
@@ -96,10 +108,10 @@ class FloatingLegDiscounting:
                 npv += pricer.calculate_price(disc_curve, est_curve, evaluation_date)
         return npv
     
-    def price_aad(self, disc_curve, est_curve, evaluation_date: date):
-        with tf.GradientTape() as tape:
-            npv = self.calculate_price(disc_curve, est_curve, evaluation_date)
-        return npv, tape
+    # def price_aad(self, disc_curve, est_curve, evaluation_date: date):
+    #     with tf.GradientTape() as tape:
+    #         npv = self.calculate_price(disc_curve, est_curve, evaluation_date)
+    #     return npv, tape
     
 class OisLegDiscounting:
 
