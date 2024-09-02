@@ -68,6 +68,7 @@ class FloatingCoupon(Coupon):
         self._is_in_arrears = is_in_arrears
         self._rate = None
         self._amount = None
+        self._convexity_adj = None
 
 
     @property
@@ -186,10 +187,11 @@ class FloatingCoupon(Coupon):
                                         self.date,
                                         self._nominal,
                                         self._index.name,
-                                        None,
+                                        self._rate.numpy(),
                                         self._spread,
                                         self._gearing,
-                                        None, None
+                                        self._amount.numpy(), 
+                                        self._convexity_adj
                                         ]).T
 
         coupon_display.columns = ['accr_start',
