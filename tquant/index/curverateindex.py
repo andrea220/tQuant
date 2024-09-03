@@ -4,6 +4,7 @@ from ..timehandles.utils import BusinessDayConvention, TimeUnit
 from .index import Index
 from ..timehandles.tqcalendar import Calendar
 from ..markethandles.utils import Currency
+from ..timehandles.daycounter import DayCounter, DayCounterConvention
 
 class OvernightIndex(Index):
     """
@@ -130,7 +131,8 @@ class IborIndex(Index):
         self._fixing_days = fixing_days
         self._tenor = tenor 
         self._time_unit = time_unit
-        self._currency = currency        
+        self._currency = currency  
+        self._daycounter = DayCounter(DayCounterConvention.Actual360)      
     
     @property
     def fixing_days(self) -> int:
@@ -146,6 +148,9 @@ class IborIndex(Index):
         else:
             return self._fixing_days
 
+    @property
+    def daycounter(self):
+        return self._daycounter
 
     def fixing_maturity(self, fixing_date: date) -> date:
         """

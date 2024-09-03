@@ -48,16 +48,26 @@ class FloatingCouponDiscounting:
         self._coupon = coupon
         self._discount_factor = None
 
+    def calc_forward(self,
+                     ref_start,
+                     ref_end,
+                     term_structure):
+        t = self._coupon.index.daycounter.year_fraction(ref_start, ref_end) 
+        disc1 = term_structure.discount(ref_start)
+        disc2 = term_structure.discount(ref_end)
+        return (disc1/disc2 -1)/t
+
     def floating_rate(self, 
                     start_date: date,
                     end_date: date,
                     term_structure: RateCurve,
                     evaluation_date: date):
-        if start_date >= evaluation_date: # forecast
-            # d2 = self._coupon.index.fixing_maturity(fixing_date) #TODO maturity date should be defined by index maturity + convexity(if present)
-            return term_structure.forward_rate(start_date, end_date) 
-        else: # historical
-            return self._coupon.index.fixing(self._coupon.fixing_date) # return past fixing
+        if self._coupon.fixing_date > evaluation_date: 
+            # forecast forward rate
+            return self.calc_forward(start_date, end_date, term_structure) 
+        else: 
+            # return historical fixing 
+            return tf.constant(self._coupon.index.fixing(self._coupon.fixing_date), dtype=tf.float64) 
 
     def amount(self, term_structure, evaluation_date)-> float: 
         ''' 
@@ -80,7 +90,7 @@ class FloatingCouponDiscounting:
     
     def _calc(self, disc_curve: RateCurve, est_curve: RateCurve, evaluation_date: date):
         """ cache results"""
-        self._coupon._rate = self.floating_rate(self._coupon.ref_period_start, self._coupon.ref_period_end, est_curve,evaluation_date) 
+        self._coupon._rate = self.floating_rate(self._coupon.ref_period_start, self._coupon.ref_period_end, est_curve, evaluation_date) 
         self._coupon._amount = self.amount(est_curve, evaluation_date)
         payment_time = self._coupon.day_counter.year_fraction(evaluation_date, self._coupon._payment_date)
         self._discount_factor = disc_curve.discount(payment_time)

@@ -50,7 +50,6 @@ class SwapPricer(Pricer):
                         as_of_date: date,
                         curves):
         if isinstance(product, Swap):
-            ois = product
             try:
                 curve_usage = product.ccy.value + ":ON"
                 curve_ccy, curve_tenor = curve_usage.split(":")
@@ -62,8 +61,8 @@ class SwapPricer(Pricer):
             except:
                 raise ValueError("Unknown Curve")
 
-            floating_leg_pricer = FloatingLegDiscounting(ois.floating_leg)
-            fixed_leg_pricer = FixedLegDiscounting(ois.fixed_leg)
+            floating_leg_pricer = FloatingLegDiscounting(product.floating_leg)
+            fixed_leg_pricer = FixedLegDiscounting(product.fixed_leg)
 
             pv_flt = floating_leg_pricer.calculate_price(dc, fc, as_of_date)
             pv_fix = fixed_leg_pricer.calculate_price(dc, as_of_date)

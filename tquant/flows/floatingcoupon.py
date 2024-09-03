@@ -5,6 +5,7 @@ from ..timehandles.utils import TimeUnit, BusinessDayConvention
 from ..index.curverateindex import IborIndex
 import pandas as pd
 from pandas import DataFrame
+from tensorflow import Tensor
 
         
 class FloatingCoupon(Coupon):
@@ -177,6 +178,16 @@ class FloatingCoupon(Coupon):
         pandas.DataFrame
             A DataFrame summarizing the floating coupon's details.
         """
+        if isinstance(self._rate, Tensor):
+            r = self._rate.numpy()
+        else:
+            r = None
+
+        if isinstance(self._amount, Tensor):
+            a = self._amount.numpy()
+        else:
+            a = None
+
         coupon_display = pd.DataFrame([self.accrual_start_date,
                                        self.accrual_end_date,
                                         self.ref_period_start,
@@ -187,10 +198,10 @@ class FloatingCoupon(Coupon):
                                         self.date,
                                         self._nominal,
                                         self._index.name,
-                                        self._rate.numpy(),
+                                        r,
                                         self._spread,
                                         self._gearing,
-                                        self._amount.numpy(), 
+                                        a, 
                                         self._convexity_adj
                                         ]).T
 
