@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from datetime import date
 
-from calendar import Calendar
+from ..timehandles.tqcalendar import Calendar
 from ..timehandles.utils import Settings
 
 
