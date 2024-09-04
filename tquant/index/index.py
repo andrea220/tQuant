@@ -172,10 +172,10 @@ class Index(ABC):
         if not self.is_valid_fixing_date:
             raise ValueError("Not a valid date")
         
-        if date >= Settings.evaluation_date:
+        if date > Settings.evaluation_date:
             raise ValueError("Fixing are only available for historical dates.")
        
-        elif date < Settings.evaluation_date:
+        elif date <= Settings.evaluation_date:
             if self.fixing_time_series is None:
                 raise ValueError(f"Missing {self.name} fixing for {date}") 
             

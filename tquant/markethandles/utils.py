@@ -32,3 +32,17 @@ def extract_value(x):
         return x.numpy()  # Extract value from TensorFlow tensor
     else:
         return x
+    
+
+curve_map = {
+            "EUR": {
+                "ON": "EUR:ESTR",
+                "3M": "EUR:3M",
+                "6M": "EUR:6M"
+            },
+            "USD": {
+                "ON": "USD:SOFR",
+                "3M": "USD:3M",
+                "6M": "USD:6M"
+            }
+        }
