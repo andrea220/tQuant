@@ -8,7 +8,7 @@ import tensorflow as tf
 class OisCouponDiscounting:
 
     def __init__(self,
-                 coupon: FloatingCoupon) -> None:
+                 coupon: FloatingCoupon) -> None: #TODO non è oiscoupon??
         self._coupon = coupon
 
     def floating_rate(self, 
@@ -17,7 +17,7 @@ class OisCouponDiscounting:
                     term_structure: RateCurve,
                     evaluation_date: date):
         if start_date >= evaluation_date: # forecast
-            return term_structure.forward_rate(start_date, end_date)#, self._coupon.day_counter, evaluation_date) 
+            return term_structure.forward_rate(start_date, end_date)#, self._coupon.day_counter, evaluation_date) #TODO controllare vs ql
         else: # historical
             new_date = self._coupon.index.fixing_date(self._coupon.fixing_date)
             return self._coupon.index.fixing(new_date)
@@ -82,8 +82,6 @@ class FloatingCouponDiscounting:
         if not self._coupon.has_occurred(evaluation_date):
             if self._coupon._amount == None or self._discount_factor == None:
                 self._calc(disc_curve, est_curve, evaluation_date)
-            # payment_time = self._coupon.day_counter.year_fraction(evaluation_date, self._coupon._payment_date)
-            # return self.amount(est_curve, evaluation_date) * disc_curve.discount(payment_time)
             return self._coupon._amount * self._discount_factor
         else:
             return 0
@@ -96,7 +94,6 @@ class FloatingCouponDiscounting:
         self._discount_factor = disc_curve.discount(payment_time)
 
            
-
 class FloatingLegDiscounting:
 
     def __init__(self,
@@ -114,10 +111,6 @@ class FloatingLegDiscounting:
                 npv += pricer.calculate_price(disc_curve, est_curve, evaluation_date)
         return npv
     
-    # def price_aad(self, disc_curve, est_curve, evaluation_date: date):
-    #     with tf.GradientTape() as tape:
-    #         npv = self.calculate_price(disc_curve, est_curve, evaluation_date)
-    #     return npv, tape
     
 class OisLegDiscounting:
 
@@ -136,8 +129,8 @@ class OisLegDiscounting:
                 npv += pricer.calculate_price(term_structure, evaluation_date)
         return npv
     
-    def price_aad(self, term_structure, evaluation_date: date):
-        with tf.GradientTape() as tape:
-            npv = self.calculate_price(term_structure, evaluation_date)
-        return npv, tape
+    # def price_aad(self, term_structure, evaluation_date: date):
+    #     with tf.GradientTape() as tape:
+    #         npv = self.calculate_price(term_structure, evaluation_date)
+    #     return npv, tape
     

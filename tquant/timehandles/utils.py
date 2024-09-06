@@ -93,38 +93,4 @@ class Frequency(Enum):
     OtherFrequency = 999
 
 
-
-# class Tenor(Enum):
-#     """
-#     Enumeration of tenors.
-#     """
-#     ON = "O/N"
-#     TN = "T/N"
-#     SN = "S/N"
-#     W1 = "1W"
-#     W2 = "2W"
-#     W3 = "3W"
-#     W4 = "4W"
-#     M1 = "1M"
-#     M2 = "2M"
-#     M3 = "3M"
-#     M4 = "4M"
-#     M5 = "5M"
-#     M6 = "6M"
-#     M7 = "7M"
-#     M8 = "8M"
-#     M9 = "9M"
-#     M10 = "10M"
-#     M11 = "11M"
-#     Y1 = "1Y"
-#     Y1 = "1Y"
-#     Y1 = "1Y"
-#     Y1 = "1Y"
-#     Y1 = "1Y"
-#     Y1 = "1Y"
-#     Y1 = "1Y"
-#     Y1 = "1Y"
-
-#     def __str__(self):
-#         return self.value
     

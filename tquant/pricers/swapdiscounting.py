@@ -16,7 +16,7 @@ class OisPricer(Pricer):
         self._curve_map = curve_map
 
     def calculate_price(self,
-              product,
+              product: Ois,
               as_of_date: date,
               curves):
         if isinstance(product, Ois):
@@ -46,7 +46,7 @@ class SwapPricer(Pricer):
         self._curve_map = curve_map
 
     def calculate_price(self,
-                        product,
+                        product: Swap,
                         as_of_date: date,
                         curves):
         if isinstance(product, Swap):
@@ -64,11 +64,9 @@ class SwapPricer(Pricer):
             floating_leg_pricer = FloatingLegDiscounting(product.floating_leg)
             fixed_leg_pricer = FixedLegDiscounting(product.fixed_leg)
 
-            pv_flt = floating_leg_pricer.calculate_price(dc, fc, as_of_date)
-            pv_fix = fixed_leg_pricer.calculate_price(dc, as_of_date)
-            self.pv_flt = pv_flt
-            self.pv_fix = pv_fix
-            return pv_flt - pv_fix
+            self.pv_flt = floating_leg_pricer.calculate_price(dc, fc, as_of_date)
+            self.pv_fix = fixed_leg_pricer.calculate_price(dc, as_of_date)
+            return self.pv_flt - self.pv_fix
         else:
             raise TypeError("Wrong product type")
 

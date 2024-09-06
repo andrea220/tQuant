@@ -45,28 +45,11 @@ class FraPricer(Pricer):
         else:
             raise TypeError("Wrong product type")
         
-    # def calc_forward(self):
-    #     fixing_d = fra_ql.fixingDate()
-    #     d1 = calendar_ql.advance(fixing_d, 2, ql.Days) # valuedate-start date
-    #     d2 = index_ql.maturityDate(d1)
-    #     t = index_ql.dayCounter().yearFraction(d1,d2)
 
-    #     disc1 = handleYieldTermStructure.discount(d1)
-    #     disc2 = handleYieldTermStructure.discount(d2)
-    #     fwd2 = (disc1/disc2 -1)/t
-    # def calc_forward(self,
-    #                  ref_start,
-    #                  ref_end,
-    #                  term_structure):
-    #     t = self._index.daycounter.year_fraction(ref_start, ref_end) 
-    #     disc1 = term_structure.discount(ref_start)
-    #     disc2 = term_structure.discount(ref_end)
-    #     return (disc1/disc2 -1)/t
-
-    def price_aad(self, product,
-              as_of_date: date,
-              curves):
-        with tf.GradientTape() as tape:
-            npv = self.price(product, as_of_date, curves)
-        return npv, tape
+    # def price_aad(self, product,
+    #           as_of_date: date,
+    #           curves):
+    #     with tf.GradientTape() as tape:
+    #         npv = self.price(product, as_of_date, curves)
+    #     return npv, tape
            

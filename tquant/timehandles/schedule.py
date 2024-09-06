@@ -5,22 +5,6 @@ from .targetcalendar  import TARGET
 from .utils import TimeUnit, BusinessDayConvention
 
 
-# class ScheduleGeneratorAP:
-#     def generate(self, start: date, end: date, tenor: int, time_unit: TimeUnit,
-#                  business_day_convention: BusinessDayConvention):
-#         calendar = TARGET()
-#         schedule = []
-#         current_date = start
-#         schedule.append(current_date)
-#         while True:
-#             current_date = calendar.advance(current_date, tenor, time_unit, business_day_convention)
-#             if current_date < end:
-#                 schedule.append(current_date)
-#             else:
-#                 schedule.append(end)
-#                 break
-#         return schedule
-
 class ScheduleGenerator: 
     def __init__(self,
                  calendar: Calendar,
