@@ -344,7 +344,7 @@ class FloatingRateLeg:
                                         )
     
    
-    def display_flows(self) -> DataFrame: #TODO add cached coupons and amounts
+    def display_flows(self) -> DataFrame: 
         """
         Displays a summary of the cash flows for the entire floating-rate leg in a DataFrame format.
 

@@ -37,19 +37,6 @@ class GaussianShortRateGenerator(GaussianPathGenerator):
                  date_grid: DateGrid) -> None:
         super().__init__(process, date_grid)
 
-    # def simulate_curves(self,
-    #                     n_paths: int) -> tf.Tensor:
-    #     self._short_rate = self.simulate(n_paths)
-    #     curve_tensor = []
-    #     self._bonds = []
-    #     for i, d in enumerate(self._date_grid.dates):
-    #         t = self._date_grid.times[i]
-    #         bonds_tmp = tf.stack([self._process.zero_bond(t, time, self._short_rate[:,i]) for time in self._process._term_structure._pillars]) #TODO un po' lenta questa parte
-    #         curve_tensor_tmp = RateCurve.from_zcb(d, self._process._term_structure._pillars, bonds_tmp , "LINEAR", DayCounterConvention.ActualActual)
-    #         self._bonds.append(bonds_tmp)
-    #         curve_tensor.append(curve_tensor_tmp)
-    #     return curve_tensor
-
     def simulate_curves(self,
                         n_paths: int) -> tf.Tensor:
         self._short_rate = self.simulate(n_paths)
