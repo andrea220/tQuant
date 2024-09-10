@@ -1,0 +1,11 @@
+# Ignora le cartelle di build e distribuzione
+build/
+dist/
+*.egg-info/
+
+# Ignora i file bytecode Python
+__pycache__/
+*.py[cod]
+
+# Ignora i file di configurazione del sistema operativo
+.DS_Store
