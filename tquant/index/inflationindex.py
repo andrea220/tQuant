@@ -1,9 +1,7 @@
-
 from datetime import date
 from ..timehandles.utils import BusinessDayConvention, TimeUnit, Settings, Frequency
 from .index import Index
 from ..timehandles.tqcalendar import Calendar
-
 
 
 class InflationIndex(Index):
@@ -29,24 +27,25 @@ class InflationIndex(Index):
         Inherits from Index abstract class.
 
     """
-    def __init__(self,
-                 name: str,
-                 tenor: int,
-                 time_unit: TimeUnit,
-                 fixing_calendar: Calendar,
-                 frequency: Frequency = Frequency.Monthly,
-                 fixing_days: int = 0,
-                 time_series: dict = None,
-                 revised: bool = False) -> None:
-        super().__init__(name,
-                         fixing_calendar,
-                         time_series)      
+
+    def __init__(
+        self,
+        name: str,
+        tenor: int,
+        time_unit: TimeUnit,
+        fixing_calendar: Calendar,
+        frequency: Frequency = Frequency.Monthly,
+        fixing_days: int = 0,
+        time_series: dict = None,
+        revised: bool = False,
+    ) -> None:
+        super().__init__(name, fixing_calendar, time_series)
         self._fixing_days = fixing_days
         self._tenor = tenor
-        self._time_unit = time_unit 
-        self._revised = revised  
-        self._frequency = frequency    
-    
+        self._time_unit = time_unit
+        self._revised = revised
+        self._frequency = frequency
+
     @property
     def fixing_days(self) -> int:
         """
@@ -61,7 +60,7 @@ class InflationIndex(Index):
             return 0
         else:
             return self._fixing_day
-        
+
     def fixing_maturity(self, fixing_date: date) -> date:
         """
         Calculate the fixing maturity date based on the fixing date and index conventions.
@@ -76,11 +75,17 @@ class InflationIndex(Index):
             date: The maturity date for the fixing helper.
 
         """
-        return self.fixing_calendar.advance(fixing_date,
-                                            self._tenor, 
-                                            self._time_unit,
-                                            BusinessDayConvention.ModifiedFollowing 
-                                            )
+        return self.fixing_calendar.advance(
+            fixing_date,
+            self._tenor,
+            self._time_unit,
+            BusinessDayConvention.ModifiedFollowing,
+        )
 
     def fixing_date(self, value_date: date) -> date:
-        return self.fixing_calendar.advance(value_date, self.fixing_days, TimeUnit.Days, BusinessDayConvention.ModifiedFollowing)
+        return self.fixing_calendar.advance(
+            value_date,
+            self.fixing_days,
+            TimeUnit.Days,
+            BusinessDayConvention.ModifiedFollowing,
+        )
