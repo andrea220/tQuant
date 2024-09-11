@@ -1,4 +1,5 @@
-from datetime import date
+import datetime
+
 from ..timehandles.utils import BusinessDayConvention, TimeUnit
 from .index import Index
 from ..timehandles.tqcalendar import Calendar
@@ -10,9 +11,9 @@ class OvernightIndex(Index):
     """
     Represents an Overnight index, typically used for short-term interest rates.
 
-    This class inherits from the abstract `Index` class and includes additional
-    attributes and methods specific to overnight indices, such as the number of fixing
-    days and currency.
+    This class inherits from the abstract `Index` class and models an overnight index,
+    commonly used for financial instruments with very short tenors, such as overnight
+    lending rates.
     """
 
     def __init__(
@@ -23,18 +24,12 @@ class OvernightIndex(Index):
         time_series: dict = None,
     ) -> None:
         """
-        Initializes an OvernightIndex instance with the specified attributes.
+        Returns the number of fixing days for the index.
 
-        Parameters:
-        -----------
-        fixing_calendar: Calendar
-            The calendar used for determining fixing dates.
-        currency: Currency, optional
-            The currency associated with the index (default is None).
-        fixing_days: int, optional
-            The number of days before the fixing date (default is None).
-        time_series: dict, optional
-            A dictionary containing the fixing time series data (default is None).
+        If the number of fixing days is not set, returns 0.
+
+        Returns:
+            int: The number of fixing days or 0 if not set.
         """
         super().__init__(currency.value + ":ON", fixing_calendar, time_series)
         self._fixing_days = fixing_days
@@ -53,38 +48,31 @@ class OvernightIndex(Index):
             return 0
         return self._fixing_days
 
-    def fixing_maturity(self, fixing_date: date) -> date:
+    def fixing_maturity(self, fixing_date: datetime.date) -> datetime.date:
         """
-        Calculates the fixing maturity date based on the fixing date and index conventions.
+        Calculates the maturity date for an overnight index based on the fixing date.
 
-        The maturity date is typically the date on which the funds are returned for an
-        overnight index.
+        The maturity date is typically one business day after the fixing date.
 
-        Parameters:
-        -----------
-        fixing_date: date
-            The fixing date.
+        Args:
+            fixing_date (datetime.date): The date of the fixing.
 
         Returns:
-        -----------
-        date: The maturity date for the fixing.
+            datetime.date: The calculated maturity date.
         """
         return self.fixing_calendar.advance(
             fixing_date, 1, TimeUnit.Days, BusinessDayConvention.ModifiedFollowing
         )
 
-    def fixing_date(self, value_date: date) -> date:
+    def fixing_date(self, value_date: datetime.date) -> datetime.date:
         """
         Calculates the fixing date based on the value date and the number of fixing days.
 
-        Parameters:
-        -----------
-        value_date: date
-            The value date from which the fixing date is calculated.
+        Args:
+            value_date (datetime.date): The value date to calculate the fixing date from.
 
         Returns:
-        -----------
-        date: The calculated fixing date.
+            datetime.date: The calculated fixing date.
         """
         return self.fixing_calendar.advance(
             value_date,
@@ -98,10 +86,9 @@ class IborIndex(Index):
     """
     Represents an Interbank Offered Rate (IBOR) index.
 
-    This class models an IBOR index, which is a key interest rate at which banks
-    lend to and borrow from one another in the interbank market. The class inherits
-    from the abstract `Index` class and includes additional attributes such as tenor,
-    time unit, and currency.
+    This class models an IBOR index, which reflects the interest rates at which banks
+    lend to each other in the interbank market. The class extends the `Index` class and
+    includes additional attributes specific to IBOR indices, such as tenor and currency.
     """
 
     def __init__(
@@ -114,22 +101,15 @@ class IborIndex(Index):
         time_series: dict = None,
     ) -> None:
         """
-        Initializes an IborIndex instance with the specified attributes.
+        Initializes an IborIndex instance with the given attributes.
 
-        Parameters:
-        -----------
-        fixing_calendar: Calendar
-            The calendar used for determining fixing dates.
-        tenor: int
-            The tenor (duration) of the IBOR rate.
-        time_unit: TimeUnit
-            The unit of time for the tenor (e.g., days, months).
-        currency: Currency
-            The currency associated with the index.
-        fixing_days: int, optional
-            The number of days before the fixing date (default is None).
-        time_series: dict, optional
-            A dictionary containing the fixing time series data (default is None).
+        Args:
+            fixing_calendar (Calendar): The calendar used to calculate fixing dates.
+            tenor (int): The duration of the IBOR rate (e.g., 1, 3, 6 months).
+            time_unit (TimeUnit): The time unit for the tenor (e.g., days, months).
+            currency (Currency): The currency associated with the IBOR index.
+            fixing_days (int, optional): Number of days before the fixing date (default is None).
+            time_series (dict, optional): A dictionary containing time series data for past fixings (default is None).
         """
         super().__init__(
             currency.value + ":" + str(tenor) + time_unit.value[0],
@@ -145,34 +125,39 @@ class IborIndex(Index):
     @property
     def fixing_days(self) -> int:
         """
-        Gets the number of fixing days for the index.
+        Returns the number of fixing days for the IBOR index.
+
+        If the number of fixing days is not set, returns 0.
 
         Returns:
-        -----------
-        int: The number of fixing days if set; otherwise, 0.
+            int: The number of fixing days or 0 if not set.
         """
         if self._fixing_days is None:
             return 0
         return self._fixing_days
 
     @property
-    def daycounter(self):
-        return self._daycounter
-
-    def fixing_maturity(self, fixing_date: date) -> date:
+    def daycounter(self) -> DayCounter:
         """
-        Calculates the fixing maturity date based on the fixing date and index conventions.
-
-        The maturity date is typically the date on which the IBOR rate applies.
-
-        Parameters:
-        -----------
-        fixing_date: date
-            The fixing date.
+        Returns the day count convention used for the IBOR index.
 
         Returns:
-        -----------
-        date: The maturity date for the fixing.
+            DayCounter: The day count convention for calculating interest accruals (e.g., Actual/360).
+        """
+        return self._daycounter
+
+    def fixing_maturity(self, fixing_date: datetime.date) -> datetime.date:
+        """
+        Calculates the maturity date for the IBOR index based on the fixing date.
+
+        The maturity date is determined by advancing the fixing date by the tenor
+        according to the calendar and business day conventions.
+
+        Args:
+            fixing_date (datetime.date): The fixing date of the IBOR rate.
+
+        Returns:
+            datetime.date: The calculated maturity date.
         """
         return self.fixing_calendar.advance(
             fixing_date,
@@ -181,18 +166,15 @@ class IborIndex(Index):
             BusinessDayConvention.ModifiedFollowing,
         )
 
-    def fixing_date(self, value_date: date) -> date:
+    def fixing_date(self, value_date: datetime.date) -> datetime.date:
         """
         Calculates the fixing date based on the value date and the number of fixing days.
 
-        Parameters:
-        -----------
-        value_date: date
-            The value date from which the fixing date is calculated.
+        Args:
+            value_date (datetime.date): The value date to calculate the fixing date from.
 
         Returns:
-        -----------
-        date: The calculated fixing date.
+            datetime.date: The calculated fixing date.
         """
         return self.fixing_calendar.advance(
             value_date,
