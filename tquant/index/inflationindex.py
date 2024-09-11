@@ -1,5 +1,5 @@
 from datetime import date
-from ..timehandles.utils import BusinessDayConvention, TimeUnit, Settings, Frequency
+from ..timehandles.utils import BusinessDayConvention, TimeUnit, Frequency
 from .index import Index
 from ..timehandles.tqcalendar import Calendar
 
@@ -56,10 +56,9 @@ class InflationIndex(Index):
             int: The number of fixing days if set, otherwise 0.
 
         """
-        if self._fixing_days == None:
+        if self._fixing_days is None:
             return 0
-        else:
-            return self._fixing_day
+        return self._fixing_days
 
     def fixing_maturity(self, fixing_date: date) -> date:
         """
@@ -85,7 +84,7 @@ class InflationIndex(Index):
     def fixing_date(self, value_date: date) -> date:
         return self.fixing_calendar.advance(
             value_date,
-            self.fixing_days,
+            -self.fixing_days,
             TimeUnit.Days,
-            BusinessDayConvention.ModifiedFollowing,
+            BusinessDayConvention.Preceding,
         )

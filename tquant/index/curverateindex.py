@@ -49,10 +49,9 @@ class OvernightIndex(Index):
         -----------
         int: The number of fixing days if set; otherwise, 0.
         """
-        if self._fixing_days == None:
+        if self._fixing_days is None:
             return 0
-        else:
-            return self._fixing_days
+        return self._fixing_days
 
     def fixing_maturity(self, fixing_date: date) -> date:
         """
@@ -152,10 +151,9 @@ class IborIndex(Index):
         -----------
         int: The number of fixing days if set; otherwise, 0.
         """
-        if self._fixing_days == None:
+        if self._fixing_days is None:
             return 0
-        else:
-            return self._fixing_days
+        return self._fixing_days
 
     @property
     def daycounter(self):
