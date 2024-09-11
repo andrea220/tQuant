@@ -1,5 +1,5 @@
 from .pricer import Pricer
-from ..instruments.swap import InterestRateSwap
+# from ..instruments.swap import InterestRateSwap
 from ..instruments.ois import Ois
 from ..instruments.swap import Swap
 from ..markethandles.utils import SwapType

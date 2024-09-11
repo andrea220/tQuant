@@ -88,7 +88,7 @@ class CurveBootstrap:
         pillars = []
         zero_rates = []
         for i in range(len(maturities)):
-            pillars.append(self.day_counter.year_fraction(self.evaluation_date, products[i].maturity))
+            pillars.append(self.day_counter.year_fraction(self.evaluation_date, products[i].end_date))
             zero_rates.append(0.01)
         if is_spread_curve:
             # base_curve = market_data[base_curve_name]

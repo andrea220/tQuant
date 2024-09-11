@@ -6,14 +6,8 @@ class Position(Enum):
     Short = -1
 
 class SwapType(Enum):
-    """
-    Enumeration of time-units.
-    """
-    Payer = "Payer"
-    Receiver = "Receiver"
-
-    def __str__(self):
-        return self.value
+    Payer = 1
+    Receiver = -1
     
 class Currency(Enum):
     EUR = "EUR"
