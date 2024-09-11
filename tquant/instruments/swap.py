@@ -3,7 +3,6 @@ from .product import Product
 from ..index.index import Index
 from ..flows.fixedcoupon import FixedRateLeg
 from ..flows.floatingcoupon import FloatingRateLeg
-from ..timehandles.utils import DayCounterConvention
 from ..timehandles.daycounter import DayCounter
 from ..markethandles.utils import Currency, SwapType
 
