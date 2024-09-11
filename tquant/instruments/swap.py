@@ -90,7 +90,12 @@ class Swap(Product):
         self.fixed_leg = FixedRateLeg(pay_dates_fix, start_dates_fix, end_dates_fix,
                                     self._fix_notionals, self._rates, day_counter_fix)         
         self.floating_leg = FloatingRateLeg(pay_dates_flt, start_dates_flt, end_dates_flt,
-                                    self._float_notionals, self._gearings, self._margins, index, day_counter_flt)      
+                                    self._float_notionals, self._gearings, self._margins, index, day_counter_flt)    
+
+    @property
+    def index(self):
+        return self._index
+            
 
 
 # DEPRECATED
