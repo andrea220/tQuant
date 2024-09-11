@@ -79,7 +79,7 @@ class Index(ABC):
         """
         return self._fixing_calendar
 
-    def is_valid_fixing_date(self, date: date) -> bool:
+    def is_valid_fixing_date(self, fixing_date: date) -> bool:
         """
         Checks if the given date is a valid fixing date based on the index's calendar.
 
@@ -96,10 +96,9 @@ class Index(ABC):
         -----------
         This method is currently a placeholder and always returns True.
         """
-        # TODO: Implement logic to evaluate if the input date is valid given the calendar.
-        return True
+        return self._fixing_calendar.is_business_day(fixing_date)
 
-    def add_fixing(self, date: date, value: float) -> None:
+    def add_fixing(self, fixing_date: date, value: float) -> None:
         """
         Adds a fixing value for a specific date to the fixing time series data.
 
@@ -110,15 +109,15 @@ class Index(ABC):
         value: float
             The fixing value.
         """
-        fixing_point = {self.name: {date: value}}
+        fixing_point = {self.name: {fixing_date: value}}
         if self.fixing_time_series is None:
             # create the dict
             self.fixing_time_series = fixing_point
         else:
             # write into it
-            self.fixing_time_series[self.name][date] = value
+            self.fixing_time_series[self.name][fixing_date] = value
 
-    def past_fixing(self, date: date) -> bool:
+    def past_fixing(self, fixing_date: date) -> bool:
         """
         Retrieves the past fixing value for a specific date.
 
@@ -136,12 +135,11 @@ class Index(ABC):
         ValueError: If the given date is not a valid fixing date or the fixing is missing.
         """
         past_fixings = self.fixing_time_series
-        if self.is_valid_fixing_date(date):
-            return past_fixings[self.name][date]
-        else:
-            raise ValueError("Not a valid fixing date!")
+        if self.is_valid_fixing_date(fixing_date):
+            return past_fixings[self.name][fixing_date]
+        raise ValueError("Not a valid fixing date!")
 
-    def fixing(self, date: date) -> float:
+    def fixing(self, fixing_date: date) -> float:
         """
         Retrieves the fixing value for a specific date.
 
@@ -162,20 +160,18 @@ class Index(ABC):
         if not self.is_valid_fixing_date:
             raise ValueError("Not a valid date")
 
-        if date > Settings.evaluation_date:
+        if fixing_date > Settings.evaluation_date:
             raise ValueError("Fixing are only available for historical dates.")
 
-        elif date <= Settings.evaluation_date:
+        elif fixing_date <= Settings.evaluation_date:
             if self.fixing_time_series is None:
-                raise ValueError(f"Missing {self.name} fixing for {date}")
+                raise ValueError(f"Missing {self.name} fixing for {fixing_date}")
 
             if self.name in list(self.fixing_time_series.keys()):
-                if date in list(self.fixing_time_series[self.name].keys()):
+                if fixing_date in list(self.fixing_time_series[self.name].keys()):
                     # return historical fixing for index/date
-                    return self.past_fixing(date)
-                else:
-                    raise ValueError(
-                        f"{self.name} fixing time series is not complete, missing {date}"
-                    )
-            else:
-                raise ValueError(f"Missing {self.name} fixing for {date}")
+                    return self.past_fixing(fixing_date)
+                raise ValueError(
+                    f"{self.name} fixing time series is not complete, missing {fixing_date}"
+                )
+            raise ValueError(f"Missing {self.name} fixing for {fixing_date}")
