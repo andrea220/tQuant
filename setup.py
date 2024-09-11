@@ -17,4 +17,5 @@ setup(
         "Operating System :: OS Independent",
     ],
     python_requires='>=3.10',  # Versione minima di Python richiesta
+    test_suite='tests'
 )
