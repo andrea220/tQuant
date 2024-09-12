@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="tquant",  # Nome del pacchetto
+    name="tensorquant",  # Nome del pacchetto
     version="0.0.1",  # Versione del pacchetto
     packages=find_packages(),  # Trova automaticamente tutti i pacchetti e sottopacchetti
     install_requires=[],  # Dipendenze richieste, puoi aggiungere pacchetti necessari qui
