@@ -14,10 +14,7 @@ from .swapdiscounting import SwapPricer
 
 
 class PricerAssignment:
-    """ 
-    passa il curve_name
-    
-    """
+
     @staticmethod
     def create(product: Product, curve_map: dict):
         if type(product) == Deposit:

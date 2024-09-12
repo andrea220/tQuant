@@ -7,13 +7,14 @@ class TARGET(Calendar):
     """
     A class to represent TARGET calendar
     """
+
     def __init__(self) -> None:
-        pass 
+        pass
 
     def is_business_day(self, d: date) -> bool:
         """
         Determine if a given date is a business day.
-    
+
         Parameters:
         -------
         d : date
@@ -21,7 +22,7 @@ class TARGET(Calendar):
 
         Returns:
         -------
-        bool: 
+        bool:
             True if the given date is a business day, False otherwise.
         """
         ny = d.day == 1 and d.month == 1

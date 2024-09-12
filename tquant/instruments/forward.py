@@ -10,8 +10,8 @@ class Fra(Product):
     """
     Represents a Forward Rate Agreement (FRA).
 
-    A Forward Rate Agreement (FRA) is a financial contract that allows parties to lock in an interest rate 
-    for a future period. This class models the FRA including its notional amount, start and end dates, 
+    A Forward Rate Agreement (FRA) is a financial contract that allows parties to lock in an interest rate
+    for a future period. This class models the FRA including its notional amount, start and end dates,
     the day count convention used for interest calculations, and the associated Ibor index.
 
     Attributes:
@@ -23,6 +23,7 @@ class Fra(Product):
         day_count_convention (DayCounterConvention): The day count convention used for interest calculations.
         index (IborIndex): The Ibor index used for the FRA.
     """
+
     def __init__(
         self,
         ccy: Currency,

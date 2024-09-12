@@ -1,7 +1,8 @@
 """
 Pricing di cash flow fissi
 """
-from .pricer import Pricer 
+
+from .pricer import Pricer
 from ..flows.fixedcoupon import FixedCoupon, FixedRateLeg
 from ..markethandles.ircurve import RateCurve
 from datetime import date
@@ -10,31 +11,30 @@ import tensorflow as tf
 
 class FixedCouponDiscounting:
 
-    def __init__(self,
-                 coupon: FixedCoupon) -> None:
+    def __init__(self, coupon: FixedCoupon) -> None:
         self._coupon = coupon
 
     def calculate_price(self, discount_curve: RateCurve, evaluation_date: date):
         if not self._coupon.has_occurred(evaluation_date):
-            tau = self._coupon.day_counter.year_fraction(evaluation_date, self._coupon._payment_date)
+            tau = self._coupon.day_counter.year_fraction(
+                evaluation_date, self._coupon._payment_date
+            )
             return self._coupon.amount * discount_curve.discount(tau)
         else:
             return 0
-           
-    def price_aad(self, discount_curve: RateCurve, evaluation_date: date): 
+
+    def price_aad(self, discount_curve: RateCurve, evaluation_date: date):
         with tf.GradientTape() as tape:
             npv = self.price(discount_curve, evaluation_date)
         return npv, tape
-    
+
+
 class FixedLegDiscounting:
 
-    def __init__(self,
-                 leg: FixedRateLeg) -> None:
+    def __init__(self, leg: FixedRateLeg) -> None:
         self._leg = leg
 
-    def calculate_price(self,
-              discount_curve: RateCurve,
-              evaluation_date: date):
+    def calculate_price(self, discount_curve: RateCurve, evaluation_date: date):
         if len(self._leg.leg_flows) == 0:
             return 0
         npv = 0
@@ -47,7 +47,9 @@ class FixedLegDiscounting:
                 npv += pricer.calculate_price(discount_curve, evaluation_date)
         return npv
 
-    def price_aad(self, discount_curve: RateCurve, evaluation_date: date, coupon_pricer: Pricer):
+    def price_aad(
+        self, discount_curve: RateCurve, evaluation_date: date, coupon_pricer: Pricer
+    ):
         with tf.GradientTape() as tape:
             npv = self.calculate_price(discount_curve, evaluation_date, coupon_pricer)
         return npv, tape

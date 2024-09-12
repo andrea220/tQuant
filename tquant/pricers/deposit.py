@@ -4,20 +4,16 @@ from ..markethandles.ircurve import RateCurve
 from ..timehandles.utils import DayCounterConvention
 from ..timehandles.daycounter import DayCounter
 
-from datetime import date 
+from datetime import date
 import tensorflow as tf
 
 
 class DepositPricer(Pricer):
-    def __init__(self,
-                 curve_map):
+    def __init__(self, curve_map):
         super().__init__()
         self._curve_map = curve_map
 
-    def calculate_price(self,
-              product,
-              as_of_date: date,
-              curves):
+    def calculate_price(self, product, as_of_date: date, curves):
         if isinstance(product, Deposit):
             deposit = product
             try:
@@ -37,7 +33,9 @@ class DepositPricer(Pricer):
                 start_cashflow = 1.0
             end_cashflow = 0.0
             if te > 0.0:
-                yf = deposit.day_counter.year_fraction(deposit.start_date, deposit.end_date)
+                yf = deposit.day_counter.year_fraction(
+                    deposit.start_date, deposit.end_date
+                )
                 end_cashflow = 1.0 + deposit.quote * yf
             start_cashflow *= deposit.notional
             end_cashflow *= deposit.notional
@@ -45,4 +43,3 @@ class DepositPricer(Pricer):
             return start_cashflow * df_s - end_cashflow * df_e
         else:
             raise TypeError("Wrong product type")
-        

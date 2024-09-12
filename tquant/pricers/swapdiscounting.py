@@ -1,24 +1,27 @@
 from .pricer import Pricer
+
 # from ..instruments.swap import InterestRateSwap
 from ..instruments.ois import Ois
 from ..instruments.swap import Swap
 from ..markethandles.utils import SwapType
-from .floatingflow import FloatingLegDiscounting, FloatingCouponDiscounting, OisLegDiscounting
+from .floatingflow import (
+    FloatingLegDiscounting,
+    FloatingCouponDiscounting,
+    OisLegDiscounting,
+)
 from .fixedflow import FixedLegDiscounting, FixedCouponDiscounting
-from datetime import date 
+from datetime import date
 from ..timehandles.utils import DayCounterConvention
 from ..timehandles.daycounter import DayCounter
 import tensorflow as tf
-         
+
+
 class OisPricer(Pricer):
     def __init__(self, curve_map):
         super().__init__()
         self._curve_map = curve_map
 
-    def calculate_price(self,
-              product: Ois,
-              as_of_date: date,
-              curves):
+    def calculate_price(self, product: Ois, as_of_date: date, curves):
         if isinstance(product, Ois):
             ois = product
             try:
@@ -39,16 +42,13 @@ class OisPricer(Pricer):
         else:
             raise TypeError("Wrong product type")
 
-           
+
 class SwapPricer(Pricer):
     def __init__(self, curve_map):
         super().__init__()
         self._curve_map = curve_map
 
-    def calculate_price(self,
-                        product: Swap,
-                        as_of_date: date,
-                        curves):
+    def calculate_price(self, product: Swap, as_of_date: date, curves):
         if isinstance(product, Swap):
             try:
                 curve_usage = product.ccy.value + ":ON"
@@ -69,5 +69,3 @@ class SwapPricer(Pricer):
             return self.pv_flt - self.pv_fix
         else:
             raise TypeError("Wrong product type")
-
-           

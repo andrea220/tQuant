@@ -139,7 +139,7 @@ class Index(ABC):
         if fixing_date > Settings.evaluation_date:
             raise ValueError("Fixing are only available for historical dates.")
 
-        #if fixing_date <= Settings.evaluation_date:
+        # if fixing_date <= Settings.evaluation_date:
         if self.fixing_time_series is None:
             raise ValueError(f"Missing {self.name} fixing for {fixing_date}")
 
