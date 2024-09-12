@@ -2,10 +2,10 @@ from setuptools import setup, find_packages
 
 setup(
     name="tensorquant",  # Nome del pacchetto
-    version="0.0.1",  # Versione del pacchetto
+    version="0.0.3",  # Versione del pacchetto
     packages=find_packages(),  # Trova automaticamente tutti i pacchetti e sottopacchetti
     install_requires=[],  # Dipendenze richieste, puoi aggiungere pacchetti necessari qui
-    description="Pacchetto di analisi e caricamento dati per tQuant",
+    description="TensorFlow-Python financial library",
     long_description=open('README.md').read(),  # Usa il file README per la descrizione lunga
     long_description_content_type='text/markdown',  # Specifica il formato della descrizione lunga
     author="Andrea Carapelli",

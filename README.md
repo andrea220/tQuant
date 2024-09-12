@@ -1,7 +1,7 @@
 
 # TensorQuant
 
-![tQuant Logo](https://img.shields.io/badge/tQuant-v0.1.0-blue.svg) ![Python](https://img.shields.io/badge/python-v3.7+-blue.svg) ![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg) ![License](https://img.shields.io/badge/license-MIT-green.svg)
+![TensorQuant Logo](https://img.shields.io/badge/TensorQuant-v0.1.0-blue.svg) ![Python](https://img.shields.io/badge/python-v3.10+-blue.svg) ![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg) ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 
 **TensorQuant** is a Python financial library designed to provide students with a practical, Python-based alternative to traditional C++ implementations. Leveraging Tensor arrays, TensorQuant supports pricing, intensive risk management computations, and algorithmic differentiation. It is particularly valuable in academic settings, such as the Quant-Finance Master courses at the [University of Siena](https://finance.unisi.it/it), where it offers students hands-on experience with financial libraries and object-oriented programming during their final year.
