@@ -4,29 +4,31 @@ from tensorflow import Tensor
 
 class Position(Enum):
     """Enum to represent trading position types.
-    
+
     Attributes:
         Long (int): Represents a long position with a value of 1.
         Short (int): Represents a short position with a value of -1.
     """
+
     Long = 1
     Short = -1
 
 
 class SwapType(Enum):
     """Enum to represent types of swaps in a financial context.
-    
+
     Attributes:
         Payer (int): Represents a payer swap with a value of 1.
         Receiver (int): Represents a receiver swap with a value of -1.
     """
+
     Payer = 1
     Receiver = -1
 
 
 class Currency(Enum):
     """Enum to represent currency codes.
-    
+
     Attributes:
         EUR (str): Euro currency code.
         USD (str): US Dollar currency code.
@@ -36,6 +38,7 @@ class Currency(Enum):
         CHF (str): Swiss Franc currency code.
         AUD (str): Australian Dollar currency code.
     """
+
     EUR = "EUR"
     USD = "USD"
     GBP = "GBP"

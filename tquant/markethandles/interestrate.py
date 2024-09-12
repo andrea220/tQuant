@@ -13,6 +13,7 @@ class InterestRate:
         _compounding (CompoundingType): The compounding type (e.g., Simple, Compounded, Continuous).
         _frequency (int): Frequency of compounding per year.
     """
+
     def __init__(
         self,
         r: float,

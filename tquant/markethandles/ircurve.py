@@ -1,13 +1,11 @@
-import tensorflow 
+import tensorflow
 from tensorflow.python.framework import dtypes
-import numpy 
+import numpy
 from datetime import date, timedelta
 from typing import Union
 
 from ..numericalhandles.interpolation import LinearInterp
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
-
-
 
 
 class RateCurve:
@@ -26,6 +24,7 @@ class RateCurve:
         interp (LinearInterp): Interpolation object used for rate calculations.
         _jacobian (numpy.ndarray): Jacobian matrix of the curve, if applicable.
     """
+
     def __init__(
         self,
         reference_date: date,
@@ -67,7 +66,9 @@ class RateCurve:
         else:
             raise TypeError("Pillars must be a list of either date or float types")
         self.__rates = rates  # float
-        self._rates = [tensorflow.Variable(r, dtype=dtypes.float64) for r in rates]  # tensor
+        self._rates = [
+            tensorflow.Variable(r, dtype=dtypes.float64) for r in rates
+        ]  # tensor
         self.interpolation_type = interp
         if self.interpolation_type == "LINEAR":
             self.interp = LinearInterp(self._pillars, self._rates)
@@ -129,7 +130,7 @@ class RateCurve:
             date: The reference date.
         """
         return self._reference_date
-    
+
     @property
     def daycounter_convention(self):
         """Returns the day count convention used by the curve.
@@ -138,7 +139,7 @@ class RateCurve:
             DayCounterConvention: The day count convention.
         """
         return self._daycounter_convention
-    
+
     @property
     def daycounter(self):
         """Returns the day counter used by the curve.
@@ -147,7 +148,7 @@ class RateCurve:
             DayCounter: The day counter object.
         """
         return self._daycounter
-    
+
     @property
     def dates(self):
         """Returns the pillar dates of the curve.
@@ -156,7 +157,7 @@ class RateCurve:
             list[date]: A list of dates representing the curve's pillars.
         """
         return self._dates
-    
+
     @property
     def pillars(self):
         """Returns the year fractions (pillars) of the curve.
@@ -165,7 +166,7 @@ class RateCurve:
             list[float]: A list of year fractions corresponding to the pillars.
         """
         return self._pillars
-    
+
     @property
     def pillar_days(self):
         """Returns the day counts for the pillars from the reference date.
@@ -174,7 +175,7 @@ class RateCurve:
             list[int]: A list of day counts between the reference date and each pillar.
         """
         return self._pillar_days
-    
+
     @property
     def rates(self):
         """Returns the list of interest rates for the curve.
@@ -192,7 +193,7 @@ class RateCurve:
             numpy.ndarray: The Jacobian matrix if set, otherwise None.
         """
         return self._jacobian
-    
+
     @jacobian.setter
     def jacobian(self, value: numpy.ndarray):
         """Sets the Jacobian matrix for the curve.
@@ -201,7 +202,7 @@ class RateCurve:
             value (numpy.ndarray): The Jacobian matrix to set.
         """
         self._jacobian = value
-    
+
     def discount(self, term: Union[date, float]) -> float:
         """Calculates the discount factor for a given term.
 
@@ -271,9 +272,7 @@ class RateCurve:
         Raises:
             TypeError: If d1 and d2 are not both dates or both floats.
         """
-        if isinstance(d1, date) and isinstance(
-            d2, date
-        ):  
+        if isinstance(d1, date) and isinstance(d2, date):
             tau = self._daycounter.year_fraction(d1, d2)
             df1 = self.discount(
                 self._daycounter.year_fraction(self._reference_date, d1)
@@ -302,7 +301,8 @@ class RateCurve:
         # time-step needed for differentiation
         dt = 0.01
         expr = -(
-            tensorflow.math.log(self.discount(t + dt)) - tensorflow.math.log(self.discount(t - dt))
+            tensorflow.math.log(self.discount(t + dt))
+            - tensorflow.math.log(self.discount(t - dt))
         ) / (2 * dt)
         return expr
 

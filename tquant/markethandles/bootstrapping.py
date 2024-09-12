@@ -29,6 +29,7 @@ class CurveBootstrap:
         _curve_map (dict): A map of existing curves to be used during the bootstrap process.
         eur_generator_map (dict): A map of instrument generators for EUR instruments.
     """
+
     def __init__(
         self,
         evaluation_date: datetime.date,
@@ -152,7 +153,7 @@ class CurveBootstrap:
                 )
             )
             zero_rates.append(0.01)
-        if is_spread_curve: #TODO basis curve bootstrapping
+        if is_spread_curve:  # TODO basis curve bootstrapping
             # base_curve = market_data[base_curve_name]
             # bootstrapping_curve = SpreadCurve(pillars, zero_rates, base_curve)
             pass
@@ -186,6 +187,7 @@ class ObjectiveFunction:
         pricers (list[Pricer]): A list of pricers for the given products.
         curves (dict[str, RateCurve]): A dictionary of existing market curves.
     """
+
     def __init__(
         self,
         trade_date: datetime.date,

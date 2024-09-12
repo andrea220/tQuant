@@ -156,7 +156,7 @@ class SwapExposureGenerator:
             market_simulated["EUR:6M"] = simulated_curves[i]
             val_date = self._date_grid.dates[i]
             Settings.evaluation_date = val_date
-            if self._date_grid.dates[i] > product.maturity:
+            if self._date_grid.dates[i] > product.end_date:
                 pv = tensorflow.zeros(shape=(n_path,), dtype=tensorflow.float64)
             else:
                 pv = swap_engine.price(product, val_date, market_simulated)
