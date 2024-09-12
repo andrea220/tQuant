@@ -1,23 +1,22 @@
 
-# tQuant
+# TensorQuant
 
 ![tQuant Logo](https://img.shields.io/badge/tQuant-v0.1.0-blue.svg) ![Python](https://img.shields.io/badge/python-v3.7+-blue.svg) ![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg) ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-**tQuant** is a Python financial library that leverages Tensor arrays for intensive risk management computations and algorithmic differentiation.
+
+**TensorQuant** is a Python financial library designed to provide students with a practical, Python-based alternative to traditional C++ implementations. Leveraging Tensor arrays, TensorQuant supports pricing, intensive risk management computations, and algorithmic differentiation. It is particularly valuable in academic settings, such as the Quant-Finance Master courses at the [University of Siena](https://finance.unisi.it/it), where it offers students hands-on experience with financial libraries and object-oriented programming during their final year.
+
+Many of the objects in TensorQuant draw inspiration from the renowned [QuantLib](https://www.quantlib.org) library. We extend our gratitude to the QuantLib community for their foundational contributions to financial modeling. While many design patterns have been simplified for ease of understanding, TensorQuant strikes a balance between code complexity and professional architecture.
+
 
 ## Table of Contents
 
-- [Introduction](#introduction)
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Contributing](#contributing)
 - [License](#license)
 - [Contact](#contact)
-
-## Introduction
-
-`tQuant` is designed to provide financial analysts and data scientists with powerful tools for risk management and algorithmic differentiation using Tensor arrays. This library is built to handle the heavy lifting involved in complex financial computations, offering both speed and accuracy. Additionally, `tQuant` is used in academic settings, including courses at the University of Siena (UNISI), to provide students with hands-on experience in financial computation and risk management.
 
 ## Features
 
@@ -29,23 +28,23 @@
 
 ## Installation
 TBD
-<!-- To install `tQuant`, simply use pip:
+To install `TensorQuant`, simply use pip:
 
 ```bash
-pip install tQuant
+pip install tensorquant
 ```
 
 Or, if you prefer, clone the repository and install manually:
 
 ```bash
-git clone https://github.com/yourusername/tQuant.git
+git clone https://github.com/andrea220/tQuant.git
 cd tQuant
 pip install .
-``` -->
+```
 
 ## Usage
-
-Here you can find basic examples of how to use `tQuant`:
+TBD
+<!-- Here you can find basic examples of how to use `tQuant`:
 
 ### General Objects
 - [**`Time handles`**](https://github.com/andrea220/tQuant/blob/main/examples/time_handles.ipynb): how to use time handles.
@@ -59,7 +58,7 @@ Here you can find basic examples of how to use `tQuant`:
 - [**`Interest rate swaps`**](https://github.com/andrea220/tQuant/blob/main/examples/swap.ipynb): price and sensitivities of interest rate swaps.
 - [**`Bootstrapping`**](https://github.com/andrea220/tQuant/blob/main/examples/bootstrapping.ipynb): bootstrapping example.
 - [**`Credit default swaps`**](https://github.com/andrea220/tQuant/blob/main/examples/cds.ipynb): price and sensitivities of credit default swaps.
-- [**`Hull and White model`**](https://github.com/andrea220/tQuant/blob/main/examples/hullwhite.ipynb): simulation of the Hull and White model.
+- [**`Hull and White model`**](https://github.com/andrea220/tQuant/blob/main/examples/hullwhite.ipynb): simulation of the Hull and White model. -->
 
 
 
@@ -72,7 +71,7 @@ TBD
 
 ## License
 
-`tQuant` is licensed under the GPL-3.0 License. See the [LICENSE](LICENSE) file for more details.
+`TensorQuant` is licensed under the GPL-3.0 License. See the [LICENSE](LICENSE) file for more details.
 
 ## Contact
 
@@ -81,4 +80,4 @@ For any questions or suggestions, feel free to reach out:
 - **Email**: [carapelliandrea@gmail.com](mailto:carapelliandrea@gmail.com)
 <!-- - **GitHub Issues**: [tQuant Issues](https://github.com/yourusername/tQuant/issues) -->
 
-We hope `tQuant` proves to be a valuable tool in your financial analysis and risk management tasks. Happy computing!
+Happy computing!
