@@ -1,234 +1,286 @@
-import tensorflow as tf
+import tensorflow 
 from tensorflow.python.framework import dtypes
-import numpy as np
+import numpy 
+from datetime import date, timedelta
+from typing import Union
 
 from ..numericalhandles.interpolation import LinearInterp
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
 
-from datetime import date, timedelta
-from typing import Union
 
 
 
 class RateCurve:
-    """
-    Represents an interest rate curve, which is used in financial markets to determine 
-    the present value of future cash flows.
-
-    The curve can be defined by a set of dates (pillars) or times to maturity, and the 
-    corresponding rates. This class also supports interpolation between these pillars 
-    and allows calculation of discount factors, zero rates, forward rates, and instantaneous 
-    forward rates.
+    """Represents a financial rate curve used for discounting, zero rates, or forward rates.
 
     Attributes:
-    -----------
-    _reference_date: date
-        The base date from which all other dates are measured.
-    _dates: list[date]
-        The list of dates corresponding to the pillars of the curve.
-    _pillars: list[float]
-        The times to maturity in years corresponding to the pillars of the curve.
-    _pillar_days: list[int]
-        The number of days between the reference date and each pillar.
-    __rates: list[float]
-        The interest rates corresponding to the pillars of the curve.
-    _rates: list[tf.Variable]
-        TensorFlow variables representing the rates for computational purposes.
-    interpolation_type: str
-        The type of interpolation used to estimate rates between the pillars.
-    _jacobian: Any
-        The Jacobian matrix for the curve, used in sensitivity analysis.
+        _reference_date (date): The starting date of the curve.
+        _daycounter_convention (DayCounterConvention): Convention for day counting.
+        _daycounter (DayCounter): Day counter instance based on the convention.
+        _dates (list[date]): Dates that represent the curve's pillars.
+        _pillars (list[float]): Year fractions corresponding to the pillar dates.
+        _pillar_days (list[int]): Day counts between the reference date and the pillars.
+        __rates (list[float]): Interest rates associated with the pillars.
+        _rates (list[Tensor]): Interest rates stored as TensorFlow variables.
+        interpolation_type (str): Type of interpolation used (e.g., 'LINEAR').
+        interp (LinearInterp): Interpolation object used for rate calculations.
+        _jacobian (numpy.ndarray): Jacobian matrix of the curve, if applicable.
     """
-    def __init__(self,
-                 reference_date: date,
-                 pillars: Union[list[date], list[float]], 
-                 rates: list[float],
-                 interp: str,
-                 daycounter_convention: DayCounterConvention):
-        """
-        Initializes a RateCurve instance with the specified attributes.
+    def __init__(
+        self,
+        reference_date: date,
+        pillars: Union[list[date], list[float]],
+        rates: list[float],
+        interp: str,
+        daycounter_convention: DayCounterConvention,
+    ):
+        """Initializes the RateCurve with a reference date, pillars, rates, and an interpolation method.
 
-        Parameters:
-        -----------
-        reference_date: date
-            The base date from which all other dates are measured.
-        pillars: Union[list[date], list[float]]
-            The list of dates or times to maturity (in years) that define the curve.
-        rates: list[float]
-            The interest rates corresponding to the pillars.
-        interp: str
-            The interpolation method used to estimate rates between the pillars.
-        daycounter_convention: DayCounterConvention
-            The daycounter convention used to estimate time fractions.
+        Args:
+            reference_date (date): The reference date for the curve.
+            pillars (Union[list[date], list[float]]): A list of dates or year fractions.
+            rates (list[float]): A list of interest rates corresponding to the pillars.
+            interp (str): The interpolation method to use (e.g., 'LINEAR').
+            daycounter_convention (DayCounterConvention): The day count convention to use for calculating time differences.
+
+        Raises:
+            TypeError: If the pillars are not all of type date or float.
+            ValueError: If the interpolation type is unsupported.
         """
         self._reference_date = reference_date
         self._daycounter_convention = daycounter_convention
         self._daycounter = DayCounter(daycounter_convention)
         if all(isinstance(d, date) for d in pillars):
             self._dates = pillars
-            self._pillars = [self._daycounter.year_fraction(reference_date, d) for d in pillars]
-            self._pillar_days = [self._daycounter.day_count(reference_date, d) for d in self._dates]
+            self._pillars = [
+                self._daycounter.year_fraction(reference_date, d) for d in pillars
+            ]
+            self._pillar_days = [
+                self._daycounter.day_count(reference_date, d) for d in self._dates
+            ]
         elif all(isinstance(d, float) for d in pillars):
-            self._dates = [reference_date + timedelta(days=d*365) for d in pillars]
-            self._pillars = pillars 
-            self._pillar_days = [self._daycounter.day_count(reference_date, d) for d in self._dates]
+            self._dates = [reference_date + timedelta(days=d * 365) for d in pillars]
+            self._pillars = pillars
+            self._pillar_days = [
+                self._daycounter.day_count(reference_date, d) for d in self._dates
+            ]
         else:
             raise TypeError("Pillars must be a list of either date or float types")
-        self.__rates = rates                                                    # float 
-        self._rates = [tf.Variable(r, dtype=dtypes.float64) for r in rates]     # tensor 
+        self.__rates = rates  # float
+        self._rates = [tensorflow.Variable(r, dtype=dtypes.float64) for r in rates]  # tensor
         self.interpolation_type = interp
         if self.interpolation_type == "LINEAR":
             self.interp = LinearInterp(self._pillars, self._rates)
         else:
             raise ValueError("Unsupported interpolation type")
-        
+
         self._jacobian = None
 
     @classmethod
-    def from_zcb(cls,
-                 reference_date: date,
-                 pillars: Union[list[date], list[int]],
-                 discount_factors: list[float],
-                 interp: str,
-                 daycounter_convention: DayCounterConvention):
-        """
-        Creates a RateCurve instance from zero-coupon bond (ZCB) discount factors.
+    def from_zcb(
+        cls,
+        reference_date: date,
+        pillars: Union[list[date], list[int]],
+        discount_factors: list[float],
+        interp: str,
+        daycounter_convention: DayCounterConvention,
+    ):
+        """Creates a RateCurve instance from zero-coupon bond discount factors.
 
-        Parameters:
-        -----------
-        reference_date: date
-            The base date from which all other dates are measured.
-        pillars: Union[list[date], list[float]]
-            The list of dates or times to maturity (in years) that define the curve.
-        discount_factors: list[float]
-            The discount factors corresponding to the pillars.
-        interp: str
-            The interpolation method used to estimate rates between the pillars.
-        daycounter_convention: DayCounterConvention
-            The daycounter convention used to estimate time fractions.
+        Args:
+            reference_date (date): The reference date for the curve.
+            pillars (Union[list[date], list[int]]): A list of dates or year fractions for the curve.
+            discount_factors (list[float]): A list of discount factors (e.g., from zero-coupon bonds).
+            interp (str): Interpolation method to use (e.g., 'LINEAR').
+            daycounter_convention (DayCounterConvention): Day count convention for time calculations.
 
         Returns:
-        -----------
-        RateCurve: A new RateCurve instance.
+            RateCurve: A new RateCurve instance.
         """
         daycounter = DayCounter(daycounter_convention)
         if all(isinstance(d, date) for d in pillars):
             dates = pillars
             pillars = [daycounter.year_fraction(reference_date, d) for d in pillars]
         elif all(isinstance(d, float) for d in pillars):
-            dates = [reference_date + timedelta(days=d*365) for d in pillars]
+            dates = [reference_date + timedelta(days=d * 365) for d in pillars]
             pillars = [daycounter.year_fraction(reference_date, d) for d in dates]
         else:
             raise TypeError("dates must be a list of either date or float types")
-        # pillars = [daycounter.year_fraction(reference_date, d) for d in dates]
-        rates = [-np.log(df) / tau if tau > 0 else 0 for df, tau in zip(discount_factors, pillars)]
+        rates = [
+            -numpy.log(df) / tau if tau > 0 else 0
+            for df, tau in zip(discount_factors, pillars)
+        ]
         return cls(reference_date, dates, rates, interp, daycounter_convention)
-    
+
     @property
     def nodes(self):
-        """
-        Returns the nodes of the curve, which consist of the dates and corresponding rates.
+        """Returns the curve's nodes (pillar dates and rates).
 
         Returns:
-        -----------
-        list[tuple]: A list of tuples where each tuple contains a date and a rate.
+            list[tuple]: A list of tuples, where each tuple contains a date and the corresponding rate.
         """
-        return [(t,r) for t, r in zip(self._dates, self.__rates)]
+        return [(t, r) for t, r in zip(self._dates, self.__rates)]
 
     @property
     def reference_date(self):
-        """
-        Returns the reference date of the curve.
+        """Returns the reference date of the curve.
 
         Returns:
-        -----------
-        date: The reference date.
+            date: The reference date.
         """
         return self._reference_date
-            
-    def discount(self,
-                 term: Union[date, float]) -> float:
-        """
-        Calculates the discount factor for a given term.
-
-        Parameters:
-        -----------
-        term: Union[date, float]
-            The term for which the discount factor is calculated. This can be either a 
-            date or a time to maturity in years.
+    
+    @property
+    def daycounter_convention(self):
+        """Returns the day count convention used by the curve.
 
         Returns:
-        -----------
-        float: The discount factor for the given term.
+            DayCounterConvention: The day count convention.
+        """
+        return self._daycounter_convention
+    
+    @property
+    def daycounter(self):
+        """Returns the day counter used by the curve.
+
+        Returns:
+            DayCounter: The day counter object.
+        """
+        return self._daycounter
+    
+    @property
+    def dates(self):
+        """Returns the pillar dates of the curve.
+
+        Returns:
+            list[date]: A list of dates representing the curve's pillars.
+        """
+        return self._dates
+    
+    @property
+    def pillars(self):
+        """Returns the year fractions (pillars) of the curve.
+
+        Returns:
+            list[float]: A list of year fractions corresponding to the pillars.
+        """
+        return self._pillars
+    
+    @property
+    def pillar_days(self):
+        """Returns the day counts for the pillars from the reference date.
+
+        Returns:
+            list[int]: A list of day counts between the reference date and each pillar.
+        """
+        return self._pillar_days
+    
+    @property
+    def rates(self):
+        """Returns the list of interest rates for the curve.
+
+        Returns:
+            list[float]: The rates corresponding to the pillars.
+        """
+        return self.__rates
+
+    @property
+    def jacobian(self) -> numpy.ndarray:
+        """Returns the Jacobian matrix of the curve.
+
+        Returns:
+            numpy.ndarray: The Jacobian matrix if set, otherwise None.
+        """
+        return self._jacobian
+    
+    @jacobian.setter
+    def jacobian(self, value: numpy.ndarray):
+        """Sets the Jacobian matrix for the curve.
+
+        Args:
+            value (numpy.ndarray): The Jacobian matrix to set.
+        """
+        self._jacobian = value
+    
+    def discount(self, term: Union[date, float]) -> float:
+        """Calculates the discount factor for a given term.
+
+        Args:
+            term (Union[date, float]): The term for which to calculate the discount factor. Can be a date or year fraction.
+
+        Returns:
+            float: The discount factor.
+
+        Raises:
+            TypeError: If the term is not a date or float.
         """
         if isinstance(term, date):
             term = self._daycounter.year_fraction(self._reference_date, term)
         elif isinstance(term, float):
-            pass 
+            pass
         else:
             raise TypeError("term must be of type date or float")
-        
+
         if term == 0.0:
             return 1
-        
+
         if term <= self._pillars[0]:
             nrt = -term * self._rates[0]
-            df = tf.exp(nrt)
+            df = tensorflow.exp(nrt)
             return df
         if term >= self._pillars[-1]:
             nrt = -term * self._rates[-1]
-            df = tf.exp(nrt)
+            df = tensorflow.exp(nrt)
             return df
         else:
             nrt = -term * self.interp.interpolate(term)
-            df = tf.exp(nrt)
+            df = tensorflow.exp(nrt)
             return df
-    
-    def zero_rate(self,
-                  term: Union[date, float]) -> float:
-        """
-        Calculates the zero-coupon rate for a given term.
 
-        Parameters:
-        -----------
-        term: Union[date, float]
-            The term for which the zero-coupon rate is calculated. This can be either a 
-            date or a time to maturity in years.
+    def zero_rate(self, term: Union[date, float]) -> float:
+        """Calculates the zero rate for a given term.
+
+        Args:
+            term (Union[date, float]): The term for which to calculate the zero rate. Can be a date or year fraction.
 
         Returns:
-        -----------
-        float: The zero-coupon rate for the given term.
+            float: The zero rate.
+
+        Raises:
+            TypeError: If the term is not a date or float.
         """
         if isinstance(term, date):
             term = self._daycounter.year_fraction(self._reference_date, term)
         elif isinstance(term, float):
-            pass 
+            pass
         else:
             raise TypeError("term must be of type date or float")
         P_tT = self.discount(term)
-        return (1 - P_tT) / (term*P_tT)
+        return (1 - P_tT) / (term * P_tT)
 
-    def forward_rate(self,
-                     d1: Union[date, float],
-                     d2: Union[date, float]) -> float:
-        """
-        Calculates the forward rate between two dates or times to maturity.
+    def forward_rate(self, d1: Union[date, float], d2: Union[date, float]) -> float:
+        """Calculates the forward rate between two dates or year fractions.
 
-        Parameters:
-        -----------
-        d1: Union[date, float]
-            The start date or time to maturity.
-        d2: Union[date, float]
-            The end date or time to maturity.
+        Args:
+            d1 (Union[date, float]): The start of the period.
+            d2 (Union[date, float]): The end of the period.
 
         Returns:
-        -----------
-        float: The forward rate between d1 and d2.
+            float: The forward rate.
+
+        Raises:
+            TypeError: If d1 and d2 are not both dates or both floats.
         """
-        if isinstance(d1, date) and isinstance(d2, date): #TODO aggiungere anche daycounter
+        if isinstance(d1, date) and isinstance(
+            d2, date
+        ):  
             tau = self._daycounter.year_fraction(d1, d2)
-            df1 = self.discount(self._daycounter.year_fraction(self._reference_date, d1))
-            df2 = self.discount(self._daycounter.year_fraction(self._reference_date, d2))
+            df1 = self.discount(
+                self._daycounter.year_fraction(self._reference_date, d1)
+            )
+            df2 = self.discount(
+                self._daycounter.year_fraction(self._reference_date, d2)
+            )
         elif isinstance(d1, float) and isinstance(d2, float):
             tau = d2 - d1
             df1 = self.discount(d1)
@@ -237,63 +289,29 @@ class RateCurve:
             raise TypeError("d1 e d2 devono essere entrambi date oppure entrambi float")
 
         return (df1 / df2 - 1) / tau
-    
-    def inst_fwd(self,
-                 t: float):
-        """
-        Calculates the instantaneous forward rate at a given time.
 
-        Parameters:
-        -----------
-        t: float
-            The time to maturity at which the instantaneous forward rate is calculated.
+    def inst_fwd(self, t: float):
+        """Calculates the instantaneous forward rate at a specific time.
+
+        Args:
+            t (float): The time (in year fractions) to calculate the instantaneous forward rate.
 
         Returns:
-        -----------
-        float: The instantaneous forward rate at time t.
+            float: The instantaneous forward rate.
         """
         # time-step needed for differentiation
         dt = 0.01
-        expr = - (tf.math.log(self.discount(t + dt)) - tf.math.log(self.discount(t - dt))) / (2 * dt)
+        expr = -(
+            tensorflow.math.log(self.discount(t + dt)) - tensorflow.math.log(self.discount(t - dt))
+        ) / (2 * dt)
         return expr
-    
-    def _set_rates(self,
-                   rates: list[float]) -> None: 
-        """
-        Sets new rates for the curve and updates the interpolation function.
 
-        Parameters:
-        -----------
-        rates: list[float]
-            The new rates to be set on the curve.
+    def _set_rates(self, rates: list[float]) -> None:
+        """Sets the rates for the curve and updates the interpolation.
+
+        Args:
+            rates (list[float]): The new rates to set.
         """
-        self.__rates = rates 
-        self._rates = [tf.Variable(r, dtype=dtypes.float64) for r in rates]
+        self.__rates = rates
+        self._rates = [tensorflow.Variable(r, dtype=dtypes.float64) for r in rates]
         self.interp.y = self._rates
-
-    @property
-    def jacobian(self) -> np.ndarray:
-        """
-        Returns the Jacobian matrix of the curve.
-
-        The Jacobian matrix is used in sensitivity analysis and represents the 
-        derivatives of the curve's outputs with respect to its inputs.
-
-        Returns:
-        -----------
-        np.ndarray: The Jacobian matrix of the curve.
-        """
-        return self._jacobian
-
-    @jacobian.setter
-    def jacobian(self, value: np.ndarray):
-        """
-        Sets the Jacobian matrix of the curve.
-
-        Parameters:
-        -----------
-        value: np.ndarray
-            The Jacobian matrix to be set.
-        """
-        self._jacobian = value
-
