@@ -1,9 +1,18 @@
-version: 1
+version: 2
 
+# Configurazione del build environment
 build:
   os: ubuntu-22.04
   tools:
-    python: "3.10"
+    python: "3.9"  # Puoi specificare la versione di Python che desideri
 
+# Configurazione di Sphinx
 sphinx:
-  configuration: docs/source/conf.py
+  configuration: docs/source/conf.py  # Percorso al file conf.py, aggiorna se necessario
+
+# Comandi Python per installare le dipendenze
+python:
+  install:
+    - method: pip
+      path: .
+    - requirements: docs/requirements.txt  # Assicurati che esista un file requirements.txt
