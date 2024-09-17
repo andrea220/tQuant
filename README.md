@@ -7,6 +7,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 **TensorQuant** is a Python financial library designed to provide a practical, Python-based implementations. Leveraging Tensor arrays, TensorQuant supports pricing, intensive risk management computations, and algorithmic differentiation. You can explore examples and use cases in the [**playground repository**](https://github.com/andrea220/tqPlayground) with Jupyter notebooks.
+
 It is particularly valuable in academic settings, such as the [Finance Master courses at the University of Siena](https://finance.unisi.it/it), where students gain hands-on experience with financial libraries and object-oriented programming.
 
 Many of TensorQuant's components draw inspiration from the renowned [QuantLib](https://www.quantlib.org) library. Our thanks go to the QuantLib community for their contributions to financial modeling. While simplified for ease of use, TensorQuant aims to strike a balance between ease of understanding and professional architecture.
