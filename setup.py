@@ -2,11 +2,16 @@ from setuptools import setup, find_packages
 
 setup(
     name="tensorquant",  
-    version="0.0.4",  
+    version="0.0.5",  
     packages=find_packages(),  
-    install_requires=[],  # Dipendenze richieste, puoi aggiungere pacchetti necessari qui
+    install_requires=[
+        'tensorflow>=2.0',
+        'tensorflow-probability>=0.20',
+        'pandas',
+        'python-dateutil',
+    ],  
     description="TensorFlow-Python financial library",
-    long_description=open('README.md').read(),  
+    long_description=open('README.md', encoding="utf8").read(),  
     long_description_content_type='text/markdown',  
     author="Andrea Carapelli",
     author_email="carapelliandrea@email.com",
