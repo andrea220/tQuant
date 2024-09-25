@@ -7,9 +7,9 @@ from tensorflow import Variable, float64
 
 class Option(Product, ABC):
 
-    def __init__(self, ccy: Currency, start_date: date, end_date: date, quote: float,
+    def __init__(self, ccy: Currency, start_date: date, end_date: date, 
                  option_type: OptionType, underlying: str, strike: float | list[float], exercise_type: ExerciseType ):
-        super().__init__(ccy, start_date, end_date, quote)
+        super().__init__(ccy, start_date, end_date)
         self._option_type = option_type
         self._strike = Variable(strike, dtype=float64) 
         self._underlying = underlying
@@ -44,7 +44,7 @@ class Option(Product, ABC):
 class VanillaOption(Option):
 
     def __init__(self, ccy: Currency, start_date: date, end_date: date, option_type, underlying: str, strike):
-        super().__init__(ccy, start_date, end_date, None, 
+        super().__init__(ccy, start_date, end_date, 
                          option_type, underlying, strike, ExerciseType.European)
         self._delta = None
         self._gamma = None 

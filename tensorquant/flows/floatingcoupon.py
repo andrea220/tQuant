@@ -385,3 +385,23 @@ class FloatingRateLeg:
             coupon_flow = flows[i].display()
             leg_display = pd.concat([leg_display, coupon_flow], axis=0)
         return leg_display
+
+    @property
+    def index(self) -> IborIndex:
+        return self._index
+    
+    @property
+    def price(self) -> float:
+        """
+        Get the price associated with the Leg.
+
+        Returns:
+            float: The price of the Leg.
+        """
+        if self._price is None:
+            raise ValueError("you must define a pricer")
+        return self._price
+    
+    @price.setter
+    def price(self, value):
+        self._price = value

@@ -12,7 +12,7 @@ class Deposit(Product):
 
     Attributes:
         ccy (Currency): The currency of the deposit.
-        quote (float): The interest rate or quote for the deposit.
+        rate (float): The interest rate for the deposit.
         trade_date (datetime.date): The trade date of the deposit.
         start_date (datetime.date): The start date of the deposit.
         end_date (datetime.date): The end date or maturity date of the deposit.
@@ -23,7 +23,7 @@ class Deposit(Product):
     def __init__(
         self,
         ccy: Currency,
-        quote: float,
+        rate: float,
         trade_date: datetime.date,
         start_date: datetime.date,
         end_date: datetime.date,
@@ -35,19 +35,24 @@ class Deposit(Product):
 
         Args:
             ccy (Currency): The currency in which the deposit is denominated.
-            quote (float): The interest rate for the deposit.
+            rate (float): The interest rate for the deposit.
             trade_date (datetime.date): The trade date of the deposit.
             start_date (datetime.date): The date on which the deposit starts.
             end_date (datetime.date): The maturity or end date of the deposit.
             notional (int or float): The notional amount for the deposit.
             day_count_convention (DayCounterConvention): The day count convention for calculating interest.
         """
-        super().__init__(ccy, start_date, end_date, quote)
+        super().__init__(ccy, start_date, end_date)
+        self._rate = rate
         self._day_count_convention = day_count_convention
         self._trade_date = trade_date
         self._notional = notional
         self._day_counter = DayCounter(day_count_convention)
 
+    @property
+    def rate(self) -> float:
+        return self._rate 
+    
     @property
     def day_count_convention(self) -> DayCounterConvention:
         """

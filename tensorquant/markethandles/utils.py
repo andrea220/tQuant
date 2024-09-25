@@ -94,14 +94,14 @@ class ExerciseType(Enum):
         return self.value
     
 
-curve_map = {
-    "EUR": {"ON": "EUR:ESTR", "3M": "EUR:3M", "6M": "EUR:6M"},
-    "USD": {"ON": "USD:SOFR", "3M": "USD:3M", "6M": "USD:6M"},
-}
+# curve_map = {
+#     "EUR": {"ON": "EUR:ESTR", "3M": "EUR:3M", "6M": "EUR:6M"},
+#     "USD": {"ON": "USD:SOFR", "3M": "USD:3M", "6M": "USD:6M"},
+# }
 
 
-ir_eur_crv_map = {"ON": "EUR:ESTR", "3M": "EUR:3M", "6M": "EUR:6M"}
-ir_usd_crv_map = {"ON": "USD:SOFR", "3M": "USD:3M", "6M": "USD:6M"}
+ir_eur_crv_map = {"ON": "IR:EUR:ESTR", "3M": "IR:EUR:3M", "6M": "IR:EUR:6M"}
+ir_usd_crv_map = {"ON": "IR:USD:SOFR", "3M": "IR:USD:3M", "6M": "IR:USD:6M"}
 eq_eur_vol_map = {"DEFAULT": "DEFAULT"}
 
 market_map = {

@@ -1,4 +1,5 @@
-import tensorflow
+from tensorflow import Variable
+import tensorflow 
 from tensorflow.python.framework import dtypes
 
 from .stochasticprocess import StochasticProcess
@@ -29,8 +30,8 @@ class HullWhiteProcess(StochasticProcess):
         self._process = OrnsteinUhlenbeckProcess(
             mr_speed=a, volatility=sigma, x0=term_structure.inst_fwd(0)
         )
-        self._a = tensorflow.Variable(a, dtype=dtypes.float64)
-        self._sigma = tensorflow.Variable(sigma, dtype=dtypes.float64)
+        self._a = Variable(a, dtype=dtypes.float64)
+        self._sigma = Variable(sigma, dtype=dtypes.float64)
         self._term_structure = term_structure
 
     def size(self) -> int:
@@ -93,7 +94,7 @@ class HullWhiteProcess(StochasticProcess):
             float: The drift value.
         """
         alpha_drift = (
-            self._sigma**2 / (2 * self._a) * (1 - tensorflow.exp(-2 * self._a * t))
+            self._sigma**2 / (2 * self._a) * (1 - tensorflow.math.exp(-2 * self._a * t))
         )
         shift = 0.0001
         f = self._term_structure.forward_rate(t, t)
@@ -130,7 +131,7 @@ class HullWhiteProcess(StochasticProcess):
         return (
             self._process.expectation(x0=x0, dt=dt)
             + self.alpha(t0 + dt)
-            - self.alpha(t0) * tensorflow.exp(-self._a * dt)
+            - self.alpha(t0) * tensorflow.math.exp(-self._a * dt)
         )
 
     def std_deviation(self, dt: float, t0=None, x0=None) -> float:
@@ -170,7 +171,7 @@ class HullWhiteProcess(StochasticProcess):
             float: The alpha value.
         """
         if self.a > 1e-10:
-            alfa = (self._sigma / self._a) * (1 - tensorflow.exp(-self._a * t))
+            alfa = (self._sigma / self._a) * (1 - tensorflow.math.exp(-self._a * t))
         else:
             alfa = self._sigma * t
         alfa = 0.5 * alfa**2
@@ -192,17 +193,17 @@ class HullWhiteProcess(StochasticProcess):
         P0T = self._term_structure.discount(T)
         P0S = self._term_structure.discount(S)
 
-        B = 1 - tensorflow.exp(-self._a * (T - S))
+        B = 1 - tensorflow.math.exp(-self._a * (T - S))
         B /= self._a
 
         exponent = self.sigma * (
-            tensorflow.exp(-self._a * T) - tensorflow.exp(-self._a * S)
+            tensorflow.math.exp(-self._a * T) - tensorflow.math.exp(-self._a * S)
         )
         exponent *= exponent
-        exponent *= tensorflow.exp(2 * self._a * S) - 1
+        exponent *= tensorflow.math.exp(2 * self._a * S) - 1
         exponent /= -4 * (self._a**3)
         exponent += B * f0S
-        A = tensorflow.exp(exponent) * P0T / P0S
+        A = tensorflow.math.exp(exponent) * P0T / P0S
         return A, B
 
     def zero_bond(self, S: float, T: float, rs: float) -> float:
@@ -218,4 +219,4 @@ class HullWhiteProcess(StochasticProcess):
             float: Price of the zero-coupon bond.
         """
         A, B = self.A_B(S, T)
-        return A * tensorflow.exp(-B * rs)
+        return A * tensorflow.math.exp(-B * rs)

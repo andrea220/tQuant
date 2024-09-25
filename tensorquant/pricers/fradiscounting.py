@@ -1,34 +1,30 @@
 from .pricer import Pricer
 from ..instruments.forward import Fra
-from ..markethandles.ircurve import RateCurve
-from ..timehandles.utils import TimeUnit, BusinessDayConvention
-
-from datetime import date
-import tensorflow as tf
+from ..timehandles.utils import TimeUnit, BusinessDayConvention, Settings
 
 
 class FraPricer(Pricer):
-    def __init__(self, curve_map):
+    def __init__(self, market_map):
         super().__init__()
-        self._curve_map = curve_map
+        self._market_map = market_map
 
-    def calculate_price(self, product: Fra, as_of_date: date, curves: dict[RateCurve]):
+    def calculate_price(self, product: Fra, market: dict):
         if isinstance(product, Fra):
-            fra = product
             try:
+                # get discount curve for product ccy
                 curve_usage = product.ccy.value + ":ON"
                 curve_ccy, curve_tenor = curve_usage.split(":")
-                dc = curves[self._curve_map[curve_ccy][curve_tenor]]
-
+                dc = market[self._market_map[f'IR:{curve_ccy}'][curve_tenor]]
+                # get forward curve for the index
                 curve_usage = product._index.name
                 curve_ccy, curve_tenor = curve_usage.split(":")
-                fc = curves[self._curve_map[curve_ccy][curve_tenor]]
+                fc = market[self._market_map[f'IR:{curve_ccy}'][curve_tenor]]
             except:
                 raise ValueError("Unknown Curve")
 
             pv = 0.0
-            if fra.start_date > as_of_date:
-                accrual = fra.day_counter.year_fraction(fra.start_date, fra.end_date)
+            if product.start_date > Settings.evaluation_date:
+                accrual = product.day_counter.year_fraction(product.start_date, product.end_date)
                 fixing_d = product.fixing_date
                 d1 = product._index.fixing_calendar.advance(
                     fixing_d, 2, TimeUnit.Days, BusinessDayConvention.ModifiedFollowing
@@ -40,11 +36,11 @@ class FraPricer(Pricer):
                 fwd = (disc1 / disc2 - 1) / t
                 self.fwd = fwd
                 pv += (
-                    fra.notional
+                    product.notional
                     * accrual
-                    * (fwd - fra.quote)
+                    * (fwd - product.fixed_rate) * product.side.value
                     * dc.discount(
-                        fra.day_counter.year_fraction(as_of_date, fra.end_date)
+                        product.day_counter.year_fraction(Settings.evaluation_date, product.end_date)
                     )
                 )
             return pv / (1 + fwd * accrual)

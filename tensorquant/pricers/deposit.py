@@ -1,31 +1,26 @@
 from .pricer import Pricer
 from ..instruments.deposit import Deposit
-from ..markethandles.ircurve import RateCurve
-from ..timehandles.utils import DayCounterConvention
+from ..timehandles.utils import DayCounterConvention, Settings
 from ..timehandles.daycounter import DayCounter
 
-from datetime import date
-import tensorflow as tf
 
 
 class DepositPricer(Pricer):
-    def __init__(self, curve_map):
+    def __init__(self, market_map):
         super().__init__()
-        self._curve_map = curve_map
+        self._market_map = market_map
 
-    def calculate_price(self, product, as_of_date: date, curves):
+    def calculate_price(self, product, market):
         if isinstance(product, Deposit):
-            deposit = product
             try:
                 curve_usage = product.ccy.value + ":ON"
                 curve_ccy, curve_tenor = curve_usage.split(":")
-                curve = curves[self._curve_map[curve_ccy][curve_tenor]]
+                curve = market[self._market_map[f'IR:{curve_ccy}'][curve_tenor]]
             except:
                 raise ValueError("Unknown Curve")
-            act365 = DayCounterConvention.Actual365
-            day_counter = DayCounter(act365)
-            ts = day_counter.year_fraction(as_of_date, deposit.start_date)
-            te = day_counter.year_fraction(as_of_date, deposit.end_date)
+            day_counter = DayCounter(DayCounterConvention.Actual365)
+            ts = day_counter.year_fraction(Settings.evaluation_date, product.start_date)
+            te = day_counter.year_fraction(Settings.evaluation_date, product.end_date)
             df_s = curve.discount(ts)
             df_e = curve.discount(te)
             start_cashflow = 0.0
@@ -33,12 +28,12 @@ class DepositPricer(Pricer):
                 start_cashflow = 1.0
             end_cashflow = 0.0
             if te > 0.0:
-                yf = deposit.day_counter.year_fraction(
-                    deposit.start_date, deposit.end_date
+                yf = product.day_counter.year_fraction(
+                    product.start_date, product.end_date
                 )
-                end_cashflow = 1.0 + deposit.quote * yf
-            start_cashflow *= deposit.notional
-            end_cashflow *= deposit.notional
+                end_cashflow = 1.0 + product.rate * yf
+            start_cashflow *= product.notional
+            end_cashflow *= product.notional
 
             return start_cashflow * df_s - end_cashflow * df_e
         else:

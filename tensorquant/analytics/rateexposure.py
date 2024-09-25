@@ -1,5 +1,7 @@
 import numpy
-import tensorflow
+from tensorflow import Tensor, float64, reduce_mean, stack, zeros
+
+
 
 from ..models.hullwhite import HullWhiteProcess
 from ..timehandles.grid import DateGrid
@@ -7,7 +9,7 @@ from ..instruments.swap import Swap
 from ..pricers.swapdiscounting import SwapPricer
 from .gaussiankernel import HullWhiteShortRateGenerator
 from ..timehandles.utils import Settings
-from ..markethandles.utils import curve_map
+from ..markethandles.utils import market_map
 
 
 class SwapExposureGenerator:
@@ -67,7 +69,7 @@ class SwapExposureGenerator:
         return self._kernel
 
     @property
-    def expected_exposure(self) -> tensorflow.Tensor:
+    def expected_exposure(self) -> Tensor:
         """
         Returns the expected exposure of the swap.
 
@@ -82,7 +84,7 @@ class SwapExposureGenerator:
         return self._expected_exposure
 
     @property
-    def exposure(self) -> tensorflow.Tensor:
+    def exposure(self) -> Tensor:
         """
         Returns the exposure of the swap.
 
@@ -118,9 +120,9 @@ class SwapExposureGenerator:
         ].values
         transaction_fixing_rates = numpy.zeros(shape=transaction_fixing_dates.shape[0])
         simulated_fixing_dates = [
-            product.index.fixing_date(d) for d in self._date_grid.dates
+            product.floating_leg.index.fixing_date(d) for d in self._date_grid.dates
         ]
-        simulated_fixing_rates = tensorflow.reduce_mean(
+        simulated_fixing_rates = reduce_mean(
             self._kernel.state_variable, axis=0
         ).numpy()
         simulated_fixing_rates[0] = last_fixing
@@ -146,20 +148,22 @@ class SwapExposureGenerator:
                     ],
                 )
         for i, d in enumerate(transaction_fixing_dates):
-            product.index.add_fixing(d, transaction_fixing_rates[i])
+            product.floating_leg.index.add_fixing(d, transaction_fixing_rates[i])
 
         exposure = []
-        swap_engine = SwapPricer(curve_map)
+        swap_engine = SwapPricer(market_map)
+
         for i in range(len(self._date_grid.dates)):
             market_simulated = {}
-            market_simulated["EUR:ESTR"] = simulated_curves[i]  # TODO mettere dinamiche
-            market_simulated["EUR:6M"] = simulated_curves[i]
+            market_simulated[product.discount_curve] = simulated_curves[i]  
+            market_simulated[product.estimation_curve] = simulated_curves[i]
             val_date = self._date_grid.dates[i]
             Settings.evaluation_date = val_date
             if self._date_grid.dates[i] > product.end_date:
-                pv = tensorflow.zeros(shape=(n_path,), dtype=tensorflow.float64)
+                pv = zeros(shape=(n_path,), dtype=float64)
             else:
-                pv = swap_engine.price(product, val_date, market_simulated)
+                swap_engine.price(product, market_simulated)
+                pv = product.price
             exposure.append(pv)
-        self._exposure = tensorflow.stack(exposure, axis=0)
-        self._expected_exposure = tensorflow.reduce_mean(exposure, axis=1)
+        self._exposure = stack(exposure, axis=0)
+        self._expected_exposure = reduce_mean(exposure, axis=1)

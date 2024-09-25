@@ -1,4 +1,4 @@
-import tensorflow
+from tensorflow import Tensor, float64, random, stack, fill
 
 from dateutil.relativedelta import relativedelta
 from ..models.stochasticprocess import StochasticProcess
@@ -32,7 +32,7 @@ class GaussianPathGenerator:
         self._generator = None  # TODO implementation of pseudo-random number generator
         self._state_variable = None
 
-    def simulate(self, n_paths: int) -> tensorflow.Tensor:
+    def simulate(self, n_paths: int) -> Tensor:
         """
         Simulates paths for the given number of paths using the underlying stochastic process.
 
@@ -40,21 +40,21 @@ class GaussianPathGenerator:
             n_paths (int): Number of paths to simulate.
 
         Returns:
-            tensorflow.Tensor: Tensor containing the simulated paths.
+            Tensor: Tensor containing the simulated paths.
         """
         path = []
-        path.append(tensorflow.fill((n_paths,), value=self._process.initial_values()))
+        path.append(fill((n_paths,), value=self._process.initial_values()))
         time_grid = self._date_grid.times
         for i in range(1, len(time_grid)):
-            w = tensorflow.random.normal(
-                shape=(n_paths,), mean=0, stddev=1, dtype=tensorflow.float64
+            w = random.normal(
+                shape=(n_paths,), mean=0, stddev=1, dtype=float64
             )
             s = time_grid[i - 1]
             t = time_grid[i]
             dt = t - s
             x_t = self._process.evolve(s, path[i - 1], dt, w)
             path.append(x_t)
-        self._state_variable = tensorflow.stack(path, axis=1)
+        self._state_variable = stack(path, axis=1)
 
     @property
     def process(self) -> StochasticProcess:
@@ -87,7 +87,7 @@ class GaussianPathGenerator:
         return None
 
     @property
-    def state_variable(self) -> tensorflow.Tensor:
+    def state_variable(self) -> Tensor:
         """
         Returns the simulated paths after running the `simulate` method.
 
@@ -122,7 +122,7 @@ class HullWhiteShortRateGenerator(GaussianPathGenerator):
         """
         super().__init__(process, date_grid)
 
-    def simulate_curves(self, n_paths: int) -> tensorflow.Tensor:
+    def simulate_curves(self, n_paths: int) -> Tensor:
         """
         Simulates yield curves for the given number of paths using the Hull-White process.
 
@@ -151,7 +151,7 @@ class HullWhiteShortRateGenerator(GaussianPathGenerator):
                 )
                 for d in curve_dates
             ]
-            bonds_tmp = tensorflow.stack(
+            bonds_tmp = stack(
                 [
                     self._process.zero_bond(
                         self._date_grid.times[i],

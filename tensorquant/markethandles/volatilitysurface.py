@@ -109,7 +109,3 @@ class BlackConstantVolatility(VolatilitySurface):
     def volatility(self, strike, maturity):
         return self._volatility_matrix
     
-    # def variance(self, strike, maturity):
-    #     implied_vol = self.volatility(strike, maturity)
-    #     t = self.daycounter.year_fraction(tq.Settings.evaluation_date, maturity)
-    #     return t * implied_vol*implied_vol

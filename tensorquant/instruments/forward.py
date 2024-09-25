@@ -3,7 +3,7 @@ from .product import Product
 from ..index.curverateindex import IborIndex
 from ..timehandles.utils import DayCounterConvention
 from ..timehandles.daycounter import DayCounter
-from ..markethandles.utils import Currency
+from ..markethandles.utils import Currency, SwapType
 
 
 class Fra(Product):
@@ -30,9 +30,10 @@ class Fra(Product):
         start_date: date,
         end_date: date,
         notional: float,
-        quote: float,
+        fixed_rate: float,
         day_count_convention: DayCounterConvention,
         index: IborIndex,
+        side: SwapType = SwapType.Payer
     ):
         """
         Initialize a Forward Rate Agreement (FRA) instance.
@@ -42,16 +43,23 @@ class Fra(Product):
             start_date (date): The start date of the FRA.
             end_date (date): The end date of the FRA.
             notional (float): The notional amount of the FRA.
-            quote (float): The FRA quote or rate.
+            fixed_rate (float): The FRA quote or rate.
             day_count_convention (DayCounterConvention): The day count convention used for interest calculations.
             index (IborIndex): The Ibor index used for the FRA.
         """
-        super().__init__(ccy, start_date, end_date, quote)
+        super().__init__(ccy, start_date, end_date)
+        self._fixed_rate = fixed_rate
         self._day_count_convention = day_count_convention
         self._notional = notional
         self._day_counter = DayCounter(day_count_convention)
         self._index = index
+        self._side = side
 
+
+    @property
+    def fixed_rate(self) -> float:
+        return self._fixed_rate 
+    
     @property
     def day_count_convention(self) -> DayCounterConvention:
         """
@@ -91,3 +99,7 @@ class Fra(Product):
             date: The fixing date.
         """
         return self._index.fixing_date(self.start_date)
+
+    @property
+    def side(self):
+        return self._side

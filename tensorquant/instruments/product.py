@@ -12,7 +12,7 @@ class Product(ABC):
         ccy (Currency): The currency of the product.
         start_date (datetime.date): The start date of the product.
         end_date (datetime.date): The end date or maturity date of the product.
-        quote (float): The price or interest rate associated with the product.
+        price (float): The price or interest rate associated with the product.
     """
 
     def __init__(
@@ -20,7 +20,6 @@ class Product(ABC):
         ccy: Currency,
         start_date: datetime.date,
         end_date: datetime.date,
-        quote: float,
     ):
         """
         Initializes the base product class with common attributes.
@@ -29,12 +28,11 @@ class Product(ABC):
             ccy (Currency): The currency of the product.
             start_date (datetime.date): The start date of the product.
             end_date (datetime.date): The end or maturity date of the product.
-            quote (float): The price or rate of the product.
         """
         self._ccy = ccy
         self._start_date = start_date
         self._end_date = end_date
-        self._quote = quote
+        self._price = None
 
     @property
     def ccy(self) -> Currency:
@@ -67,11 +65,17 @@ class Product(ABC):
         return self._end_date
 
     @property
-    def quote(self) -> float:
+    def price(self) -> float:
         """
-        Get the interest rate associated with the product.
+        Get the price associated with the product.
 
         Returns:
-            float: The rate of the product.
+            float: The price of the product.
         """
-        return self._quote
+        if self._price is None:
+            raise ValueError("you must define a pricer")
+        return self._price
+    
+    @price.setter
+    def price(self, value):
+        self._price = value

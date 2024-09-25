@@ -1,6 +1,7 @@
 from .stochasticprocess import StochasticProcess
 from tensorflow.python.framework import dtypes
-import tensorflow
+from tensorflow import Variable, Tensor
+from math import exp, sqrt
 
 
 class OrnsteinUhlenbeckProcess(StochasticProcess):
@@ -25,9 +26,9 @@ class OrnsteinUhlenbeckProcess(StochasticProcess):
             x0 (float, optional): The initial value of the process. Defaults to 0.0.
             level (float, optional): The long-term mean level of the process. Defaults to 0.0.
         """
-        self._x0 = tensorflow.Variable(x0, dtype=dtypes.float64)
-        self._mr_speed = tensorflow.Variable(mr_speed, dtype=dtypes.float64)
-        self._volatility = tensorflow.Variable(volatility, dtype=dtypes.float64)
+        self._x0 = Variable(x0, dtype=dtypes.float64)
+        self._mr_speed = Variable(mr_speed, dtype=dtypes.float64)
+        self._volatility = Variable(volatility, dtype=dtypes.float64)
         self._level = level
 
     def size(self):
@@ -46,7 +47,7 @@ class OrnsteinUhlenbeckProcess(StochasticProcess):
         """
         return self.x0
 
-    def drift(self, x: tensorflow.Tensor) -> tensorflow.Tensor:
+    def drift(self, x: Tensor) -> Tensor:
         """Calculates the drift term of the process.
 
         Args:
@@ -57,7 +58,7 @@ class OrnsteinUhlenbeckProcess(StochasticProcess):
         """
         return self._mr_speed * (self._level - x)
 
-    def diffusion(self) -> tensorflow.Tensor:
+    def diffusion(self) -> Tensor:
         """Returns the diffusion term of the process.
 
         Returns:
@@ -65,7 +66,7 @@ class OrnsteinUhlenbeckProcess(StochasticProcess):
         """
         return self._volatility
 
-    def expectation(self, x0: float, dt: float, t0=None) -> tensorflow.Tensor:
+    def expectation(self, x0: float, dt: float, t0=None) -> Tensor:
         """Calculates the expected value of the process after a time step.
 
         Args:
@@ -76,9 +77,9 @@ class OrnsteinUhlenbeckProcess(StochasticProcess):
         Returns:
             tensorflow.Tensor: The expected value of the process at time t0 + dt.
         """
-        return self._level + (x0 - self._level) * tensorflow.exp(-self._mr_speed * dt)
+        return self._level + (x0 - self._level) * exp(-self._mr_speed * dt)
 
-    def std_deviation(self, dt: float, t0=None, x0=None) -> tensorflow.Tensor:
+    def std_deviation(self, dt: float, t0=None, x0=None) -> Tensor:
         """Calculates the standard deviation of the process after a time step.
 
         Args:
@@ -89,9 +90,9 @@ class OrnsteinUhlenbeckProcess(StochasticProcess):
         Returns:
             tensorflow.Tensor: The standard deviation of the process at time t0 + dt.
         """
-        return tensorflow.sqrt(self.variance(dt))
+        return sqrt(self.variance(dt))
 
-    def variance(self, dt: float) -> tensorflow.Tensor:
+    def variance(self, dt: float) -> Tensor:
         """Calculates the variance of the process after a time step.
 
         Args:
@@ -104,7 +105,7 @@ class OrnsteinUhlenbeckProcess(StochasticProcess):
             0.5
             * self._volatility**2
             / self._mr_speed
-            * (1 - tensorflow.exp(-2 * self._mr_speed * dt))
+            * (1 - exp(-2 * self._mr_speed * dt))
         )
 
     @property

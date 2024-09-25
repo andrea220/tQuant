@@ -257,8 +257,6 @@ class OisGenerator(ProductGenerator):
                 self.calendar.adjust(schedule_float[i + 1], self.roll_convention)
             )
 
-        fixing_dates = []
-        fixing_rates = []
 
         return Ois(
             self.ccy,
@@ -270,8 +268,6 @@ class OisGenerator(ProductGenerator):
             start_flt,
             end_flt,
             pay_flt,
-            fixing_dates,
-            fixing_rates,
             quote,
             self.notional,
             day_count_fix,

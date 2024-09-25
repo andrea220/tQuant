@@ -5,7 +5,7 @@ from .ircurve import RateCurve
 from ..instruments.product import Product
 from ..pricers.pricer import Pricer
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
-from ..timehandles.utils import BusinessDayConvention, TimeUnit
+from ..timehandles.utils import BusinessDayConvention, TimeUnit, Settings
 from ..timehandles.targetcalendar import TARGET
 from ..instruments.helpers import (
     DepositGenerator,
@@ -45,7 +45,8 @@ class CurveBootstrap:
             curve_map (dict): A dictionary mapping curve names to RateCurve objects.
 
         """
-        self.evaluation_date = evaluation_date
+        # self.evaluation_date = evaluation_date
+        Settings.evaluation_date = evaluation_date
         self.day_counter = DayCounter(daycount_convention)
         self._curve_map = curve_map
         target_calendar = TARGET()
@@ -140,7 +141,7 @@ class CurveBootstrap:
         pricers = []
         for i, generator in enumerate(generators):
             builder = generator_map[generator]
-            product = builder.build(self.evaluation_date, quotes[i], maturities[i])
+            product = builder.build(Settings.evaluation_date, quotes[i], maturities[i])
             products.append(product)
             pricer = PricerAssignment.create(product, self._curve_map)
             pricers.append(pricer)
@@ -149,7 +150,7 @@ class CurveBootstrap:
         for i in range(len(maturities)):
             pillars.append(
                 self.day_counter.year_fraction(
-                    self.evaluation_date, products[i].end_date
+                    Settings.evaluation_date, products[i].end_date
                 )
             )
             zero_rates.append(0.01)
@@ -159,7 +160,7 @@ class CurveBootstrap:
             pass
         else:
             bootstrapping_curve = RateCurve(
-                self.evaluation_date,
+                Settings.evaluation_date,
                 pillars,
                 zero_rates,
                 interpolation,
@@ -167,7 +168,7 @@ class CurveBootstrap:
             )
         market_data[curve_name] = bootstrapping_curve
         func = ObjectiveFunction(
-            self.evaluation_date, bootstrapping_curve, products, pricers, market_data
+            bootstrapping_curve, products, pricers, market_data
         )
         x = numpy.array(zero_rates).astype(numpy.float64)  # initial guess
         bootstrapped_rates, rates_jac = newton(func, x)
@@ -190,7 +191,7 @@ class ObjectiveFunction:
 
     def __init__(
         self,
-        trade_date: datetime.date,
+        # trade_date: datetime.date,
         rate_curve: RateCurve,
         products: list[Product],
         pricers: list[Pricer],
@@ -207,7 +208,7 @@ class ObjectiveFunction:
             curves (dict[str, RateCurve]): A dictionary of existing market curves.
 
         """
-        self.trade_date = trade_date
+        # self.trade_date = trade_date
         self.rate_curve = rate_curve
         self.products = products
         self.pricers = pricers
@@ -229,8 +230,9 @@ class ObjectiveFunction:
         res = numpy.zeros(len(self.pricers))
         jac = numpy.zeros((len(x), len(x)))
         for i, (pricer, product) in enumerate(zip(self.pricers, self.products)):
-            pv, tape = pricer.price(product, self.trade_date, self.curves, True)
-            gradients = tape.gradient(pv, [self.rate_curve._rates])
-            res[i] = pv
+            # pv, tape = pricer.price(product, self.trade_date, self.curves, True)
+            pricer.price(product, self.curves, True)
+            gradients = pricer.tape.gradient(product.price, [self.rate_curve._rates])
+            res[i] = product.price
             jac[i, :] = numpy.array(gradients[0])
         return res, numpy.nan_to_num(jac, nan=0.0)

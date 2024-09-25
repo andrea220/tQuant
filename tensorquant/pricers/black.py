@@ -5,28 +5,29 @@ from ..timehandles.utils import Settings
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
 from ..markethandles.volatilitysurface import BlackConstantVolatility
 
-import tensorflow
-import tensorflow_probability as tfp
+from math import log, sqrt
+from tensorflow import float32, float64, cast
+from tensorflow_probability.python.distributions.normal import Normal
 
 
 def black_formula(f, k, black_variance, df):
-    std_dev = tensorflow.math.sqrt(black_variance)
+    std_dev = sqrt(black_variance)
     if std_dev < 0:
         raise ValueError("volatility must be positive")
     if df < 0:
         raise ValueError("discount must be positive")
-    dist = tfp.distributions.Normal(0,1)
+    dist = Normal(0,1)
 
-    log_moneyness = tensorflow.cast(tensorflow.math.log(f / k), tensorflow.float64)
+    log_moneyness = cast(log(f / k), float64)
 
     d1 = log_moneyness/std_dev + 0.5*std_dev
     d2 = d1 - std_dev
 
-    n_d1 = dist.cdf(tensorflow.cast(d1, tensorflow.float32))
-    n_d2 = dist.cdf(tensorflow.cast(d2, tensorflow.float32))
+    n_d1 = dist.cdf(cast(d1, float32))
+    n_d2 = dist.cdf(cast(d2, float32))
 
-    n_d1 = tensorflow.cast(n_d1, tensorflow.float64)
-    n_d2 = tensorflow.cast(n_d2, tensorflow.float64)
+    n_d1 = cast(n_d1, float64)
+    n_d2 = cast(n_d2, float64)
     return df * (f * n_d1 -  k * n_d2)
 
 
@@ -45,7 +46,7 @@ class BlackScholesPricer(Pricer):
                 raise ValueError("Unknown Implied Volatility")
         try:
             disc_curve_map = market_map[f'IR:{product.ccy.name}']['ON']
-            disc_curve = market[f'IR:{disc_curve_map}']
+            disc_curve = market[disc_curve_map]
         except:
             raise ValueError("Unknown Curve")
         try:
@@ -58,7 +59,6 @@ class BlackScholesPricer(Pricer):
                                                                             product.end_date))
         black_vol_handle = BlackConstantVolatility(Settings.evaluation_date,
                                                     None, DayCounter(DayCounterConvention.Actual365), vol)
-        # blackscholes_process = BlackScholesProcess(spot_value, disc_curve, None, black_vol_handle) #TODO gestione spot
 
         if not product.exercise_type.name == ExerciseType.European.name:
             raise ValueError("not a European option")
