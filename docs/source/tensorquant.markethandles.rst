@@ -1,11 +1,6 @@
 tensorquant.markethandles package
 =================================
 
-.. automodule:: tensorquant.markethandles
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 Submodules
 ----------
 
@@ -37,6 +32,22 @@ tensorquant.markethandles.utils module
 --------------------------------------
 
 .. automodule:: tensorquant.markethandles.utils
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+tensorquant.markethandles.volatilitysurface module
+--------------------------------------------------
+
+.. automodule:: tensorquant.markethandles.volatilitysurface
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Module contents
+---------------
+
+.. automodule:: tensorquant.markethandles
    :members:
    :undoc-members:
    :show-inheritance:

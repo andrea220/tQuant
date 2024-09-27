@@ -1,11 +1,6 @@
 tensorquant.instruments package
 ===============================
 
-.. automodule:: tensorquant.instruments
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 Submodules
 ----------
 
@@ -49,6 +44,14 @@ tensorquant.instruments.ois module
    :undoc-members:
    :show-inheritance:
 
+tensorquant.instruments.option module
+-------------------------------------
+
+.. automodule:: tensorquant.instruments.option
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 tensorquant.instruments.product module
 --------------------------------------
 
@@ -61,6 +64,14 @@ tensorquant.instruments.swap module
 -----------------------------------
 
 .. automodule:: tensorquant.instruments.swap
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Module contents
+---------------
+
+.. automodule:: tensorquant.instruments
    :members:
    :undoc-members:
    :show-inheritance:

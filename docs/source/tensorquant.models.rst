@@ -1,13 +1,16 @@
 tensorquant.models package
 ==========================
 
-.. automodule:: tensorquant.models
+Submodules
+----------
+
+tensorquant.models.brownian module
+----------------------------------
+
+.. automodule:: tensorquant.models.brownian
    :members:
    :undoc-members:
    :show-inheritance:
-
-Submodules
-----------
 
 tensorquant.models.hullwhite module
 -----------------------------------
@@ -29,6 +32,14 @@ tensorquant.models.stochasticprocess module
 -------------------------------------------
 
 .. automodule:: tensorquant.models.stochasticprocess
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Module contents
+---------------
+
+.. automodule:: tensorquant.models
    :members:
    :undoc-members:
    :show-inheritance:

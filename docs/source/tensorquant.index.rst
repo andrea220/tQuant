@@ -1,11 +1,6 @@
 tensorquant.index package
 =========================
 
-.. automodule:: tensorquant.index
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 Submodules
 ----------
 
@@ -29,6 +24,14 @@ tensorquant.index.inflationindex module
 ---------------------------------------
 
 .. automodule:: tensorquant.index.inflationindex
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Module contents
+---------------
+
+.. automodule:: tensorquant.index
    :members:
    :undoc-members:
    :show-inheritance:

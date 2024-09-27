@@ -1,11 +1,6 @@
 tensorquant package
 ===================
 
-.. automodule:: tensorquant
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 Subpackages
 -----------
 
@@ -21,3 +16,11 @@ Subpackages
    tensorquant.numericalhandles
    tensorquant.pricers
    tensorquant.timehandles
+
+Module contents
+---------------
+
+.. automodule:: tensorquant
+   :members:
+   :undoc-members:
+   :show-inheritance:

@@ -1,13 +1,16 @@
 tensorquant.pricers package
 ===========================
 
-.. automodule:: tensorquant.pricers
+Submodules
+----------
+
+tensorquant.pricers.black module
+--------------------------------
+
+.. automodule:: tensorquant.pricers.black
    :members:
    :undoc-members:
    :show-inheritance:
-
-Submodules
-----------
 
 tensorquant.pricers.deposit module
 ----------------------------------
@@ -61,6 +64,14 @@ tensorquant.pricers.swapdiscounting module
 ------------------------------------------
 
 .. automodule:: tensorquant.pricers.swapdiscounting
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Module contents
+---------------
+
+.. automodule:: tensorquant.pricers
    :members:
    :undoc-members:
    :show-inheritance:

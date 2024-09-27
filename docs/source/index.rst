@@ -12,10 +12,6 @@ Welcome to the tensorquant documentation!
    :depth: 3
    :local:
 
-Overview
-========
-Un'introduzione generale al pacchetto `tensorquant`.
-
 API Documentation
 =================
 .. toctree::

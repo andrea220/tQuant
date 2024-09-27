@@ -1,11 +1,6 @@
 tensorquant.timehandles package
 ===============================
 
-.. automodule:: tensorquant.timehandles
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 Submodules
 ----------
 
@@ -53,6 +48,14 @@ tensorquant.timehandles.utils module
 ------------------------------------
 
 .. automodule:: tensorquant.timehandles.utils
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Module contents
+---------------
+
+.. automodule:: tensorquant.timehandles
    :members:
    :undoc-members:
    :show-inheritance:

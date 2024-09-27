@@ -1,11 +1,6 @@
 tensorquant.flows package
 =========================
 
-.. automodule:: tensorquant.flows
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 Submodules
 ----------
 
@@ -37,6 +32,14 @@ tensorquant.flows.floatingcoupon module
 ---------------------------------------
 
 .. automodule:: tensorquant.flows.floatingcoupon
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Module contents
+---------------
+
+.. automodule:: tensorquant.flows
    :members:
    :undoc-members:
    :show-inheritance:

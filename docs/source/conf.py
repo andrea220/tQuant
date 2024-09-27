@@ -32,6 +32,16 @@ napoleon_include_special_with_doc = True
 napoleon_use_param = True
 napoleon_use_rtype = True
 
+autoapi_type = 'python'
+autoapi_options = [
+    "members",
+    "undoc-members",
+    "inherited-members",
+    "special-members",
+    "show-inheritance",
+    "show-module-summary",
+]
+
 templates_path = ['_templates']
 exclude_patterns = []
 
