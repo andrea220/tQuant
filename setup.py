@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="tensorquant",  
-    version="0.0.5",  
+    version="0.0.6",  
     packages=find_packages(),  
     install_requires=[
         'tensorflow>=2.0',
@@ -18,7 +18,7 @@ setup(
     url="https://github.com/andrea220/tQuant",  
     classifiers=[  
         "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",  
+        "License :: OSI Approved :: GPL License",  
         "Operating System :: OS Independent",
     ],
     python_requires='>=3.10',  
