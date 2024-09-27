@@ -1,6 +1,7 @@
 """
 Pricing di cash flow fissi
 """
+
 from ..flows.fixedcoupon import FixedCoupon, FixedRateLeg
 from ..markethandles.ircurve import RateCurve
 from ..timehandles.utils import Settings

@@ -1,5 +1,5 @@
 from tensorflow import Variable
-import tensorflow 
+import tensorflow
 from tensorflow.python.framework import dtypes
 
 from .stochasticprocess import StochasticProcess

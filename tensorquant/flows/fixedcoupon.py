@@ -255,7 +255,7 @@ class FixedRateLeg:
             coupon_flow = flows[i].display()
             leg_display = pandas.concat([leg_display, coupon_flow], axis=0)
         return leg_display
-    
+
     @property
     def price(self) -> float:
         """
@@ -267,7 +267,7 @@ class FixedRateLeg:
         if self._price is None:
             raise ValueError("you must define a pricer")
         return self._price
-    
+
     @price.setter
     def price(self, value):
         self._price = value

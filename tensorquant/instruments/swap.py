@@ -62,7 +62,7 @@ class Swap(Product):
             day_counter_flt,
         )
 
-        self._discount_curve = None 
+        self._discount_curve = None
         self._estimation_curve = None
 
     @property
@@ -104,7 +104,7 @@ class Swap(Product):
             FloatingRateLeg: The floating leg of the swap.
         """
         return self._floating_leg
-    
+
     @property
     def fixed_rate(self):
         return self._fixed_rate
@@ -114,7 +114,7 @@ class Swap(Product):
         if self._discount_curve is None:
             raise ValueError("you must define a pricer")
         return self._discount_curve
-    
+
     @discount_curve.setter
     def discount_curve(self, value: str):
         self._discount_curve = value
@@ -124,8 +124,7 @@ class Swap(Product):
         if self._estimation_curve is None:
             raise ValueError("you must define a pricer")
         return self._estimation_curve
-    
+
     @estimation_curve.setter
     def estimation_curve(self, value: str):
         self._estimation_curve = value
-

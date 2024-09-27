@@ -12,10 +12,7 @@ class OisCouponDiscounting:
         self._coupon = coupon
 
     def floating_rate(
-        self,
-        start_date: date,
-        end_date: date,
-        term_structure: RateCurve
+        self, start_date: date, end_date: date, term_structure: RateCurve
     ):
         if start_date >= Settings.evaluation_date:  # forecast
             return term_structure.forward_rate(start_date, end_date)
@@ -31,7 +28,7 @@ class OisCouponDiscounting:
                 * self.floating_rate(
                     self._coupon.ref_period_start,
                     self._coupon.ref_period_end,
-                    term_structure
+                    term_structure,
                 )
                 + self._coupon._spread
             )
@@ -44,9 +41,7 @@ class OisCouponDiscounting:
             payment_time = self._coupon.day_counter.year_fraction(
                 Settings.evaluation_date, self._coupon._payment_date
             )
-            return self.amount(
-                term_structure
-            ) * term_structure.discount(payment_time)
+            return self.amount(term_structure) * term_structure.discount(payment_time)
         else:
             return 0
 
@@ -69,10 +64,7 @@ class FloatingCouponDiscounting:
         return (disc1 / disc2 - 1) / t
 
     def floating_rate(
-        self,
-        start_date: date,
-        end_date: date,
-        term_structure: RateCurve
+        self, start_date: date, end_date: date, term_structure: RateCurve
     ):
         if self._coupon.fixing_date > Settings.evaluation_date:
             # forecast forward rate
@@ -89,7 +81,7 @@ class FloatingCouponDiscounting:
             self._coupon._rate = self.floating_rate(
                 self._coupon.ref_period_start,
                 self._coupon.ref_period_end,
-                term_structure
+                term_structure,
             )
         return (
             self._coupon.nominal
@@ -97,9 +89,7 @@ class FloatingCouponDiscounting:
             * self._coupon.accrual_period
         )
 
-    def calculate_price(
-        self, disc_curve: RateCurve, est_curve: RateCurve
-    ):
+    def calculate_price(self, disc_curve: RateCurve, est_curve: RateCurve):
         if not self._coupon.has_occurred(Settings.evaluation_date):
             if self._coupon._amount == None or self._discount_factor == None:
                 self._calc(disc_curve, est_curve)
@@ -110,9 +100,7 @@ class FloatingCouponDiscounting:
     def _calc(self, disc_curve: RateCurve, est_curve: RateCurve):
         """cache results"""
         self._coupon._rate = self.floating_rate(
-            self._coupon.ref_period_start,
-            self._coupon.ref_period_end,
-            est_curve
+            self._coupon.ref_period_start, self._coupon.ref_period_end, est_curve
         )
         self._coupon._amount = self.amount(est_curve)
         payment_time = self._coupon.day_counter.year_fraction(

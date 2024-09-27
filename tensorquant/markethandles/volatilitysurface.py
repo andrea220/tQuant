@@ -1,20 +1,24 @@
-from datetime import date 
+from datetime import date
 from ..timehandles.tqcalendar import Calendar
 from ..timehandles.daycounter import DayCounter
 from ..timehandles.utils import Settings
+import tensorflow as tf
+
 
 class VolatilitySurface:
 
-    def __init__(self,
-                 reference_date: date,
-                 calendar: Calendar, 
-                 daycounter: DayCounter,
-                 strike: list[float],
-                 maturity: list[float],
-                 volatility_matrix) -> None:
+    def __init__(
+        self,
+        reference_date: date,
+        calendar: Calendar,
+        daycounter: DayCounter,
+        strike: list[float],
+        maturity: list[float],
+        volatility_matrix,
+    ) -> None:
         self._reference_date = reference_date
-        self._calendar = calendar  
-        self._daycounter = daycounter 
+        self._calendar = calendar
+        self._daycounter = daycounter
         self._strike = strike
         self._maturity = maturity
         self._volatility_matrix = volatility_matrix
@@ -22,50 +26,50 @@ class VolatilitySurface:
     @property
     def reference_date(self):
         return self._reference_date
-    
-    @property 
+
+    @property
     def calendar(self):
         return self._calendar
-    
-    @property 
+
+    @property
     def daycounter(self):
         return self._daycounter
 
-    @property 
+    @property
     def strike(self):
         return self._strike
 
-    @property 
+    @property
     def maturity(self):
         return self._maturity
-    
-    @property 
+
+    @property
     def volatility_matrix(self):
         return self._volatility_matrix
-    
+
     def _find_bounds(self, array, value):
         """Find the two closest indices in `array` that bound `value`."""
         lower = 0
         upper = len(array) - 1
-        
+
         # Handle boundary cases
         if value <= array[lower]:
             return lower, lower
         if value >= array[upper]:
             return upper, upper
-        
+
         # Search for the correct bounds
         for i in range(len(array) - 1):
             if array[i] <= value <= array[i + 1]:
                 return i, i + 1
-                
+
         return lower, upper  # should not reach here if value is within bounds
-    
-    def volatility(self, strike: float, maturity: float):
-        """ bi-linear interpolation"""
+
+    def volatility(self, strike: float, tenor: float):
+        """bi-linear interpolation"""
         # Find the indices of surrounding strike and maturity values
         x1_idx, x2_idx = self._find_bounds(self._strike, strike)
-        y1_idx, y2_idx = self._find_bounds(self._maturity, maturity)
+        y1_idx, y2_idx = self._find_bounds(self._maturity, tenor)
 
         # Get the actual strike and maturity values from the indices
         x1, x2 = self._strike[x1_idx], self._strike[x2_idx]
@@ -82,30 +86,32 @@ class VolatilitySurface:
             return V11
         elif x1 == x2:
             # Linear interpolation in the y direction (maturity)
-            return V11 + (V12 - V11) * (maturity - y1) / (y2 - y1)
+            return V11 + (V12 - V11) * (tenor - y1) / (y2 - y1)
         elif y1 == y2:
             # Linear interpolation in the x direction (strike)
             return V11 + (V21 - V11) * (strike - x1) / (x2 - x1)
 
         # Bilinear interpolation formula
         denominator = (x2 - x1) * (y2 - y1)
-        value = (V11 * (x2 - strike) * (y2 - maturity) +
-                 V21 * (strike - x1) * (y2 - maturity) +
-                 V12 * (x2 - strike) * (maturity - y1) +
-                 V22 * (strike - x1) * (maturity - y1)) / denominator
+        value = (
+            V11 * (x2 - strike) * (y2 - tenor)
+            + V21 * (strike - x1) * (y2 - tenor)
+            + V12 * (x2 - strike) * (tenor - y1)
+            + V22 * (strike - x1) * (tenor - y1)
+        ) / denominator
 
         return value
-    
-    def variance(self, strike, maturity):
+
+    def variance(self, strike, maturity: date):
         implied_vol = self.volatility(strike, maturity)
         t = self.daycounter.year_fraction(Settings.evaluation_date, maturity)
-        return t * implied_vol*implied_vol   
+        return t * implied_vol * implied_vol
+
 
 class BlackConstantVolatility(VolatilitySurface):
 
     def __init__(self, reference_date, calendar, daycounter, volatility) -> None:
         super().__init__(reference_date, calendar, daycounter, 0, 0, volatility)
 
-    def volatility(self, strike, maturity):
-        return self._volatility_matrix
-    
+    def volatility(self, strike=None, maturity=None):
+        return tf.Variable(self._volatility_matrix, dtype=tf.float32)

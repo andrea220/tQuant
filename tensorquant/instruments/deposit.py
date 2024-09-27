@@ -51,8 +51,8 @@ class Deposit(Product):
 
     @property
     def rate(self) -> float:
-        return self._rate 
-    
+        return self._rate
+
     @property
     def day_count_convention(self) -> DayCounterConvention:
         """

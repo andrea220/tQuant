@@ -33,7 +33,7 @@ class Fra(Product):
         fixed_rate: float,
         day_count_convention: DayCounterConvention,
         index: IborIndex,
-        side: SwapType = SwapType.Payer
+        side: SwapType = SwapType.Payer,
     ):
         """
         Initialize a Forward Rate Agreement (FRA) instance.
@@ -55,11 +55,10 @@ class Fra(Product):
         self._index = index
         self._side = side
 
-
     @property
     def fixed_rate(self) -> float:
-        return self._fixed_rate 
-    
+        return self._fixed_rate
+
     @property
     def day_count_convention(self) -> DayCounterConvention:
         """

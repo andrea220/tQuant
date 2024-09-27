@@ -167,9 +167,7 @@ class CurveBootstrap:
                 daycounter_convention,
             )
         market_data[curve_name] = bootstrapping_curve
-        func = ObjectiveFunction(
-            bootstrapping_curve, products, pricers, market_data
-        )
+        func = ObjectiveFunction(bootstrapping_curve, products, pricers, market_data)
         x = numpy.array(zero_rates).astype(numpy.float64)  # initial guess
         bootstrapped_rates, rates_jac = newton(func, x)
         bootstrapping_curve._set_rates(bootstrapped_rates)

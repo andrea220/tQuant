@@ -75,7 +75,7 @@ class Product(ABC):
         if self._price is None:
             raise ValueError("you must define a pricer")
         return self._price
-    
+
     @price.setter
     def price(self, value):
         self._price = value

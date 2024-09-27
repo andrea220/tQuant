@@ -389,7 +389,7 @@ class FloatingRateLeg:
     @property
     def index(self) -> IborIndex:
         return self._index
-    
+
     @property
     def price(self) -> float:
         """
@@ -401,7 +401,7 @@ class FloatingRateLeg:
         if self._price is None:
             raise ValueError("you must define a pricer")
         return self._price
-    
+
     @price.setter
     def price(self, value):
         self._price = value

@@ -46,9 +46,7 @@ class GaussianPathGenerator:
         path.append(fill((n_paths,), value=self._process.initial_values()))
         time_grid = self._date_grid.times
         for i in range(1, len(time_grid)):
-            w = random.normal(
-                shape=(n_paths,), mean=0, stddev=1, dtype=float64
-            )
+            w = random.normal(shape=(n_paths,), mean=0, stddev=1, dtype=float64)
             s = time_grid[i - 1]
             t = time_grid[i]
             dt = t - s

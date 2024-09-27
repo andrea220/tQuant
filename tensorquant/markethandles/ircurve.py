@@ -1,4 +1,4 @@
-from tensorflow import Variable, exp 
+from tensorflow import Variable, exp
 from math import log
 from tensorflow.python.framework import dtypes
 import numpy
@@ -67,9 +67,7 @@ class RateCurve:
         else:
             raise TypeError("Pillars must be a list of either date or float types")
         self.__rates = rates  # float
-        self._rates = [
-            Variable(r, dtype=dtypes.float64) for r in rates
-        ]  # tensor
+        self._rates = [Variable(r, dtype=dtypes.float64) for r in rates]  # tensor
         self.interpolation_type = interp
         if self.interpolation_type == "LINEAR":
             self.interp = LinearInterp(self._pillars, self._rates)
@@ -301,10 +299,7 @@ class RateCurve:
         """
         # time-step needed for differentiation
         dt = 0.01
-        expr = -(
-            log(self.discount(t + dt))
-            - log(self.discount(t - dt))
-        ) / (2 * dt)
+        expr = -(log(self.discount(t + dt)) - log(self.discount(t - dt))) / (2 * dt)
         return expr
 
     def _set_rates(self, rates: list[float]) -> None:

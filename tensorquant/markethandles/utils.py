@@ -70,13 +70,15 @@ def extract_value(x):
     else:
         return x
 
+
 class OptionType(Enum):
     Call = 1
     Put = -1
 
     def __str__(self):
         return self.value
-    
+
+
 class PayoffType(Enum):
     PlainVanilla = "PlainVanilla"
     AssetOrNothing = "AssetOrNothing"
@@ -84,7 +86,8 @@ class PayoffType(Enum):
 
     def __str__(self):
         return self.value
-    
+
+
 class ExerciseType(Enum):
     American = 0
     Bermudan = 1
@@ -92,7 +95,7 @@ class ExerciseType(Enum):
 
     def __str__(self):
         return self.value
-    
+
 
 # curve_map = {
 #     "EUR": {"ON": "EUR:ESTR", "3M": "EUR:3M", "6M": "EUR:6M"},
@@ -107,5 +110,5 @@ eq_eur_vol_map = {"DEFAULT": "DEFAULT"}
 market_map = {
     "IR:EUR": ir_eur_crv_map,
     "IR:USD": ir_usd_crv_map,
-    "VOLEQ:EUR": eq_eur_vol_map
+    "VOLEQ:EUR": eq_eur_vol_map,
 }

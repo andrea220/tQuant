@@ -257,7 +257,6 @@ class OisGenerator(ProductGenerator):
                 self.calendar.adjust(schedule_float[i + 1], self.roll_convention)
             )
 
-
         return Ois(
             self.ccy,
             start_date,

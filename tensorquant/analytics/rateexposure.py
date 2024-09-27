@@ -2,7 +2,6 @@ import numpy
 from tensorflow import Tensor, float64, reduce_mean, stack, zeros
 
 
-
 from ..models.hullwhite import HullWhiteProcess
 from ..timehandles.grid import DateGrid
 from ..instruments.swap import Swap
@@ -155,7 +154,7 @@ class SwapExposureGenerator:
 
         for i in range(len(self._date_grid.dates)):
             market_simulated = {}
-            market_simulated[product.discount_curve] = simulated_curves[i]  
+            market_simulated[product.discount_curve] = simulated_curves[i]
             market_simulated[product.estimation_curve] = simulated_curves[i]
             val_date = self._date_grid.dates[i]
             Settings.evaluation_date = val_date

@@ -4,7 +4,6 @@ from ..timehandles.utils import DayCounterConvention, Settings
 from ..timehandles.daycounter import DayCounter
 
 
-
 class DepositPricer(Pricer):
     def __init__(self, market_map):
         super().__init__()
@@ -15,7 +14,7 @@ class DepositPricer(Pricer):
             try:
                 curve_usage = product.ccy.value + ":ON"
                 curve_ccy, curve_tenor = curve_usage.split(":")
-                curve = market[self._market_map[f'IR:{curve_ccy}'][curve_tenor]]
+                curve = market[self._market_map[f"IR:{curve_ccy}"][curve_tenor]]
             except:
                 raise ValueError("Unknown Curve")
             day_counter = DayCounter(DayCounterConvention.Actual365)
