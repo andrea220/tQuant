@@ -3,7 +3,7 @@ from math import log
 from tensorflow.python.framework import dtypes
 import numpy
 from datetime import date, timedelta
-from typing import Union
+from typing import Union, Optional
 
 from ..numericalhandles.interpolation import LinearInterp
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
@@ -75,6 +75,7 @@ class RateCurve:
             raise ValueError("Unsupported interpolation type")
 
         self._jacobian = None
+        self._name = None
 
     @classmethod
     def from_zcb(
@@ -202,6 +203,25 @@ class RateCurve:
         """
         self._jacobian = value
 
+    @property
+    def name(self) -> Optional[str]:
+        """Returns the name of the curve (market key identifier).
+
+        Returns:
+            Optional[str]: The name/identifier of the curve, typically set by
+                MarketEnvironment when accessing the curve. None if not set.
+        """
+        return self._name
+
+    @name.setter
+    def name(self, value: Optional[str]):
+        """Sets the name of the curve.
+
+        Args:
+            value (Optional[str]): The name/identifier to set (e.g., "IR:EUR:ESTR:SPOT").
+        """
+        self._name = value
+
     def discount(self, term: Union[date, float]) -> float:
         """Calculates the discount factor for a given term.
 
@@ -310,4 +330,228 @@ class RateCurve:
         """
         self.__rates = rates
         self._rates = [Variable(r, dtype=dtypes.float64) for r in rates]
+        self.interp.y = self._rates
+
+
+class DefaultCurve:
+    """Survival-probability / default-probability curve with piecewise-constant hazard rates.
+
+    Given a set of pillars and corresponding survival probabilities Q(t_i), the hazard
+    rate over each interval [t_{i-1}, t_i] is kept constant:
+
+        h_i = -ln(Q(t_i) / Q(t_{i-1})) / (t_i - t_{i-1})
+
+    This allows cheap computation of Q(t) for any t via
+
+        Q(t) = Q(t_{i-1}) * exp(-h_i * (t - t_{i-1}))
+
+    A convenience constructor :meth:`from_flat_hazard_rate` builds a flat (single-segment)
+    curve from a constant hazard rate λ, i.e. Q(t) = exp(-λ·t).
+    """
+
+    def __init__(
+        self,
+        reference_date: date,
+        pillars: Union[list[date], list[float]],
+        survival_probs: list[float],
+        daycounter_convention: DayCounterConvention,
+    ):
+        """Initialises the DefaultCurve from a vector of survival probabilities.
+
+        Args:
+            reference_date (date): Curve reference date (t = 0 anchor).
+            pillars (Union[list[date], list[float]]): Pillar dates or year fractions.
+                The first pillar should correspond to t = 0 with Q = 1, or the list
+                may start directly from t > 0 – in either case Q(0) = 1 is prepended
+                internally.
+            survival_probs (list[float]): Survival probabilities Q(t_i) ∈ (0, 1].
+                Must be monotonically non-increasing.
+            daycounter_convention (DayCounterConvention): Day count convention for
+                converting dates to year fractions.
+        """
+        self._reference_date = reference_date
+        self._daycounter = DayCounter(daycounter_convention)
+        self._daycounter_convention = daycounter_convention
+
+        # Convert pillars to year fractions
+        if all(isinstance(p, date) for p in pillars):
+            self._dates = list(pillars)
+            self._pillars = [
+                self._daycounter.year_fraction(reference_date, d) for d in pillars
+            ]
+        elif all(isinstance(p, float) for p in pillars):
+            self._pillars = list(pillars)
+            self._dates = [
+                reference_date + timedelta(days=p * 365) for p in pillars
+            ]
+        else:
+            raise TypeError("pillars must be a list of either date or float types")
+
+        # Prepend t=0 / Q=1 anchor if not already present
+        if self._pillars[0] > 1e-10:
+            self._pillars = [0.0] + self._pillars
+            self._dates = [reference_date] + self._dates
+            self._survival_probs = [1.0] + list(survival_probs)
+        else:
+            self._survival_probs = list(survival_probs)
+
+        # Derive piecewise-constant hazard rates for each interval
+        self._hazard_rates: list[float] = []
+        for i in range(1, len(self._pillars)):
+            dt = self._pillars[i] - self._pillars[i - 1]
+            if dt <= 0:
+                raise ValueError(f"Pillars must be strictly increasing (failed at index {i})")
+            q_prev = self._survival_probs[i - 1]
+            q_curr = self._survival_probs[i]
+            if q_curr <= 0 or q_prev <= 0:
+                raise ValueError("Survival probabilities must be strictly positive")
+            h = -numpy.log(q_curr / q_prev) / dt
+            self._hazard_rates.append(h)
+
+    # ------------------------------------------------------------------
+    # Alternative constructors
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_flat_hazard_rate(
+        cls,
+        reference_date: date,
+        hazard_rate: float,
+        daycounter_convention: DayCounterConvention,
+        horizon: float = 100.0,
+    ):
+        """Creates a flat DefaultCurve from a constant hazard rate λ.
+
+        Q(t) = exp(-λ·t).
+
+        Args:
+            reference_date (date): Curve reference date.
+            hazard_rate (float): Constant hazard rate λ (e.g. 0.03 for 3 %).
+            daycounter_convention (DayCounterConvention): Day count convention.
+            horizon (float): Far pillar in years (default 100). Determines the
+                range over which the flat rate is valid.
+
+        Returns:
+            DefaultCurve: A flat default curve.
+        """
+        far_date = reference_date + timedelta(days=int(horizon * 365))
+        pillars = [reference_date, far_date]
+        survival_probs = [1.0, numpy.exp(-hazard_rate * horizon)]
+        return cls(reference_date, pillars, survival_probs, daycounter_convention)
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def reference_date(self) -> date:
+        """Reference date of the curve."""
+        return self._reference_date
+
+    @property
+    def pillars(self) -> list[float]:
+        """Year-fraction pillars (including the t = 0 anchor)."""
+        return self._pillars
+
+    @property
+    def survival_probs(self) -> list[float]:
+        """Survival probabilities at each pillar."""
+        return self._survival_probs
+
+    @property
+    def hazard_rates(self) -> list[float]:
+        """Piecewise-constant hazard rates for each interval between pillars."""
+        return self._hazard_rates
+
+    # ------------------------------------------------------------------
+    # Core methods
+    # ------------------------------------------------------------------
+
+    def _time(self, term: Union[date, float]) -> float:
+        """Converts a date or float to a year fraction."""
+        if isinstance(term, date):
+            return self._daycounter.year_fraction(self._reference_date, term)
+        return float(term)
+
+    def survival_prob(self, t: Union[date, float]) -> float:
+        """Returns the survival probability Q(0, t).
+
+        Args:
+            t (Union[date, float]): Evaluation time (date or year fraction).
+
+        Returns:
+            float: Survival probability Q(0, t).
+        """
+        t = self._time(t)
+        if t <= 0.0:
+            return 1.0
+
+        # Find the interval [t_{i-1}, t_i] that contains t
+        for i in range(1, len(self._pillars)):
+            if t <= self._pillars[i]:
+                dt = t - self._pillars[i - 1]
+                return self._survival_probs[i - 1] * numpy.exp(-self._hazard_rates[i - 1] * dt)
+
+        # Beyond last pillar: extrapolate with last hazard rate
+        dt = t - self._pillars[-1]
+        return self._survival_probs[-1] * numpy.exp(-self._hazard_rates[-1] * dt)
+
+    def marginal_pd(self, t1: Union[date, float], t2: Union[date, float]) -> float:
+        """Returns the marginal (conditional) probability of default in (t1, t2].
+
+        PD(t1, t2) = Q(t1) - Q(t2).
+
+        Args:
+            t1 (Union[date, float]): Start of the period.
+            t2 (Union[date, float]): End of the period.
+
+        Returns:
+            float: Probability of default in the interval (t1, t2].
+        """
+        return self.survival_prob(t1) - self.survival_prob(t2)
+
+
+class FlatCurve(RateCurve):
+    """A flat (constant-rate) curve implementation.
+
+    This curve assumes a single constant continuously-compounded rate for all maturities.
+    It is implemented as a `RateCurve` with two very distant pillars carrying the same rate,
+    so interpolation naturally keeps the curve flat.
+    """
+
+    def __init__(
+        self,
+        reference_date: date,
+        rate: float,
+        daycounter_convention: DayCounterConvention,
+    ):
+        """Initializes a flat curve with a constant rate.
+
+        Args:
+            reference_date (date): The reference date for the curve.
+            rate (float): Constant continuously-compounded rate for all maturities.
+            daycounter_convention (DayCounterConvention): Day count convention.
+        """
+        # Use two far-apart pillars with identical rates to obtain a flat curve
+        far_date = reference_date + timedelta(days=365 * 100)  # 100Y horizon
+        super().__init__(
+            reference_date=reference_date,
+            pillars=[reference_date, far_date],
+            rates=[rate, rate],
+            interp="LINEAR",
+            daycounter_convention=daycounter_convention,
+        )
+
+    @property
+    def rate(self) -> float:
+        """Returns the flat rate of the curve."""
+        # All rates are identical by construction; return the first one.
+        return self._RateCurve__rates[0]
+
+    @rate.setter
+    def rate(self, value: float) -> None:
+        """Sets the flat rate and updates the underlying curve representation."""
+        # Keep both internal representations (float list and Tensor list) consistent.
+        self._RateCurve__rates = [value, value]
+        self._rates = [Variable(value, dtype=dtypes.float64) for _ in range(2)]
         self.interp.y = self._rates

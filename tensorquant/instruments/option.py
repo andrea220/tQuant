@@ -14,9 +14,9 @@ class Option(Product, ABC):
         start_date: date,
         end_date: date,
         option_type: OptionType,
-        underlying: str,
         strike: float | list[float],
         exercise_type: ExerciseType,
+        underlying: str = "DEFAULT",
     ):
         super().__init__(ccy, start_date, end_date)
         self._option_type = option_type
@@ -58,17 +58,17 @@ class VanillaOption(Option):
         start_date: date,
         end_date: date,
         option_type,
-        underlying: str,
         strike,
+        underlying: str = "DEFAULT",
     ):
         super().__init__(
             ccy,
             start_date,
             end_date,
             option_type,
-            underlying,
             strike,
             ExerciseType.European,
+            underlying,
         )
         self._delta = None
         self._gamma = None

@@ -103,12 +103,34 @@ class ExerciseType(Enum):
 # }
 
 
-ir_eur_crv_map = {"ON": "IR:EUR:ESTR", "3M": "IR:EUR:3M", "6M": "IR:EUR:6M"}
-ir_usd_crv_map = {"ON": "IR:USD:SOFR", "3M": "IR:USD:3M", "6M": "IR:USD:6M"}
-eq_eur_vol_map = {"DEFAULT": "DEFAULT"}
-
+# New market_map structure: RiskFactor:CCY:TICKER -> {SPOT: ..., VOL: ...}
 market_map = {
-    "IR:EUR": ir_eur_crv_map,
-    "IR:USD": ir_usd_crv_map,
-    "VOLEQ:EUR": eq_eur_vol_map,
+    # Interest Rate curves
+    "IR:EUR:ESTR": {
+        "SPOT": "IR:EUR:ESTR:SPOT",
+    },
+    "IR:EUR:3M": {
+        "SPOT": "IR:EUR:3M:SPOT",
+    },
+    "IR:EUR:6M": {
+        "SPOT": "IR:EUR:6M:SPOT",
+    },
+    "IR:USD:SOFR": {
+        "SPOT": "IR:USD:SOFR:SPOT",
+    },
+    "IR:USD:3M": {
+        "SPOT": "IR:USD:3M:SPOT",
+    },
+    "IR:USD:6M": {
+        "SPOT": "IR:USD:6M:SPOT",
+    },
+    # Equity spots and volatilities
+    "EQ:EUR:DEFAULT": {
+        "SPOT": "EQ:EUR:DEFAULT:SPOT",
+        "VOL": "EQ:EUR:DEFAULT:VOL",
+    },
+    "EQ:EUR:SX5E": {
+        "SPOT": "EQ:EUR:SX5E:SPOT",
+        "VOL": "EQ:EUR:SX5E:VOL",
+    },
 }

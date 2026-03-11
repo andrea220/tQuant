@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from tensorflow import GradientTape
 from ..instruments.product import Product
+from ..markethandles.marketenvironment import MarketEnvironment
 
 
 class Pricer(ABC):
@@ -24,12 +25,13 @@ class Pricer(ABC):
         return self._tape
 
     @abstractmethod
-    def calculate_price(self, product, market):
+    def calculate_price(self, product, market_env: MarketEnvironment):
         """Abstract method to calculate the price of a financial product.
 
         Args:
             product (Product): The financial product to be priced.
-            curves (dict): A dictionary containing market curves needed for pricing.
+            market_env (MarketEnvironment): The market environment providing
+                access to market data (curves, spots, volatilities).
 
         Returns:
             float: The calculated price of the product.
@@ -39,19 +41,20 @@ class Pricer(ABC):
         """
         return
 
-    def price(self, product: Product, market: dict, autodiff: bool = False):
+    def price(self, product: Product, market_env: MarketEnvironment, autodiff: bool = False):
         """Calculates the price of a financial product, with optional automatic differentiation.
 
         Args:
             product (Product): The financial product to be priced.
-            market (dict): A dictionary containing market curves needed for pricing.
+            market_env (MarketEnvironment): The market environment providing
+                access to market data (curves, spots, volatilities).
             autodiff (bool, optional): Whether to compute gradients using TensorFlow's autodiff. Defaults to False.
 
         """
         if autodiff:
             with GradientTape() as tape:
-                npv = self.calculate_price(product, market)
+                npv = self.calculate_price(product, market_env)
             product.price = npv
             self._tape = tape
         else:
-            product.price = self.calculate_price(product, market)
+            product.price = self.calculate_price(product, market_env)

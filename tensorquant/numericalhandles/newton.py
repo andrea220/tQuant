@@ -1,64 +1,78 @@
 import numpy
 
 
-def numerical_jacobian(func, x, epsilon=1e-5):
-    """
-    Computes the numerical Jacobian matrix for a given function using finite differences.
+def newton_1d(func, i: int, r0: float, tol: float = 1e-8, max_iter: int = 100) -> float:
+    """Scalar Newton's method for a single pillar in curve bootstrapping.
+
+    Finds ``r`` such that ``func(i, r) = 0`` using the analytic derivative
+    returned by ``func`` (typically computed via autodiff).
 
     Args:
-        func (callable): The function for which the Jacobian is computed. It should take a single argument x (array).
-        x (numpy array): The point at which to evaluate the Jacobian.
-        epsilon (float, optional): A small perturbation used to compute finite differences. Defaults to 1e-5.
+        func (callable): Callable with signature ``func(i, r) -> (f, df_dr)``,
+            where ``f`` is the NPV of instrument *i* and ``df_dr`` is its
+            derivative w.r.t. the rate at pillar *i*.
+        i (int): Pillar index being solved.
+        r0 (float): Initial guess for the rate at pillar *i*.
+        tol (float, optional): Convergence tolerance on both ``|f|`` and the
+            Newton step ``|Δr|``. Defaults to 1e-8.
+        max_iter (int, optional): Maximum number of iterations. Defaults to 100.
 
     Returns:
-        numpy array: The computed Jacobian matrix with shape (n, n), where n is the length of x.
+        float: The bootstrapped rate at pillar *i*.
+
+    Raises:
+        ValueError: If the derivative is numerically zero or if the method
+            fails to converge within *max_iter* iterations.
     """
-    n = len(x)
-    jac = numpy.zeros((n, n))
-    f0 = func(x)
-
-    for i in range(n):
-        x_plus = x.copy()
-        x_plus[i] += epsilon
-        f_plus = func(x_plus)
-        jac[:, i] = (f_plus - f0) / epsilon
-
-    return jac
+    r = float(r0)
+    for iteration in range(max_iter):
+        print(iteration)
+        f, df = func(i, r)
+        if abs(df) < 1e-14:
+            raise ValueError(
+                f"Derivative is numerically zero at pillar {i} "
+                f"(iteration {iteration}). Newton step is undefined."
+            )
+        step = -f / df
+        r += step
+        if abs(f) < tol and abs(step) < tol:
+            return r
+    raise ValueError(
+        f"Newton 1D failed to converge at pillar {i} "
+        f"after {max_iter} iterations (last residual: {f:.3e})."
+    )
 
 
 def newton(func, x0, tol=1e-8, max_iter=100):
-    """
-    Solves a system of nonlinear equations using Newton's method.
+    """Solves a system of nonlinear equations using Newton's method.
 
     Args:
-        func (callable): A function that returns a tuple of (f(x), jacobian), where f(x) is the vector of function values and
-                         jacobian is the Jacobian matrix evaluated at x.
-        x0 (numpy array): Initial guess for the root.
-        tol (float, optional): Tolerance for stopping criteria. The method stops when the solution update is smaller than tol. Defaults to 1e-8.
-        max_iter (int, optional): Maximum number of iterations allowed. Defaults to 100.
+        func (callable): A function that returns ``(f(x), jacobian)``, where
+            ``f(x)`` is the vector of residuals and ``jacobian`` is the NxN
+            Jacobian matrix evaluated at ``x``.
+        x0 (numpy.ndarray): Initial guess for the root.
+        tol (float, optional): Convergence tolerance. The method stops when
+            both ``‖f(x)‖`` and ``‖Δx‖`` are below *tol*. Defaults to 1e-8.
+        max_iter (int, optional): Maximum number of iterations. Defaults to 100.
 
     Returns:
-        tuple: A tuple containing:
-            - numpy array: The solution vector x that approximately satisfies func(x) = 0.
-            - numpy array: The Jacobian matrix at the solution.
+        tuple:
+            - numpy.ndarray: Solution vector ``x`` satisfying ``func(x) ≈ 0``.
+            - numpy.ndarray: Jacobian matrix at the solution.
 
     Raises:
-        ValueError: If the method fails to converge after max_iter iterations.
+        ValueError: If the method fails to converge after *max_iter* iterations.
     """
     x = x0.copy()
-    iter_count = 0
-    while iter_count < max_iter:
+    f, jac = None, None
+    for iteration in range(max_iter):
+        print(iteration)
         f, jac = func(x)
         delta_x = numpy.linalg.solve(jac, -f)
         x += delta_x
-        if numpy.linalg.norm(delta_x) < tol:
-            break
-        iter_count += 1
-
-    if iter_count == max_iter:
-        raise ValueError(
-            "Newton's method failed to converge after the maximum number of iterations."
-        )
-
-    print("total iteration: ", iter_count)
-    return x, jac
+        if numpy.linalg.norm(f) < tol and numpy.linalg.norm(delta_x) < tol:
+            return x, jac
+    raise ValueError(
+        f"Newton's method failed to converge after {max_iter} iterations "
+        f"(last residual norm: {numpy.linalg.norm(f):.3e})."
+    )

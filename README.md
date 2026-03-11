@@ -6,11 +6,11 @@
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-**TensorQuant** is a Python financial library designed to provide a practical, Python-based implementations. Leveraging Tensor arrays, TensorQuant supports pricing, intensive risk management computations, and algorithmic differentiation. You can explore examples and use cases in the [**playground repository**](https://github.com/andrea220/tqPlayground) with Jupyter notebooks. For detailed API references and comprehensive documentation, visit the [**ReadTheDocs**](https://tquant.readthedocs.io/en/latest/index.html) page. 
+**TensorQuant** is a Python financial library that uses TensorFlow as its computational engine. Leveraging tensor arrays, TensorQuant supports pricing, intensive risk management computations, and algorithmic differentiation. You can explore examples and use cases in the [**playground repository**](https://github.com/andrea220/tqPlayground) with Jupyter notebooks. For detailed API references and comprehensive documentation, visit the [**ReadTheDocs**](https://tquant.readthedocs.io/en/latest/index.html) page. 
 
-It is particularly valuable in academic settings, such as the [Finance Master courses at the University of Siena](https://finance.unisi.it/it), where students gain hands-on experience with financial libraries and object-oriented programming.
+It is particularly valuable in academic settings, such as the [Finance Master courses at the University of Siena](https://finance.unisi.it/it), where students gain hands-on experience with financial libraries and object-oriented programming. At the same time, TensorQuant is designed to support fast prototyping, replication of academic and industry results, and professional-grade applications.
 
-Many of TensorQuant's components draw inspiration from the renowned [QuantLib](https://www.quantlib.org) library. Our thanks go to the QuantLib community for their contributions to financial modeling. While simplified for ease of use, TensorQuant aims to strike a balance between ease of understanding and professional architecture.
+TensorQuant aims to strike a balance between ease of understanding and professional architecture: it is easy to use and extend, while remaining reliable, fast, and robust for financial modeling and risk management.
 
 ---
 

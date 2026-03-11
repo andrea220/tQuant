@@ -1,6 +1,6 @@
 from datetime import date
 from ..timehandles.tqcalendar import Calendar
-from ..timehandles.daycounter import DayCounter
+from ..timehandles.daycounter import DayCounter, DayCounterConvention
 from ..timehandles.utils import Settings
 import tensorflow as tf
 
@@ -109,9 +109,52 @@ class VolatilitySurface:
 
 
 class BlackConstantVolatility(VolatilitySurface):
+    """Constant volatility surface that returns the same volatility value regardless of strike and tenor.
 
-    def __init__(self, reference_date, calendar, daycounter, volatility) -> None:
-        super().__init__(reference_date, calendar, daycounter, 0, 0, volatility)
+    This class provides the same interface as VolatilitySurface but always returns
+    a constant volatility value, ignoring the strike and tenor parameters.
+    """
 
-    def volatility(self, strike=None, maturity=None):
-        return tf.Variable(self._volatility_matrix, dtype=tf.float32)
+    def __init__(
+        self,
+        reference_date: date,
+        volatility: float,
+        calendar: Calendar = None,
+        daycounter: DayCounter = None,
+    ) -> None:
+        """Initialize a constant volatility surface.
+
+        Args:
+            reference_date (date): The reference date for the volatility surface.
+            calendar (Calendar, optional): Calendar for date calculations. Defaults to None.
+            daycounter (DayCounter, optional): Day counter for time calculations.
+                Defaults to Actual365 if not provided.
+            volatility (float, optional): The constant volatility value. Can be a scalar
+                or a tf.Variable/tf.Tensor. If None, must be provided via volatility_matrix.
+        """
+        if daycounter is None:
+            daycounter = DayCounter(DayCounterConvention.Actual365)
+        # For constant volatility, strike and maturity lists are not used
+        # but we need to provide them for the parent class
+        strike = [0.0]  # Dummy value, not used
+        maturity = [0.0]  # Dummy value, not used
+        self.flat_vol = volatility
+        super().__init__(reference_date, calendar, daycounter, strike, maturity, volatility)
+
+    def volatility(self, strike: float = None, tenor: float = None):
+        """Return the constant volatility value, ignoring strike and tenor.
+
+        This method has the same signature as VolatilitySurface.volatility() for
+        interface compatibility, but always returns the constant volatility value
+        regardless of the input parameters.
+
+        Args:
+            strike (float, optional): Strike price (ignored for constant volatility).
+            tenor (float, optional): Time to maturity in years (ignored for constant volatility).
+
+        Returns:
+            tf.Variable: The constant volatility value as a TensorFlow variable.
+        """
+        
+        # Otherwise, convert to tf.Variable
+        return tf.Variable(self.flat_vol, dtype=tf.float32)

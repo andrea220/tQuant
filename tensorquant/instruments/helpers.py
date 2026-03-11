@@ -165,7 +165,7 @@ class OisGenerator(ProductGenerator):
         self,
         ccy: str,
         start_delay: int,
-        fixing_days: int,
+        # fixing_days: int,
         period_fix: str,
         period_flt: str,
         roll_convention: BusinessDayConvention,
@@ -193,7 +193,7 @@ class OisGenerator(ProductGenerator):
         """
         super().__init__("ois", ccy, notional)
         self.start_delay = start_delay
-        self.fixing_days = fixing_days
+        # self.fixing_days = fixing_days
         self.period_fix = period_fix
         self.period_flt = period_flt
         self.roll_convention = roll_convention

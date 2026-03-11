@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import datetime
+import warnings
 
 from ..timehandles.tqcalendar import Calendar
 from ..timehandles.utils import Settings
@@ -17,7 +18,7 @@ class Index(ABC):
 
     @abstractmethod
     def __init__(
-        self, name: str, fixing_calendar: Calendar, fixing_time_series: dict
+        self, name: str, fixing_calendar: Calendar, fixing_time_series: dict = None
     ) -> None:
         """
         Initializes an Index instance with the specified attributes.
@@ -58,8 +59,60 @@ class Index(ABC):
 
         Args:
             input_fixings (dict): A dictionary containing the new time series of fixings.
+                                  Expected shape: {date: value}
         """
-        self._fixing_time_series = input_fixings
+        if input_fixings is None:
+            self._fixing_time_series = None
+            return
+
+        # Basic type check on the container
+        if not isinstance(input_fixings, dict):
+            raise TypeError(
+                f"input_fixings must be a dict mapping datetime.date to float, got {type(input_fixings)}"
+            )
+
+        # Early duplicate check on the input keys (fixing_date)
+        input_dates = list(input_fixings.keys())
+        if len(set(input_dates)) != len(input_dates):
+            raise ValueError("Duplicate fixing_date detected in input_fixings")
+
+        # Type and duplicate checks
+        # Existing dates in the current time series (if any)
+        existing_dates = set()
+        if (
+            self._fixing_time_series is not None
+            and self.name in self._fixing_time_series
+        ):
+            existing_dates = set(self._fixing_time_series[self.name].keys())
+
+        seen_dates = set()
+        cleaned_fixings = {}
+        for fixing_date, value in input_fixings.items():
+            if not isinstance(fixing_date, datetime.date):
+                raise TypeError(
+                    f"Fixing date keys must be datetime.date, got {type(fixing_date)}"
+                )
+
+            # Duplicate inside the new input
+            if fixing_date in seen_dates:
+                raise ValueError(f"Duplicate fixing date in input: {fixing_date}")
+            seen_dates.add(fixing_date)
+
+            # Duplicate versus existing time series
+            if fixing_date in existing_dates:
+                raise ValueError(
+                    f"Duplicate fixing date versus existing time series: {fixing_date}"
+                )
+
+            if not isinstance(value, (int, float)):
+                raise TypeError(
+                    f"Fixing values must be float (or int), got {type(value)}"
+                )
+
+            cleaned_fixings[fixing_date] = float(value)
+
+        # Build the internal structure directly as {index_name: {date: value}}
+        self._fixing_time_series = {self.name: cleaned_fixings}
 
     @property
     def fixing_calendar(self) -> Calendar:
@@ -94,15 +147,36 @@ class Index(ABC):
             fixing_date (datetime.date): The date of the fixing.
             value (float): The fixing value for the given date.
         """
-        fixing_point = {self.name: {fixing_date: value}}
-        if self.fixing_time_series is None:
-            # create the dict
-            self.fixing_time_series = fixing_point
-        else:
-            # write into it
-            self.fixing_time_series[self.name][fixing_date] = value
+        # Type checks
+        if not isinstance(fixing_date, datetime.date):
+            raise TypeError(
+                f"Fixing date must be datetime.date, got {type(fixing_date)}"
+            )
 
-    def past_fixing(self, fixing_date: datetime.date) -> bool:
+        if not isinstance(value, (int, float)):
+            raise TypeError(f"Fixing value must be float (or int), got {type(value)}")
+
+
+        # Initialize the internal structure if needed
+        if self._fixing_time_series is None:
+            self._fixing_time_series = {self.name: {fixing_date: value}}
+            return
+
+        # Ensure the index key exists
+        if self.name not in self._fixing_time_series:
+            self._fixing_time_series[self.name] = {}
+
+        # Overwrite if duplicate date and emit a warning
+        if fixing_date in self._fixing_time_series[self.name]:
+            warnings.warn(
+                f"Overwriting existing fixing for {self.name} on {fixing_date}",
+                UserWarning,
+            )
+
+        # Write the fixing
+        self._fixing_time_series[self.name][fixing_date] = value
+
+    def past_fixing(self, fixing_date: datetime.date) -> float:
         """
         Retrieves the past fixing value for a specific date.
 
@@ -133,7 +207,7 @@ class Index(ABC):
         Raises:
             ValueError: If the fixing date is invalid, missing, or in the future.
         """
-        if not self.is_valid_fixing_date:
+        if not self.is_valid_fixing_date(fixing_date):
             raise ValueError("Not a valid date")
 
         if fixing_date > Settings.evaluation_date:

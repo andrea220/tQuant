@@ -16,14 +16,14 @@ from .swapdiscounting import SwapPricer
 class PricerAssignment:
 
     @staticmethod
-    def create(product: Product, curve_map: dict):
+    def create(product: Product):
         if type(product) == Deposit:
-            return DepositPricer(curve_map)
+            return DepositPricer()
         elif type(product) == Ois:
-            return OisPricer(curve_map)
+            return OisPricer()
         elif type(product) == Fra:
-            return FraPricer(curve_map)
+            return FraPricer()
         elif type(product) == Swap:
-            return SwapPricer(curve_map)
+            return SwapPricer()
         else:
             raise TypeError(f"{product} is a wrong product type")

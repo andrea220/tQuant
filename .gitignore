@@ -9,3 +9,7 @@ __pycache__/
 
 # Ignora i file di configurazione del sistema operativo
 .DS_Store
+
+# Ignora i notebook Jupyter e i file Excel
+*.ipynb
+*.xlsx
