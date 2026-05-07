@@ -5,3 +5,4 @@ from .fradiscounting import *
 from .deposit import *
 from .black import *
 from .factory import *
+from .montecarlo import *

@@ -1,0 +1,184 @@
+# TensorQuant – Cursor Context
+
+## Progetto
+
+**TensorQuant** è una libreria Python per la finanza quantitativa costruita su **TensorFlow**.
+Il nucleo tecnico è il supporto nativo ad **autodifferenziazione** (via `tf.GradientTape`) per il
+calcolo di greche e sensibilità senza implementazioni analitiche separate.
+
+- Package principale: `tensorquant/`
+- Python ≥ 3.10, TensorFlow ≥ 2.0, pandas 2.2, python-dateutil 2.9
+- Setup: `setup.py` (nessun `pyproject.toml`)
+- Docs: Sphinx su `docs/` + ReadTheDocs
+
+---
+
+## Struttura dei moduli
+
+```
+tensorquant/
+├── timehandles/          # Calendari, day-count, schedule, griglie temporali
+│   ├── tqcalendar.py     # Calendario base
+│   ├── targetcalendar.py # Calendario TARGET (EUR)
+│   ├── daycounter.py     # DayCounter + DayCounterConvention (Actual365, ecc.)
+│   ├── schedule.py       # Generazione schedule di date (coupon, osservazioni)
+│   ├── grid.py           # Griglie temporali per simulazioni/pricing
+│   └── utils.py
+│
+├── numericalhandles/     # Strumenti numerici di basso livello
+│   ├── interpolation.py  # Interpolazione (es. LINEAR per curve)
+│   └── newton.py         # Solver Newton-Raphson
+│
+├── markethandles/        # Oggetti di mercato
+│   ├── ircurve.py        # RateCurve: curva tassi TF-differenziabile (zero, fwd, discount)
+│   ├── volatilitysurface.py  # VolatilitySurface: superficie vol implicita
+│   ├── dividendcurve.py  # DividendCurve: dividendi discreti
+│   ├── interestrate.py   # InterestRate: tasso con day-count e compounding
+│   ├── bootstrapping.py  # Bootstrap di curve da strumenti di mercato
+│   ├── marketenvironment.py  # MarketEnvironment + RiskFactor + MarketDataType + validatori
+│   └── utils.py          # Currency enum, market_map di default
+│
+├── index/                # Indici di mercato
+│   ├── index.py          # Index: ABC
+│   ├── curverateindex.py # CurveRateIndex: IBOR/OIS collegato a RateCurve
+│   └── inflationindex.py # InflationIndex
+│
+├── flows/                # Flussi di cassa elementari
+│   ├── cashflow.py       # CashFlow: ABC
+│   ├── coupon.py         # Coupon: ABC con nozione di period/rate
+│   ├── fixedcoupon.py    # FixedCoupon
+│   └── floatingcoupon.py # FloatingCoupon (aggancia CurveRateIndex)
+│
+├── instruments/          # Prodotti finanziari strutturati
+│   ├── product.py        # Product: ABC (ccy, start_date, end_date, price)
+│   ├── deposit.py        # Deposit
+│   ├── swap.py           # Swap (IRS)
+│   ├── ois.py            # OIS
+│   ├── forward.py        # Forward su equity/FX
+│   ├── option.py         # Option (vanilla europea)
+│   ├── capfloor.py       # Cap/Floor su tassi
+│   ├── autocallable.py   # Autocallable (strutturato equity)
+│   └── helpers.py        # Helpers per costruzione strumenti (es. da market quotes)
+│
+├── models/               # Processi stocastici
+│   ├── stochasticprocess.py  # StochasticProcess: ABC (size, drift, diffusion, evolve)
+│   ├── brownian.py       # Brownian Motion
+│   ├── ornsteinuhlenbeck.py  # Ornstein-Uhlenbeck
+│   ├── hullwhite.py      # Hull-White 1F (tasso corto)
+│   ├── g2.py             # G2++ (Hull-White 2F)
+│   ├── localvolatility.py    # Local Volatility (Dupire)
+│   └── localvol.py       # [non esposto in __init__] helper local vol
+│
+├── pricers/              # Pricer concreti
+│   ├── pricer.py         # Pricer: ABC (calculate_price, price con autodiff)
+│   ├── fixedflow.py      # Pricer flusso fisso
+│   ├── floatingflow.py   # Pricer flusso floating
+│   ├── swapdiscounting.py    # Pricer swap (discounting)
+│   ├── fradiscounting.py     # Pricer FRA
+│   ├── deposit.py        # Pricer deposit
+│   ├── black.py          # Pricer Black-Scholes (opzioni vanilla)
+│   └── factory.py        # PricerFactory: selezione pricer da tipo prodotto
+│
+└── analytics/            # Analytics di portafoglio / esposizione
+    ├── gaussiankernel.py # GaussianPathGenerator: simulazione HW + griglia + curva
+    └── rateexposure.py   # RateExposure: calcolo esposizioni su tassi
+```
+
+---
+
+## Pattern architetturali chiave
+
+### 1. ABC chain: Product → Pricer
+Ogni strumento eredita da `Product` (ABC con `ccy`, `start_date`, `end_date`, `price`).
+Ogni pricer eredita da `Pricer` (ABC con `calculate_price`).
+Il metodo `Pricer.price(product, market_env, autodiff=False)` wrappa il calcolo in
+`tf.GradientTape` se `autodiff=True`, abilitando greche senza codice aggiuntivo.
+
+### 2. MarketEnvironment
+Punto di accesso centralizzato a tutti i dati di mercato.
+- **market**: dict piatto con chiavi `RiskFactor:CCY:TICKER:TYPE`
+  - es. `"IR:EUR:ESTR:SPOT"` → `RateCurve`
+  - es. `"EQ:EUR:SX5E:VOL"` → `VolatilitySurface`
+  - es. `"EQ:EUR:ISP:SPOT"` → float / tf.Variable
+  - es. `"EQ:EUR:ISP:REPO"` → float
+  - es. `"EQ:EUR:ISP:DIVYIELD"` → float
+  - es. `"EQ:EUR:ISP:DIV"` → `DividendCurve`
+- **market_map**: routing logico `"RiskFactor:CCY:TICKER"` → `{"SPOT": "...", "VOL": "..."}`
+- Accessor typed: `get_ir_curve`, `get_eq_spot`, `get_eq_vol_surface`, `get_eq_repo`,
+  `get_eq_div_yield`, `get_eq_dividends`, `get_currency`
+- Factory method `MarketEnvironment.from_data_path(eval_date, path, calibration_set)`
+  per costruzione da CSV (curve.csv, spot.csv, vol.csv, dividends.csv)
+
+### 3. RiskFactor e MarketDataType (enum)
+`RiskFactor`: `IR`, `EQ`
+`MarketDataType`: `SPOT`, `VOL`, `REPO`, `DIVYIELD`, `DIV`
+
+### 4. StochasticProcess
+ABC con interfaccia: `size()`, `initial_values()`, `drift(t0,x0,dt)`, `diffusion(t0,x0,dt)`,
+`evolve(t0,x0,dt,dw)` (Euler di default), `expectation`, `std_deviation`.
+Implementazioni: Brownian, OrnsteinUhlenbeck, HullWhite, G2, LocalVolatility.
+
+### 5. Interpolazione e numerics
+`interpolation.py` fornisce interpolatori (es. `LinearInterpolator`) usati da `RateCurve`.
+`newton.py` fornisce solver root-finding usato nel bootstrapping.
+
+### 6. Schedule e timehandles
+`DayCounter` con `DayCounterConvention` (Actual365, ActualActual, 30/360, ...).
+`Schedule` genera date da `start_date`, `end_date`, `frequency`, `calendar`.
+`Grid` (in `timehandles/grid.py`) per griglie di simulazione.
+Calendari: `TQCalendar` (base) + `TargetCalendar` (festività TARGET/EUR).
+
+---
+
+## Regola di sviluppo
+
+> **Prima di implementare qualsiasi nuova feature, verificare se l'infrastruttura
+> esistente copre già il caso d'uso, anche parzialmente.**
+
+### Checklist prima di aggiungere codice
+
+1. **Nuovo strumento finanziario**: estendere `Product` (ABC in `instruments/product.py`).
+   Verificare se `flows/` già copre i flussi necessari prima di implementarne di nuovi.
+
+2. **Nuovo pricer**: estendere `Pricer` (ABC in `pricers/pricer.py`) e registrare
+   nella `PricerFactory` (`pricers/factory.py`). Usare `market_env` per tutti gli
+   accessi ai dati di mercato (mai accesso diretto al dict grezzo).
+
+3. **Nuovo modello stocastico**: estendere `StochasticProcess`
+   (`models/stochasticprocess.py`). Verificare se `GaussianPathGenerator`
+   in `analytics/gaussiankernel.py` è già sufficiente per la simulazione.
+
+4. **Nuovo dato di mercato**: se il tipo non esiste, proporre prima l'estensione di
+   `RiskFactor` o `MarketDataType` (enum in `marketenvironment.py`) e del validatore
+   `MarketMapValidator`, poi aggiungere l'accessor in `MarketEnvironment`.
+
+5. **Nuova curva/superficie**: verificare se `RateCurve`, `VolatilitySurface` o
+   `DividendCurve` (in `markethandles/`) coprono già il caso. Se serve una nuova
+   superficie (es. correlazione, varianza), proporre la struttura prima di implementare.
+
+6. **Calendario/day-count**: usare `DayCounter` + `DayCounterConvention` esistenti.
+   Aggiungere convenzioni mancanti nella enum, non creare classi parallele.
+
+7. **Interpolazione**: usare gli interpolatori in `numericalhandles/interpolation.py`.
+   Proporre l'aggiunta di nuovi metodi di interpolazione lì, non in-line nei pricer.
+
+### Se l'infrastruttura manca
+
+Se un pezzo necessario non esiste (es. un nuovo tipo di prodotto richiede un'interfaccia
+non prevista), **proporre esplicitamente**:
+- Quale classe/ABC/enum estendere o creare
+- Dove posizionare il nuovo modulo nel package
+- Come integrarlo con `MarketEnvironment`, `Pricer` e `Product` esistenti
+
+...prima di procedere con l'implementazione concreta.
+
+---
+
+## Convenzioni di codice
+
+- Tutti i tensori e le variabili calibrate sono `tf.Variable` o `tf.Tensor`; i dati
+  di mercato scalari equity (spot, repo, div yield) possono essere `float` o `tf.Variable`.
+- Docstring in stile Google (Args/Returns/Raises).
+- I tipi Python sono annotati (`-> ReturnType`, `param: Type`).
+- Import interni relativi (`.`, `..`).
+- Nessun accesso diretto al dict `_market` fuori da `MarketEnvironment`.

@@ -11,28 +11,36 @@ def _norm_cdf(x):
     return 0.5 * (1.0 + tf.math.erf(x / tf.sqrt(tf.constant(2.0, dtype=x.dtype))))
 
 
-def _bs_call(S0, K, T, vol):
+def _bs_call(S0, K, T, vol, r=0.0, q=0.0):
     """
-    Black-Scholes call price (r = q = 0).  Supports broadcasting.
+    Black-Scholes call price with continuous rate r and dividend yield q.
+    Supports broadcasting over (T, K) grids.
 
     Args:
         S0:  spot (scalar or tensor)
         K:   strike grid [nK] or broadcastable
         T:   maturity grid [nT] or broadcastable
         vol: implied-vol grid [nT, nK] or broadcastable
+        r:   continuously-compounded risk-free rate (scalar)
+        q:   continuous dividend yield (scalar)
 
     Returns:
-        call price — same shape as inputs after broadcasting
+        discounted call price C = S·e^{-qT}·N(d1) - K·e^{-rT}·N(d2)
     """
     dtype = tf.float32
     T   = tf.maximum(tf.cast(T,   dtype), tf.constant(1e-12, dtype))
     vol = tf.maximum(tf.cast(vol, dtype), tf.constant(1e-12, dtype))
     S0  = tf.cast(S0, dtype)
     K   = tf.cast(K,  dtype)
+    r   = tf.cast(r,  dtype)
+    q   = tf.cast(q,  dtype)
     sigT = vol * tf.sqrt(T)
-    d1   = (tf.math.log(S0 / K) + tf.constant(0.5, dtype) * vol * vol * T) / sigT
+    d1   = (tf.math.log(S0 / K) + (r - q + 0.5 * vol * vol) * T) / sigT
     d2   = d1 - sigT
-    return S0 * _norm_cdf(d1) - K * _norm_cdf(d2)
+    return (
+        S0 * tf.exp(-q * T) * _norm_cdf(d1)
+        - K * tf.exp(-r * T) * _norm_cdf(d2)
+    )
 
 
 # ============================================================
@@ -66,46 +74,87 @@ def _dC_dT(C, T):
 
 def _d2C_dK2(C, K):
     """
-    Second derivative d²C/dK² on a (T, K) grid (uniform K spacing assumed).
+    Second derivative d²C/dK² on a (T, K) grid — non-uniform K spacing.
+
+    Uses the 3-point non-uniform central difference formula for interior nodes:
+        d²C/dK²|_i = 2 [ C_{i-1}/(h1·(h1+h2)) - C_i/(h1·h2) + C_{i+1}/(h2·(h1+h2)) ]
+    where h1 = K_i - K_{i-1}, h2 = K_{i+1} - K_i.
+
+    Boundary values are extrapolated from the nearest interior estimate.
 
     Args:
         C: [nT, nK]
         K: [nK]
 
     Returns:
-        d²C/dK² [nT, nK] — central differences inside, boundary copy at edges.
+        d²C/dK² [nT, nK]
     """
-    dK    = K[1] - K[0]
-    d2mid = (C[:, 2:] - 2.0 * C[:, 1:-1] + C[:, :-2]) / (dK * dK)  # [nT, nK-2]
+    h1 = K[1:-1] - K[:-2]   # [nK-2]
+    h2 = K[2:]   - K[1:-1]  # [nK-2]
+    d2mid = 2.0 * (
+        C[:, :-2] / (h1 * (h1 + h2))
+        - C[:, 1:-1] / (h1 * h2)
+        + C[:, 2:] / (h2 * (h1 + h2))
+    )  # [nT, nK-2]
     return tf.concat([d2mid[:, 0:1], d2mid, d2mid[:, -1:]], axis=1)
+
+
+def _dC_dK(C, K):
+    """
+    First derivative dC/dK on a (T, K) grid — non-uniform K spacing.
+
+    Interior: weighted central difference on non-uniform grid.
+    Boundaries: one-sided (forward/backward).
+
+    Args:
+        C: [nT, nK]
+        K: [nK]
+
+    Returns:
+        dC/dK [nT, nK]
+    """
+    # Interior: (C_{i+1} - C_{i-1}) / (K_{i+1} - K_{i-1})
+    dK_span = K[2:] - K[:-2]                               # [nK-2]
+    dmid    = (C[:, 2:] - C[:, :-2]) / dK_span[None, :]   # [nT, nK-2]
+    # Boundaries
+    d0 = (C[:, 1:2] - C[:, 0:1]) / (K[1:2] - K[0:1])
+    dn = (C[:, -1:]  - C[:, -2:-1]) / (K[-1:] - K[-2:-1])
+    return tf.concat([d0, dmid, dn], axis=1)
 
 
 def _dupire_local_vol(C, T, K, r=0.0, q=0.0, eps=1e-10, sig_cap=4.0):
     """
-    Build the local volatility surface σ_loc(T, K) via Dupire's formula.
+    Build the local volatility surface σ_loc(T, K) via the full Dupire formula.
 
-    For r = q = 0:
-        σ²_loc = 2 · (∂C/∂T) / (K² · ∂²C/∂K²)
+    For discounted call prices C(T,K) = e^{-rT}·E[(S_T - K)^+]:
+
+        σ²_loc = [∂C/∂T + (r-q)·K·∂C/∂K + q·C] / [½·K²·∂²C/∂K²]
 
     All operations are pure TF — the result is differentiable w.r.t. C.
 
     Args:
-        C:       [nT, nK]  call price matrix (tf.Variable or tf.Tensor)
-        T:       [nT]      maturities
-        K:       [nK]      strikes
-        r, q:    scalars   risk-free rate / dividend yield
+        C:       [nT, nK]  discounted call price matrix (tf.Variable or tf.Tensor)
+        T:       [nT]      maturities (year fractions)
+        K:       [nK]      strikes (non-uniform grid supported)
+        r:       scalar    risk-free rate
+        q:       scalar    continuous dividend yield (repo included)
         eps:     float     numerical floor to avoid division by zero
         sig_cap: float     cap on σ_loc (for numerical robustness)
 
     Returns:
         sigma_loc [nT, nK]
     """
-    dT  = _dC_dT(C, T)    # [nT, nK]
-    d2K = _d2C_dK2(C, K)  # [nT, nK]
+    r = tf.cast(r, tf.float32)
+    q = tf.cast(q, tf.float32)
 
-    K2    = tf.square(K)[None, :]                          # [1, nK]
-    denom = tf.maximum(K2 * tf.maximum(d2K, eps), eps)
-    sig2  = 2.0 * tf.maximum(dT, 0.0) / denom
+    dT  = _dC_dT(C, T)   # [nT, nK]
+    dK  = _dC_dK(C, K)   # [nT, nK]
+    d2K = _d2C_dK2(C, K) # [nT, nK]
+
+    K_row = K[None, :]                                          # [1, nK]
+    numerator = dT + (r - q) * K_row * dK + q * C
+    denom     = tf.maximum(0.5 * tf.square(K_row) * tf.maximum(d2K, eps), eps)
+    sig2      = tf.maximum(numerator, 0.0) / denom
 
     return tf.sqrt(tf.clip_by_value(sig2, 0.0, sig_cap))
 
@@ -277,6 +326,8 @@ class LocalVolatilityModel(StochasticProcess):
         C_surface = _bs_call(
             tf.cast(S0, tf.float32), KK, TT,
             tf.cast(iv_matrix, tf.float32),
+            r=tf.cast(r, tf.float32),
+            q=tf.cast(q, tf.float32),
         )
         return cls(C_surface, T_grid, K_grid, S0, r, q, dupire_eps, sigma_cap)
 

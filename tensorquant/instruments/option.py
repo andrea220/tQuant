@@ -24,6 +24,7 @@ class Option(Product, ABC):
         self._underlying = underlying
         self._exercise_type = exercise_type
         self._implied_volatility = None
+        self._forward = None
 
     @property
     def option_type(self):
@@ -49,6 +50,16 @@ class Option(Product, ABC):
     def implied_volatility(self, value: tf.Variable):
         self._implied_volatility = value
 
+    @property
+    def forward(self):
+        if self._forward is None:
+            raise ValueError("forward is not available: price the option first")
+        return self._forward
+
+    @forward.setter
+    def forward(self, value):
+        self._forward = value
+
 
 class VanillaOption(Option):
 
@@ -60,6 +71,7 @@ class VanillaOption(Option):
         option_type,
         strike,
         underlying: str = "DEFAULT",
+        exercise_type: ExerciseType = ExerciseType.European,
     ):
         super().__init__(
             ccy,
@@ -67,7 +79,7 @@ class VanillaOption(Option):
             end_date,
             option_type,
             strike,
-            ExerciseType.European,
+            exercise_type,
             underlying,
         )
         self._delta = None

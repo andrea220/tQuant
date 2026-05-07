@@ -94,7 +94,7 @@ class ExerciseType(Enum):
     European = 2
 
     def __str__(self):
-        return self.value
+        return self.name
 
 
 # curve_map = {

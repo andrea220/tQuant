@@ -1,10 +1,18 @@
+from __future__ import annotations
+
+import os
+from datetime import date
 from typing import Any, Optional
 from enum import Enum
 import re
 
+import pandas as pd
+
 from .utils import Currency, market_map as default_market_map
 from .ircurve import RateCurve
 from .volatilitysurface import VolatilitySurface
+from .dividendcurve import DividendCurve
+from ..timehandles.daycounter import DayCounter, DayCounterConvention
 
 
 class RiskFactor(Enum):
@@ -24,9 +32,16 @@ class MarketDataType(Enum):
     Attributes:
         SPOT (str): Spot/current value (for curves or equity spots).
         VOL (str): Volatility data (for volatility surfaces).
+        REPO (str): Repo rate (scalar) for an equity ticker.
+        DIVYIELD (str): Continuous dividend yield (scalar) for an equity ticker.
+        DIV (str): Discrete dividend schedule (DividendCurve) for an equity
+            ticker.
     """
     SPOT = "SPOT"
     VOL = "VOL"
+    REPO = "REPO"
+    DIVYIELD = "DIVYIELD"
+    DIV = "DIV"
 
 
 class MarketMapValidator:
@@ -47,7 +62,7 @@ class MarketMapValidator:
     """
 
     KEY_PATTERN = re.compile(r"^(IR|EQ):([A-Z]{3}):([A-Z0-9_]+)$")
-    VALUE_PATTERN = re.compile(r"^(IR|EQ):([A-Z]{3}):([A-Z0-9_]+):(SPOT|VOL)$")
+    VALUE_PATTERN = re.compile(r"^(IR|EQ):([A-Z]{3}):([A-Z0-9_]+):(SPOT|VOL|REPO|DIVYIELD|DIV)$")
 
     @classmethod
     def validate_key(cls, key: str) -> tuple[str, str, str]:
@@ -195,7 +210,11 @@ class MarketMapValidator:
                             f"got {type(value).__name__}"
                         )
             elif risk_factor == RiskFactor.EQ.value:
-                if data_type == MarketDataType.SPOT.value:
+                if data_type in (
+                    MarketDataType.SPOT.value,
+                    MarketDataType.REPO.value,
+                    MarketDataType.DIVYIELD.value,
+                ):
                     if not isinstance(value, (int, float, tf.Tensor, tf.Variable)):
                         raise TypeError(
                             f"Market key '{key}' expects a numeric value "
@@ -206,6 +225,12 @@ class MarketMapValidator:
                     if not isinstance(value, VolatilitySurface):
                         raise TypeError(
                             f"Market key '{key}' expects a VolatilitySurface, "
+                            f"got {type(value).__name__}"
+                        )
+                elif data_type == MarketDataType.DIV.value:
+                    if not isinstance(value, DividendCurve):
+                        raise TypeError(
+                            f"Market key '{key}' expects a DividendCurve, "
                             f"got {type(value).__name__}"
                         )
 
@@ -237,7 +262,14 @@ class MarketMapValidator:
             for market_key in data_types.values()
         }
 
-        orphans = [key for key in market if key not in valid_market_keys]
+        # EQ keys are open-ended (any ticker is valid); they have already been
+        # format-validated by validate_market so no whitelist check is needed.
+        eq_pattern = re.compile(r"^EQ:[A-Z]{3}:[A-Z0-9_]+:(SPOT|VOL|REPO|DIVYIELD|DIV)$")
+
+        orphans = [
+            key for key in market
+            if key not in valid_market_keys and not eq_pattern.match(key)
+        ]
 
         if orphans:
             raise ValueError(
@@ -313,6 +345,139 @@ class MarketEnvironment:
         self._market = market
 
     # ------------------------------------------------------------------
+    # Alternative constructors
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_data_path(
+        cls,
+        evaluation_date: date,
+        data_path: str,
+        calibration_set: str,
+    ) -> "MarketEnvironment":
+        """Build a :class:`MarketEnvironment` from a standardised data folder.
+
+        Reads the four CSV files produced by the MDM data store
+        (``curve.csv``, ``spot.csv``, ``vol.csv``, ``dividends.csv``) and
+        constructs all market objects automatically.
+
+        Expected CSV schemas
+        --------------------
+        ``curve.csv``
+            Columns: ``CURVE_NAME`` (str), ``CURVE_PILLAR`` (date, format
+            ``%d-%m-%Y``), ``CURVE_DATA`` (float, zero-coupon bond prices).
+            Optional column: ``CURRENCY`` (3-letter ISO code; defaults to
+            ``"EUR"`` when absent).
+
+        ``spot.csv``
+            Columns: ``ticker`` (e.g. ``"ISP IM Equity"``), ``currency``,
+            ``spot_price``, ``repo``, ``div_yield``.
+
+        ``vol.csv``
+            Columns: ``ticker``, ``currency``, ``maturity`` (ISO date),
+            ``strike`` (float), ``volatility`` (percent, e.g. 25.0 → 0.25).
+
+        ``dividends.csv``
+            Columns: ``ticker``, ``currency``, ``Ex Date``, ``Declared Date``,
+            ``Amount Per Share``.  ``Payment Date`` is used when present.
+
+        The market keys produced are:
+        - ``IR:<CCY>:<CURVE_NAME>:SPOT`` for each unique curve in ``curve.csv``
+        - ``EQ:<CCY>:<TICKER>:SPOT|REPO|DIVYIELD|VOL|DIV`` for equities
+
+        Args:
+            evaluation_date (date): Pricing / reference date.  The date is
+                also used to derive the dated sub-folder
+                (``YYYYMMDD`` appended to ``data_path``).
+            data_path (str): Base data directory.  The string
+                ``evaluation_date.strftime("%Y%m%d")`` is appended to obtain
+                the dated folder, which must contain ``calibration_set``.
+            calibration_set (str): Sub-directory name inside the dated folder
+                that contains the four CSV files.
+
+        Returns:
+            MarketEnvironment: A fully populated environment ready for pricing.
+
+        Raises:
+            FileNotFoundError: If any of the expected CSV files is missing.
+            ValueError: If the market or market_map structure is invalid.
+        """
+        _dc = DayCounter(DayCounterConvention.Actual365)
+
+        data_path = data_path + evaluation_date.strftime('%Y%m%d')
+        folder    = data_path + "/" + calibration_set
+
+        ir_curve_df = pd.read_csv(f"{folder}/curve.csv")
+        ir_curve_df['CURVE_PILLAR'] = pd.to_datetime(ir_curve_df['CURVE_PILLAR'], format='%d-%m-%Y').dt.date
+        ir_curve_df['CURVE_DATA']   = pd.to_numeric(ir_curve_df['CURVE_DATA'], errors='raise').astype(float)
+        estr_df  = ir_curve_df[ir_curve_df['CURVE_NAME'] == 'ESTR'].copy()
+        eur6m_df = ir_curve_df[ir_curve_df['CURVE_NAME'] == 'EUR6M'].copy()
+
+        eur_estr_curve = RateCurve.from_zcb(
+            evaluation_date,
+            estr_df['CURVE_PILLAR'].to_list(), estr_df['CURVE_DATA'].to_list(),
+            interp='LINEAR',
+            daycounter_convention=DayCounterConvention.Actual365,
+        )
+        eur_6m_curve = RateCurve.from_zcb(
+            evaluation_date,
+            eur6m_df['CURVE_PILLAR'].to_list(), eur6m_df['CURVE_DATA'].to_list(),
+            interp='LINEAR',
+            daycounter_convention=DayCounterConvention.Actual365,
+        )
+
+        spot_df = pd.read_csv(f"{folder}/spot.csv")
+        spot_df.fillna(0, inplace=True)
+
+        vol_df = pd.read_csv(f"{folder}/vol.csv")
+        vol_df['maturity'] = pd.to_datetime(vol_df['maturity']).dt.date
+
+        dividend_df = pd.read_csv(f"{folder}/dividends.csv")
+        dividend_df['Ex Date']       = pd.to_datetime(dividend_df['Ex Date']).dt.date
+        dividend_df['Declared Date'] = pd.to_datetime(dividend_df['Declared Date']).dt.date
+
+        market: dict[str, Any] = {
+            "IR:EUR:ESTR:SPOT": eur_estr_curve,
+            "IR:EUR:6M:SPOT":   eur_6m_curve,
+        }
+
+        for _, row in spot_df.iterrows():
+            ticker = row['ticker'].split()[0]
+            ccy    = row['currency']
+            market[f"EQ:{ccy}:{ticker}:SPOT"]     = float(row['spot_price'])
+            market[f"EQ:{ccy}:{ticker}:REPO"]     = float(row['repo'])
+            market[f"EQ:{ccy}:{ticker}:DIVYIELD"] = float(row['div_yield'])
+
+        for full_ticker, grp in vol_df.groupby('ticker'):
+            ticker    = full_ticker.split()[0]
+            ccy       = grp['currency'].iloc[0]
+            strikes   = sorted(grp['strike'].unique().tolist())
+            mat_dates = sorted(grp['maturity'].unique().tolist())
+            tenors    = [_dc.year_fraction(evaluation_date, m) for m in mat_dates]
+            pivot = (
+                grp.pivot(index='maturity', columns='strike', values='volatility') / 100.0
+            ).reindex(index=mat_dates, columns=strikes)
+            market[f"EQ:{ccy}:{ticker}:VOL"] = VolatilitySurface(
+                reference_date=evaluation_date,
+                calendar=None,
+                daycounter=_dc,
+                strike=strikes,
+                maturity=tenors,
+                volatility_matrix=pivot.values.tolist(),
+            )
+
+        for full_ticker, grp in dividend_df.groupby('ticker'):
+            ticker = full_ticker.split()[0]
+            ccy    = grp['currency'].iloc[0]
+            market[f"EQ:{ccy}:{ticker}:DIV"] = DividendCurve.from_dataframe(
+                reference_date=evaluation_date,
+                df=grp,
+                daycounter_convention=DayCounterConvention.Actual365,
+            )
+
+        return cls(market)
+
+    # ------------------------------------------------------------------
     # Interest-rate curves
     # ------------------------------------------------------------------
 
@@ -368,6 +533,41 @@ class MarketEnvironment:
             ) from e
 
     # ------------------------------------------------------------------
+    # Equity currency
+    # ------------------------------------------------------------------
+
+    def get_currency(self, ticker: str) -> Currency:
+        """Return the :class:`Currency` associated with *ticker*.
+
+        Scans the market dictionary for any key of the form
+        ``EQ:<CCY>:<TICKER>:<TYPE>`` and returns the first currency found.
+        No assumptions are made about which data type (SPOT, VOL, DIV, …) is
+        present — the lookup succeeds as long as at least one entry for the
+        ticker exists in the market.
+
+        Args:
+            ticker (str): Short equity ticker (e.g. ``"ISP"``, ``"SX5E"``).
+
+        Returns:
+            Currency: The currency enum value for the ticker.
+
+        Raises:
+            ValueError: If no market entry is found for *ticker*.
+        """
+        prefix = f"{RiskFactor.EQ.value}:"
+        for key in self._market:
+            parts = key.split(":")
+            if len(parts) == 4 and parts[0] == RiskFactor.EQ.value and parts[2] == ticker:
+                try:
+                    return Currency(parts[1])
+                except ValueError:
+                    continue
+        raise ValueError(
+            f"No market entry found for equity ticker '{ticker}'. "
+            f"Expected a key of the form 'EQ:<CCY>:{ticker}:<TYPE>'."
+        )
+
+    # ------------------------------------------------------------------
     # Equity spots
     # ------------------------------------------------------------------
 
@@ -397,6 +597,10 @@ class MarketEnvironment:
                     return self._market[market_key]
                 except KeyError:
                     continue
+            # EQ tickers are open-ended: try direct key construction without market_map
+            direct_key = f"{RiskFactor.EQ.value}:{currency.name}:{ticker}:{MarketDataType.SPOT.value}"
+            if direct_key in self._market:
+                return self._market[direct_key]
         
         # Fallback: try direct lookup with old format for backward compatibility
         market_key = f"EQ:{ticker}"
@@ -406,17 +610,114 @@ class MarketEnvironment:
         raise ValueError(f"Unknown equity ticker: {ticker}")
 
     # ------------------------------------------------------------------
+    # Repo rates
+    # ------------------------------------------------------------------
+
+    def get_eq_repo(self, ticker: str, ccy: Optional[Currency] = None) -> Any:
+        """Return the repo rate for *ticker*.
+
+        Args:
+            ticker (str): Identifier of the equity ticker (e.g. "ISP", "SX5E").
+            ccy (Currency, optional): The currency. If None, tries EUR first, then USD.
+
+        Returns:
+            Any: The repo rate (scalar or tf.Tensor/tf.Variable).
+
+        Raises:
+            ValueError: If the ticker is not found in the market.
+        """
+        currencies_to_try = [ccy] if ccy is not None else [Currency.EUR, Currency.USD]
+
+        for currency in currencies_to_try:
+            if currency is None:
+                continue
+            direct_key = f"{RiskFactor.EQ.value}:{currency.name}:{ticker}:{MarketDataType.REPO.value}"
+            if direct_key in self._market:
+                return self._market[direct_key]
+
+        raise ValueError(f"Unknown repo rate for equity ticker: {ticker}")
+
+    # ------------------------------------------------------------------
+    # Dividend yields
+    # ------------------------------------------------------------------
+
+    def get_eq_div_yield(self, ticker: str, ccy: Optional[Currency] = None) -> Any:
+        """Return the continuous dividend yield for *ticker*.
+
+        Args:
+            ticker (str): Identifier of the equity ticker (e.g. "ISP", "SX5E").
+            ccy (Currency, optional): The currency. If None, tries EUR first, then USD.
+
+        Returns:
+            Any: The dividend yield (scalar or tf.Tensor/tf.Variable).
+
+        Raises:
+            ValueError: If the ticker is not found in the market.
+        """
+        currencies_to_try = [ccy] if ccy is not None else [Currency.EUR, Currency.USD]
+
+        for currency in currencies_to_try:
+            if currency is None:
+                continue
+            direct_key = f"{RiskFactor.EQ.value}:{currency.name}:{ticker}:{MarketDataType.DIVYIELD.value}"
+            if direct_key in self._market:
+                return self._market[direct_key]
+
+        raise ValueError(f"Unknown dividend yield for equity ticker: {ticker}")
+
+    # ------------------------------------------------------------------
+    # Discrete dividend schedules
+    # ------------------------------------------------------------------
+
+    def get_eq_dividends(
+        self, ticker: str, ccy: Optional[Currency] = None
+    ) -> DividendCurve:
+        """Return the discrete :class:`DividendCurve` for *ticker*.
+
+        Looks up the key ``EQ:<CCY>:<TICKER>:DIV`` in the market dictionary.
+
+        Args:
+            ticker (str): Equity ticker identifier (e.g. ``"ISP"``, ``"SX5E"``).
+            ccy (Currency, optional): Currency of the equity.  If ``None``,
+                tries EUR first, then USD.
+
+        Returns:
+            DividendCurve: The discrete dividend schedule for the ticker.
+
+        Raises:
+            ValueError: If no dividend curve is found for the (ticker, ccy)
+                combination.
+        """
+        currencies_to_try = [ccy] if ccy is not None else [Currency.EUR, Currency.USD]
+
+        for currency in currencies_to_try:
+            if currency is None:
+                continue
+            direct_key = (
+                f"{RiskFactor.EQ.value}:{currency.name}:{ticker}"
+                f":{MarketDataType.DIV.value}"
+            )
+            if direct_key in self._market:
+                return self._market[direct_key]
+
+        raise ValueError(
+            f"No DividendCurve found for equity ticker: '{ticker}'. "
+            f"Expected key 'EQ:<CCY>:{ticker}:DIV' in market."
+        )
+
+    # ------------------------------------------------------------------
     # Volatility surfaces
     # ------------------------------------------------------------------
 
     def get_eq_vol_surface(
-        self, ccy: Currency, ticker: str
+        self, ticker: str, ccy: Optional[Currency] = None
     ) -> VolatilitySurface:
-        """Return the implied-volatility surface for *ticker* in *ccy*.
+        """Return the implied-volatility surface for *ticker*.
 
         Args:
-            ccy (Currency): The currency of the product (e.g. Currency.EUR).
-            ticker (str): Identifier of the equity ticker (e.g. "SX5E", "DEFAULT").
+            ticker (str): Identifier of the equity ticker (e.g. "SX5E", "ISP").
+            ccy (Currency, optional): The currency. If ``None``, tries EUR
+                first, then USD, then scans all currencies in the market.
 
         Returns:
             VolatilitySurface: The corresponding volatility surface object.
@@ -424,16 +725,41 @@ class MarketEnvironment:
         Raises:
             ValueError: If the vol surface is not found.
         """
-        map_key = f"{RiskFactor.EQ.value}:{ccy.name}:{ticker}"
-        try:
-            market_key = self._market_map[map_key][MarketDataType.VOL.value]
-            return self._market[market_key]
-        except KeyError as e:
-            # Fallback: try old format for backward compatibility
-            old_key = f"VOLEQ:{ticker}"
-            if old_key in self._market:
-                return self._market[old_key]
-            raise ValueError(
-                f"Unknown Implied Volatility: ccy={ccy.name}, ticker={ticker}. "
-                f"Key '{map_key}' not found in market_map or missing VOL entry."
-            ) from e
+        currencies_to_try = [ccy] if ccy is not None else [Currency.EUR, Currency.USD]
+
+        for currency in currencies_to_try:
+            if currency is None:
+                continue
+            # Try market_map first
+            map_key = f"{RiskFactor.EQ.value}:{currency.name}:{ticker}"
+            if map_key in self._market_map:
+                try:
+                    market_key = self._market_map[map_key][MarketDataType.VOL.value]
+                    return self._market[market_key]
+                except KeyError:
+                    pass
+            # Try direct key construction (open-ended EQ tickers)
+            direct_key = f"{RiskFactor.EQ.value}:{currency.name}:{ticker}:{MarketDataType.VOL.value}"
+            if direct_key in self._market:
+                return self._market[direct_key]
+
+        # Fallback: scan all currencies present in the market for this ticker
+        for key in self._market:
+            parts = key.split(":")
+            if (
+                len(parts) == 4
+                and parts[0] == RiskFactor.EQ.value
+                and parts[2] == ticker
+                and parts[3] == MarketDataType.VOL.value
+            ):
+                return self._market[key]
+
+        # Legacy key format
+        old_key = f"VOLEQ:{ticker}"
+        if old_key in self._market:
+            return self._market[old_key]
+
+        raise ValueError(
+            f"No VolatilitySurface found for equity ticker '{ticker}'. "
+            f"Expected a key of the form 'EQ:<CCY>:{ticker}:VOL' in market."
+        )
