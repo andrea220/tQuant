@@ -128,8 +128,8 @@ class AutocallableMCPricer(Pricer):
         )
         return self._model.evolve(time_grid_tensor, z)
 
-    @staticmethod
     def _price_option_leg(
+        self,
         product: AutocallableOption,
         s_t: tf.Tensor,
         date_grid: list,
@@ -188,7 +188,8 @@ class AutocallableMCPricer(Pricer):
 
         alive = np.ones(n_paths, dtype=bool)
         unpaid_coupons = np.zeros(n_paths, dtype=np.float64)
-        total_pv = np.zeros(n_paths, dtype=np.float64)
+        coupon_pv = np.zeros(n_paths, dtype=np.float64)
+        redemption_pv = np.zeros(n_paths, dtype=np.float64)
 
         for fix_date in all_fixing_dates:
             if fix_date <= valuation_date:
@@ -198,7 +199,6 @@ class AutocallableMCPricer(Pricer):
 
             col = date_to_col[fix_date]
             s_i = s_t[:, col].numpy()
-            pay = np.zeros(n_paths, dtype=np.float64)
 
             # --- coupon leg ---
             if fix_date in coupon_map:
@@ -212,7 +212,8 @@ class AutocallableMCPricer(Pricer):
                 else:
                     pay_amount = coupon_rates[c_idx] / 100.0
 
-                pay += np.where(paid, pay_amount, 0.0)
+                df = float(disc_curve.discount(c_pay_date))
+                coupon_pv += np.where(paid, pay_amount, 0.0) * df
 
                 # --- capital-at-risk put at maturity ---
                 if (
@@ -220,14 +221,11 @@ class AutocallableMCPricer(Pricer):
                     and product.redemption_payoff is not None
                 ):
                     below_barrier = s_i <= payoff_barrier / 100.0 * strike
-                    pay -= np.where(
+                    redemption_pv += np.where(
                         alive & below_barrier,
                         product.redemption_payoff(s_i, strike, payoff_participation),
                         0.0,
-                    )
-
-                df = float(disc_curve.discount(c_pay_date))
-                total_pv += pay * df
+                    ) * df
 
                 # --- memory counter ---
                 unpaid_coupons = np.where(paid, 0.0, unpaid_coupons)
@@ -242,4 +240,7 @@ class AutocallableMCPricer(Pricer):
                 above_autocall = s_i >= autocall_thr
                 alive = alive & ~above_autocall
 
+        total_pv = coupon_pv + redemption_pv
+        self._coupon_pv = float(coupon_pv.mean())
+        self._redemption_pv = float(redemption_pv.mean())
         return float(total_pv.mean())

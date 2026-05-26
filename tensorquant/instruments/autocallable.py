@@ -107,8 +107,7 @@ class AutocallableOption(Product):
         # payoff finale (solo derivato, senza capitale)
         self.redemption_payoff: Optional[Callable[..., float]] = None
         if payoff_type.lower() == "put":
-            # stessa firma usata nel notebook: final_redemption(S_T, strike, partecipation)
-            self.redemption_payoff = self.final_redemption
+            self.redemption_payoff = self.put_redemption
 
     @property
     def maturity_date(self) -> datetime.date:
@@ -170,11 +169,11 @@ class AutocallableOption(Product):
         return df
 
     @staticmethod
-    def final_redemption(S_T, strike: float, partecipation: float):
+    def put_redemption(S_T, strike: float, partecipation: float):
         """
         Payoff di una put “nuda” in percentuale del notional:
 
-            final_redemption(S_T, K, partecipation)
-                = max(K - S_T, 0) / K * partecipation
+            put_redemption(S_T, K, partecipation)
+                = -max(K - S_T, 0) / K * partecipation
         """
         return np.maximum(strike - S_T, 0) / strike * partecipation

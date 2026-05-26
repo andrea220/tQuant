@@ -6,3 +6,4 @@ from .deposit import *
 from .black import *
 from .factory import *
 from .montecarlo import *
+from .vanillamc import *
