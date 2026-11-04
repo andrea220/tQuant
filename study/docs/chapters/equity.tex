@@ -1,0 +1,136 @@
+\section{Equity}\label{sec:equity}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Forwards and dividends}
+
+\begin{question}{\Theory \diff{1}}{Put--call parity with dividends}
+Write put--call parity for an underlying paying discrete dividends.
+\end{question}
+\begin{answer}
+$C - P = S_0 - \mathrm{PV}(\text{div}) - K\,P(0,T)$.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Discrete vs continuous dividends}
+How do you model discrete cash dividends and a continuous dividend yield in
+Black--Scholes, and what actually changes between the two?
+\nb{02\_dividends.ipynb}
+\end{question}
+\begin{answer}
+\textbf{Models.}
+\begin{itemize}[nosep]
+  \item \emph{Discrete (escrowed)}: lognormal dynamics on
+        $S^* = S_0 - \mathrm{PV}(D)$, with
+        $\mathrm{PV}(D) = \sum_{t_i \le T} D_i\,P(0,t_i)$.
+  \item \emph{Continuous}: $S$ pays a yield $q$, so the stock enters as
+        $S_0 e^{-qT}$. The yield matching the same forward is
+        $q_{\text{eff}} = -\frac{1}{T}\ln\!\big(1 - \mathrm{PV}(D)/S_0\big)$.
+\end{itemize}
+
+\textbf{What does not change.} With $q_{\text{eff}}$ both give the same
+forward $F$, and a European price depends only on $(F,\sigma,T,P(0,T))$:
+\emph{same price}.
+
+\textbf{What changes.}
+\begin{itemize}[nosep]
+  \item \emph{Delta}: cash dividends do not move with $S$, a yield does.
+        $\partial F/\partial S$ is $e^{rT}$ (discrete) vs $F/S$ (continuous),
+        so $\Delta_{\text{cont}} \approx \Delta_{\text{disc}}\,(S_0-\mathrm{PV})/S_0$.
+  \item \emph{Volatility}: in the escrowed model $\sigma$ acts only on $S^*$.
+        If $\sigma$ is the vol of the whole $S$ (stock drops by $D_i$ at each
+        ex-date), the price is higher: $\sigma^* \approx \sigma\,S_0/(S_0-\mathrm{PV})$.
+  \item \emph{American options}: early exercise of a call is optimal just before
+        an ex-date; a yield smears the dividends over time and misses
+        this timing.
+  \item \emph{Long maturities}: yields are proportional and never push $S$
+        below zero; cash dividends can be large relative to a low $S$.
+\end{itemize}
+\end{answer}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Options and Black--Scholes}
+
+\begin{question}{\Theory \diff{1}}{The Black--Scholes model}
+Define the Black--Scholes model for an equity, state its main assumptions and
+outline how the European call pricing formula is obtained.
+\end{question}
+\begin{answer}
+\textbf{Model.} The stock follows a geometric Brownian motion; under the
+risk-neutral measure $\Q$, with continuous dividend yield $q$:
+\[
+  \dd S_t = (r - q)\,S_t \dd t + \sigma S_t \dd W_t^{\Q}
+  \quad\Rightarrow\quad
+  S_T = S_0\, e^{(r - q - \frac{1}{2}\sigma^2)T + \sigma\sqrt{T}\,Z},\; Z\sim\Nc(0,1).
+\]
+
+\textbf{Assumptions.}
+\begin{itemize}[nosep]
+  \item constant volatility $\sigma$, rate $r$ and dividend yield $q$;
+  \item lognormal prices, continuous paths (no jumps);
+  \item frictionless market: continuous trading, no transaction costs or
+        taxes, short selling allowed, divisible assets;
+  \item no arbitrage.
+\end{itemize}
+
+\textbf{Derivation.} Two equivalent routes.
+\begin{enumerate}[nosep]
+  \item \emph{Hedging (PDE).} Hold the option and short $\Delta$ shares:
+        $\Pi = V - \Delta S$. By It\^o, choosing $\Delta = \partial_S V$
+        cancels the $\dd W$ term, so $\Pi$ is riskless and must earn $r$:
+        \[
+          \partial_t V + (r - q) S\,\partial_S V
+          + \tfrac{1}{2}\sigma^2 S^2\,\partial_{SS} V - rV = 0,
+          \qquad V(T,S) = (S - K)^+ .
+        \]
+  \item \emph{Risk-neutral pricing.} Solving the PDE (Feynman--Kac) is
+        equivalent to
+        $C = e^{-rT}\,\E^{\Q}\big[(S_T - K)^+\big]$, which is computed
+        in closed form using the lognormal $S_T$.
+\end{enumerate}
+
+\textbf{Result.}
+\[
+  C = S_0 e^{-qT} \Nc(d_1) - K e^{-rT} \Nc(d_2),
+  \qquad
+  d_{1,2} = \frac{\ln(S_0/K) + (r - q \pm \frac{1}{2}\sigma^2)T}{\sigma\sqrt{T}} .
+\]
+
+\textbf{Intuition.} The drift $\mu$ of the real-world dynamics does not appear:
+the risk is hedged away, so only $\sigma$ matters.
+$\Nc(d_2) = \Q(S_T > K)$ is the risk-neutral exercise probability;
+$S_0 e^{-qT}\Nc(d_1)$ is the value of receiving the stock if exercised, and
+$\Nc(d_1)$ (times $e^{-qT}$) is the delta.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Gamma close to expiry}
+% TODO
+\end{question}
+\begin{answer}
+% TODO
+\end{answer}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Volatility: smile, local vol, displaced diffusion}
+
+\begin{question}{\Theory \diff{2}}{Dupire formula}
+% TODO
+\end{question}
+\begin{answer}
+% TODO
+\end{answer}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Monte Carlo and AAD}
+
+\begin{question}{\Theory \diff{1}}{Monte Carlo standard error}
+How does the error of a Monte Carlo estimator scale with the number of paths $N$?
+\end{question}
+\begin{answer}
+$\mathrm{SE} = \hat\sigma/\sqrt{N}$: halving the error requires $4\times$ the paths.
+\end{answer}
+
+\begin{question}{\Practice \diff{2}}{Greeks via automatic differentiation}
+% TODO: tf.GradientTape on the MC price
+\end{question}
+\begin{answer}
+% TODO
+\end{answer}

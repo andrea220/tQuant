@@ -1,0 +1,45 @@
+\section{Rates}\label{sec:rates}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Curves}
+
+\begin{question}{\Theory \diff{1}}{Zero rate, discount factor and forward}
+What is the relation between the discount factor $P(0,T)$, the continuously
+compounded zero rate $r(T)$ and the simple forward rate $F(0;T_1,T_2)$?
+\end{question}
+\begin{answer}
+$P(0,T) = e^{-r(T)\,T}$ and, by no-arbitrage,
+\[
+  F(0;T_1,T_2) = \frac{1}{\tau(T_1,T_2)}\left(\frac{P(0,T_1)}{P(0,T_2)} - 1\right).
+\]
+\end{answer}
+
+\begin{question}{\Practice \diff{1}}{Reading a curve from the MarketEnvironment}
+How do you get discount factors and 1Y forwards from a EUR curve in tQuant?
+\nb{01\_market\_handles.ipynb}
+\end{question}
+\begin{answer}
+\begin{itemize}[nosep]
+  \item \texttt{curve = mkt.get\_ir\_curve(tq.Currency.EUR, ticker=...)}
+  \item \texttt{curve.discount(T)}, \texttt{curve.forward\_rate(T, T+1)}
+\end{itemize}
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Why is the forward curve noisier than the zero curve?}
+Why is the instantaneous forward curve much less smooth than the zero curve?
+\end{question}
+\begin{answer}
+$f(0,T) = r(T) + T\,r'(T)$: the forward depends on the \emph{derivative} of the
+zero curve, so it amplifies any irregularity of the interpolation (e.g.\ linear
+on zero rates $\Rightarrow$ discontinuous forwards at the pillars).
+\end{answer}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Swaps}
+
+\begin{question}{\Theory \diff{2}}{DV01 of a swap}
+% TODO
+\end{question}
+\begin{answer}
+% TODO
+\end{answer}

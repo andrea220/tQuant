@@ -1,0 +1,78 @@
+% tQuant Q&A: theory and practical applications, by asset class.
+% Build: latexmk (see .latexmkrc) or LaTeX Workshop in VS Code.
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm,bm}
+\usepackage{xcolor}
+\usepackage[most]{tcolorbox}
+\usepackage{enumitem}
+\usepackage{environ}
+\usepackage{hyperref}
+
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+
+% ── Show / hide answers ─────────────────────────────────────────────────────
+% \showanswerstrue  -> full version
+% \showanswersfalse -> questions only (for revision)
+\newif\ifshowanswers
+\showanswerstrue
+
+% ── Question tags ───────────────────────────────────────────────────────────
+\newcommand{\tagbox}[2]{\tcbox[on line, boxsep=1pt, left=3pt, right=3pt,
+  top=1pt, bottom=1pt, colback=#1!15, colframe=#1!60!black,
+  fontupper=\footnotesize\sffamily\bfseries]{#2}}
+\newcommand{\Theory}{\tagbox{blue}{Theory}}
+\newcommand{\Practice}{\tagbox{teal}{Practice}}
+
+% Difficulty: \diff{1}..\diff{3}
+\newcommand{\diff}[1]{\textcolor{gray}{\ifcase#1\or$\star$\or$\star\star$\or$\star\star\star$\fi}}
+
+% Reference to a notebook in study/notebooks
+\newcommand{\nb}[1]{\textsf{\small[notebook: \texttt{#1}]}}
+
+% ── Q/A environments ────────────────────────────────────────────────────────
+% \begin{question}{<tag> <difficulty>}{<short title>} ... \end{question}
+\newtcolorbox[auto counter, number within=section]{question}[2]{
+  enhanced, breakable, colback=gray!4, colframe=gray!60!black,
+  fonttitle=\bfseries, title={Q\thetcbcounter\quad #2 \hfill #1},
+}
+
+\ifshowanswers
+  \newtcolorbox{answer}{
+    enhanced, breakable, colback=white, colframe=gray!30,
+    boxrule=0.4pt, leftrule=2pt, sharp corners, before skip=-2pt,
+  }
+\else
+  \NewEnviron{answer}{}
+\fi
+
+% ── Math macros ─────────────────────────────────────────────────────────────
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Q}{\mathbb{Q}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\dd}{\,\mathrm{d}}
+\newcommand{\Nc}{\mathcal{N}}
+
+\title{tQuant --- Study Notes \& Q/A}
+\author{Andrea Carapelli}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\clearpage
+
+\section*{Legend}
+\Theory{} concepts, derivations, interview and desk questions \quad
+\Practice{} applications with the library.
+Difficulty: \diff{1} \diff{2} \diff{3}.
+
+\input{chapters/equity}
+\input{chapters/rates}
+
+\end{document}

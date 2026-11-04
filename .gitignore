@@ -13,3 +13,7 @@ __pycache__/
 # Ignora i notebook Jupyter e i file Excel
 *.ipynb
 *.xlsx
+# study/: i notebook vanno versionati, gli artefatti LaTeX no
+!study/**/*.ipynb
+study/docs/build/
+.ipynb_checkpoints/
