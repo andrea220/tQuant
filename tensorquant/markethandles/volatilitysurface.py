@@ -4,6 +4,8 @@ from ..timehandles.daycounter import DayCounter, DayCounterConvention
 from ..timehandles.utils import Settings
 import tensorflow as tf
 
+from ..numericalhandles.dtypes import as_variable
+
 
 class VolatilitySurface:
     """Implied volatility surface on a (maturity, strike) grid, bilinearly interpolated.
@@ -39,7 +41,7 @@ class VolatilitySurface:
         self._daycounter = daycounter
         self._strike = strike
         self._maturity = maturity
-        self._volatility_matrix = _as_float64_variable(volatility_matrix)
+        self._volatility_matrix = as_variable(volatility_matrix)
 
     @property
     def reference_date(self):
@@ -202,12 +204,3 @@ class BlackConstantVolatility(VolatilitySurface):
         """
         return self._volatility_matrix
 
-
-def _as_float64_variable(value) -> tf.Variable:
-    """Return *value* as a float64 ``tf.Variable`` (reused if it already is one)."""
-    if isinstance(value, tf.Variable) and value.dtype == tf.float64:
-        return value
-    if isinstance(value, (tf.Tensor, tf.Variable)):
-        return tf.Variable(tf.cast(value, tf.float64))
-    # Python / numpy data: convert directly to float64 (no float32 round trip).
-    return tf.Variable(tf.convert_to_tensor(value, dtype=tf.float64))

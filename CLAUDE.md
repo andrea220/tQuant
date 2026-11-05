@@ -28,7 +28,7 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 | Package | Main classes |
 |---|---|
 | `timehandles/` | `Settings` (global `evaluation_date`), `DayCounter` + `DayCounterConvention`, `Calendar`, `TARGET`, `ScheduleGenerator`, `DateGrid`, enums `TimeUnit`, `BusinessDayConvention`, `CompoundingType`, `Frequency` |
-| `numericalhandles/` | `LinearInterp`, `newton`, `newton_1d` |
+| `numericalhandles/` | `LinearInterp`, `newton`, `newton_1d`, `DTYPE` + `as_variable` (dtype of market data, risk-factor variables) |
 | `markethandles/` | `MarketEnvironment`, `RiskFactor`, `MarketDataType`, `MarketMapValidator`, `RateCurve` / `FlatCurve` / `DefaultCurve`, `VolatilitySurface` / `BlackConstantVolatility`, `DividendCurve`, `InterestRate`, `CurveBootstrap`; `utils.py`: `Currency`, `OptionType`, `ExerciseType`, `PayoffType`, `SwapType`, `Position` |
 | `index/` | `Index` (ABC), `OvernightIndex`, `IborIndex`, `InflationIndex` |
 | `flows/` | `CashFlow`, `Coupon` (ABC), `FixedCoupon`/`FixedRateLeg`, `FloatingCoupon`/`FloatingRateLeg` |
@@ -98,8 +98,10 @@ Run examples/notebooks only when changing them or when asked.
 |---|---|---|
 | `MarketEnvironment` accessors | `tests/test_marketenvironment.py` | spot, vol, repo, div yield, dividends, currency, default curve |
 | Risk factors | `tests/test_risk_factors.py` | float64 variables in curves/surfaces/EQ scalars, `risk_factors()`, gradients vs finite differences, bilinear weights |
+| `RateCurve` / `FlatCurve` / `DividendCurve` | `tests/test_rate_curve.py` | discount/zero/forward vs numpy reference, `from_zcb` round trip, PV dividends, float64 tensor outputs |
 | `timehandles/` | — | — |
-| `numericalhandles/` | — | — |
+| `numericalhandles/dtypes.py` | `tests/test_dtypes.py` | `DTYPE`, `as_variable` (reuse, casts, no float32 round trip) |
+| `numericalhandles/` (interpolation, newton) | — | — |
 | Equity pricers/models | — | — |
 | Rate pricers/flows/bootstrap | — | — |
 
@@ -111,8 +113,9 @@ unit tests for the area added first (see Testing), then all tests green.
 ### 1. Shared handles (`markethandles/`, `timehandles/`, `numericalhandles/`, base ABCs)
 
 - [x] Risk factors in market objects: float64 `variables`, `MarketEnvironment.risk_factors()`.
-- [ ] dtype policy: float64 for market data and analytic pricers, MC may stay float32 via `tf.cast`;
-      today most pricers/models are still `tf.float32` with ad-hoc casts.
+- [x] dtype policy for market objects: float64 variables and float64 tensor outputs (`discount(0)` no longer returns `int`).
+- [ ] dtype policy in pricers/models: float64 for analytic pricers, MC may stay float32 via `tf.cast`; today most
+      are still `tf.float32` with ad-hoc casts → fixed pricer by pricer in the equity and interest-rate steps.
 - [ ] `RateCurve.inst_fwd` uses `math.log`, which converts to float and breaks the gradient.
 - [ ] `StochasticProcess.evolve(t0, x0, dt, dw)` vs subclasses `evolve(t_grid, dw)`; GBM `drift(dt)` differs too.
 - [ ] `PricerAssignment` uses `type(...) ==` and covers only Deposit/Ois/Fra/Swap.

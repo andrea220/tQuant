@@ -1,11 +1,11 @@
-from tensorflow import Variable, exp
+from tensorflow import Tensor, Variable, constant, exp
 from math import log
-from tensorflow.python.framework import dtypes
 import numpy
 from datetime import date, timedelta
 from typing import Union, Optional
 
 from ..numericalhandles.interpolation import LinearInterp
+from ..numericalhandles.dtypes import DTYPE, as_variable
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
 
 
@@ -66,7 +66,7 @@ class RateCurve:
             ]
         else:
             raise TypeError("Pillars must be a list of either date or float types")
-        self._rates = [Variable(float(r), dtype=dtypes.float64) for r in rates]
+        self._rates = [as_variable(float(r)) for r in rates]
         self.interpolation_type = interp
         if self.interpolation_type == "LINEAR":
             self.interp = LinearInterp(self._pillars, self._rates)
@@ -234,14 +234,15 @@ class RateCurve:
         """
         self._name = value
 
-    def discount(self, term: Union[date, float]) -> float:
+    def discount(self, term: Union[date, float]) -> Tensor:
         """Calculates the discount factor for a given term.
 
         Args:
             term (Union[date, float]): The term for which to calculate the discount factor. Can be a date or year fraction.
 
         Returns:
-            float: The discount factor.
+            tf.Tensor: Scalar float64 discount factor, differentiable with respect to
+                :attr:`variables` (a constant 1.0 at ``term == 0``).
 
         Raises:
             TypeError: If the term is not a date or float.
@@ -254,7 +255,7 @@ class RateCurve:
             raise TypeError("term must be of type date or float")
 
         if term == 0.0:
-            return 1
+            return constant(1.0, dtype=DTYPE)
 
         if term <= self._pillars[0]:
             nrt = -term * self._rates[0]

@@ -13,6 +13,7 @@ from .utils import Currency, market_map as default_market_map
 from .ircurve import RateCurve
 from .volatilitysurface import VolatilitySurface
 from .dividendcurve import DividendCurve
+from ..numericalhandles.dtypes import as_variable
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
 
 
@@ -348,7 +349,10 @@ class MarketEnvironment:
         self._market = dict(market)
         for key, value in self._market.items():
             if self._is_eq_scalar_key(key):
-                self._market[key] = self._as_float64_variable(value, key)
+                self._market[key] = as_variable(
+                    float(value) if isinstance(value, (int, float)) else value,
+                    name=key.replace(":", "_"),
+                )
 
     # ------------------------------------------------------------------
     # Risk factors
@@ -369,15 +373,6 @@ class MarketEnvironment:
             and parts[0] == RiskFactor.EQ.value
             and parts[3] in cls._EQ_SCALAR_TYPES
         )
-
-    @staticmethod
-    def _as_float64_variable(value: Any, key: str) -> tf.Variable:
-        """Return *value* as a float64 ``tf.Variable`` (reused if it already is one)."""
-        if isinstance(value, tf.Variable) and value.dtype == tf.float64:
-            return value
-        if isinstance(value, (tf.Tensor, tf.Variable)):
-            return tf.Variable(tf.cast(value, tf.float64), name=key.replace(":", "_"))
-        return tf.Variable(float(value), dtype=tf.float64, name=key.replace(":", "_"))
 
     def risk_factors(self) -> dict[str, list[tf.Variable]]:
         """Return the differentiable market inputs, keyed by market key.
