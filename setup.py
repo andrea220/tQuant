@@ -21,7 +21,7 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Andrea Carapelli",
-    author_email="carapelliandrea@email.com",
+    author_email="carapelliandrea@gmail.com",
     url="https://github.com/andrea220/tQuant",
     license="GPL-3.0-only",
     license_files=["LICENSE"],

@@ -9,6 +9,12 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 - Study material in `study/` (own `CLAUDE.md`).
 - Code, docstrings and comments in English.
 
+## Working rules
+
+- Do **only** what is asked. Anything extra (installs, reinstalls, builds, refactors, cleanups, extra files,
+  follow-up fixes) → ask first, don't do it.
+- Commit directly on `main`; commit and push only when asked.
+
 ## Environment & commands
 
 - Venv: `C:\dev\virtual_envs\tqenv` (Python 3.12), set up with `pip install -r requirements.txt -e .`.
