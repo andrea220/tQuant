@@ -1,8 +1,11 @@
+import tensorflow as tf
+
 from .pricer import Pricer
+from ..numericalhandles.dtypes import DTYPE
 from ..instruments.forward import Fra
 from ..markethandles.marketenvironment import MarketEnvironment
 from ..markethandles.utils import Currency
-from ..timehandles.utils import TimeUnit, BusinessDayConvention, Settings
+from ..timehandles.utils import Settings
 
 
 class FraPricer(Pricer):
@@ -19,8 +22,13 @@ class FraPricer(Pricer):
 
     def calculate_price(
         self, product: Fra, market_env: MarketEnvironment
-    ) -> float:
-        """Price a Forward Rate Agreement (FRA).
+    ) -> tf.Tensor:
+        """Price a Forward Rate Agreement (FRA), settled at the start date.
+
+        ``NPV = side * N * tau * (F - K) * P_disc(0, T1) / (1 + F * tau)``, with
+        ``tau`` the FRA accrual on the product dates ``T1 = start_date``,
+        ``T2 = end_date`` and ``F = (P_fwd(0, T1) / P_fwd(0, T2) - 1) / tau`` from the
+        index (forwarding) curve on the same dates. Zero once the period has started.
 
         Args:
             product (Fra): The FRA to be priced.
@@ -28,7 +36,7 @@ class FraPricer(Pricer):
                 access to market data (curves).
 
         Returns:
-            float: The NPV of the FRA.
+            tf.Tensor: float64 NPV of the FRA.
 
         Raises:
             TypeError: If the product is not a Fra.
@@ -40,7 +48,7 @@ class FraPricer(Pricer):
         try:
             # Get discount curve using default ticker (ESTR for EUR, SOFR for USD)
             self.disc_curve = market_env.get_ir_curve(product.ccy)
-            
+
             # Get forward curve for the index
             # Index name format: "CCY:TENOR" (e.g., "EUR:6M")
             index_name_parts = product._index.name.split(":")
@@ -50,7 +58,7 @@ class FraPricer(Pricer):
                     f"Expected format: 'CCY:TENOR'"
                 )
             index_ccy_str, index_ticker = index_name_parts
-            
+
             # Convert currency string to Currency enum
             try:
                 index_ccy = Currency[index_ccy_str]
@@ -58,45 +66,24 @@ class FraPricer(Pricer):
                 raise ValueError(
                     f"Unknown currency '{index_ccy_str}' in index name '{product._index.name}'"
                 )
-            
+
             # Map legacy ticker format (e.g., "6M" -> "6M" or handle appropriately)
             # For now, use the ticker as-is from the index name
             self.fwd_curve = market_env.get_ir_curve(index_ccy, ticker=index_ticker)
-            
+
         except ValueError as e:
             raise ValueError(f"Unknown Curve: {e}") from e
 
-        pv = 0.0
-        fwd = 0.0
-        accrual = 0.0
-        
-        if product.start_date > Settings.evaluation_date:
-            accrual = product.day_counter.year_fraction(
-                product.start_date, product.end_date
-            )
-            fixing_d = product.fixing_date
-            d1 = product._index.fixing_calendar.advance(
-                fixing_d, 2, TimeUnit.Days, BusinessDayConvention.ModifiedFollowing
-            )  # valuedate-start date
-            d2 = product._index.fixing_maturity(d1)
-            t = product._index.daycounter.year_fraction(d1, d2)
-            disc1 = self.fwd_curve.discount(d1)
-            disc2 = self.fwd_curve.discount(d2)
-            fwd = (disc1 / disc2 - 1) / t
-            self.fwd = fwd
-            pv += (
-                product.notional
-                * accrual
-                * (fwd - product.fixed_rate)
-                * product.side.value
-                * self.disc_curve.discount(
-                    product.day_counter.year_fraction(
-                        Settings.evaluation_date, product.end_date
-                    )
-                )
-            )
-        
-        if accrual > 0.0:
-            return pv / (1 + fwd * accrual)
-        else:
-            return pv
+        if product.start_date <= Settings.evaluation_date:
+            self.fwd = None
+            return tf.constant(0.0, dtype=DTYPE)
+
+        t1, t2 = product.start_date, product.end_date
+        tau = product.day_counter.year_fraction(t1, t2)
+        fwd = (tf.cast(self.fwd_curve.discount(t1), DTYPE) / tf.cast(self.fwd_curve.discount(t2), DTYPE) - 1.0) / tau
+        self.fwd = fwd
+        df_settle = tf.cast(self.disc_curve.discount(t1), DTYPE)
+        return (
+            product.side.value * product.notional * tau * (fwd - product.fixed_rate)
+            * df_settle / (1.0 + fwd * tau)
+        )

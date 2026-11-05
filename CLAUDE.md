@@ -35,7 +35,7 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 | `flows/` | `CashFlow`, `Coupon` (ABC), `FixedCoupon`/`FixedRateLeg`, `FloatingCoupon`/`FloatingRateLeg` |
 | `instruments/` | `Product` (ABC), `Deposit`, `Fra`, `Swap`, `Ois`, `Option`/`VanillaOption`, `AutocallableOption`, `Cap`/`Floor`/`Collar`, generators in `helpers.py` |
 | `models/` | `StochasticProcess` (ABC), `GeometricBrownianMotion`, `ArithmeticBrownianMotion`, `OrnsteinUhlenbeckProcess`, `HullWhiteProcess`, `G2PlusPlusProcess`, `LocalVolatilityModel` (Dupire), `DisplacedDiffusionModel` |
-| `pricers/` | `Pricer` (ABC), `BlackScholesPricer` (EU BS + American Bjerksund–Stensland; `dividend_model` discrete/continuous), `VanillaMCPricer`, `AutocallableMCPricer`, `SwapPricer`, `OisPricer`, `FraPricer`, `DepositPricer`, coupon/leg discounting, `PricerAssignment` (factory) |
+| `pricers/` | `Pricer` (ABC), `BlackScholesPricer` (EU BS + American Bjerksund–Stensland; `dividend_model` discrete/continuous), `VanillaMCPricer`, `AutocallableMCPricer`, `SwapPricer`, `OisPricer`, `FraPricer`, `DepositPricer`, coupon/leg discounting, `PricerAssignment` (factory, `isinstance`: Deposit/Ois/Fra/Swap/VanillaOption) |
 | `analytics/` | `GaussianPathGenerator`, `HullWhiteShortRateGenerator`, `SwapExposureGenerator` |
 
 ## Key patterns
@@ -115,7 +115,8 @@ Run examples/notebooks only when changing them or when asked.
 | `numericalhandles/dtypes.py` | `tests/test_dtypes.py` | `DTYPE`, `as_variable` (reuse, casts, no float32 round trip) |
 | `numericalhandles/` (interpolation, newton) | — | — |
 | Equity pricers/models | — | — |
-| Rate pricers/flows/bootstrap | — | — |
+| Rate pricers / flows | `tests/test_rate_pricers.py` | Deposit/FRA/Swap/OIS prices pinned, float64 tensors, gradients per pillar of both curves vs bumps, deposit closed form (ACT/365 and ACT/360 curves), FRA standard formula, fixed leg = sum amount·P(pay), single-curve floating legs telescope to N(P(s)−P(e)), NPV = 0 at the fair rate |
+| `CurveBootstrap`, `PricerAssignment` | `tests/test_bootstrap.py` | ESTR (deposit + OIS) and 6M (FRA + swaps) stripped, instruments reprice to 0, curves registered via `set_ir_curve`, float64 variables; factory incl. `VanillaOption` |
 
 ## Refactor roadmap
 
@@ -144,14 +145,16 @@ tests green.
 
 ### 3. Interest rates (analytic pricers)
 
-- [ ] dtype policy in pricers: float64 (same as equity).
-- [ ] Swap/OIS/FRA/Deposit pricers: add tests that gradients reach `RateCurve.variables`.
-- [ ] `CurveBootstrap` writes into `market_env._market` directly.
-- [ ] `instruments/capfloor.py` is not exported and has no pricer.
-- [ ] `examples/swap_pricing.py` never sets `tq.Settings.evaluation_date` (defaults to `date.today()`), so it fails
-      once past fixings are needed.
-- [ ] `PricerAssignment` uses `type(...) ==` and covers only Deposit/Ois/Fra/Swap → extend once equity and rate
-      pricers are settled.
+- [x] dtype policy in pricers: float64 tensors everywhere (paid/empty legs return a float64 zero, not `0`).
+- [x] Swap/OIS/FRA/Deposit: tests that gradients reach `RateCurve.variables` (per pillar vs bumps).
+- [x] Discounting by *date* (`curve.discount(payment_date)`, curve day count) in fixed/floating/OIS coupons, FRA and
+      deposit: coupons were discounted at the coupon day-count year fraction (ACT/360 on an ACT/365 curve: −0.11%
+      on a 5Y fixed leg). OIS forecast rate `(P(s)/P(e) − 1)/tau` on the coupon's own day count (was the curve's).
+- [x] FRA: standard `N tau (F − K) P(0,T1)/(1 + F tau)` with F on the product dates (was `P(0,T2)` and index dates).
+- [x] `CurveBootstrap` registers curves with `MarketEnvironment.set_ir_curve` (no `_market` writes).
+- [x] `examples/swap_pricing.py` sets `tq.Settings.evaluation_date`, uses `curve.variables`.
+- [x] `PricerAssignment` with `isinstance`, adds `VanillaOption` → `BlackScholesPricer`.
+- [ ] `instruments/capfloor.py` is not exported and has no pricer (Black/Bachelier cap/floor: later).
 
 ### 4. Stochastic processes & Monte Carlo (`models/`, MC pricers, `analytics/`)
 

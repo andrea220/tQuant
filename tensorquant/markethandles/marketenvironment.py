@@ -583,6 +583,24 @@ class MarketEnvironment:
     # Interest-rate curves
     # ------------------------------------------------------------------
 
+    def set_ir_curve(self, market_key: str, curve: RateCurve) -> None:
+        """Add or replace an interest-rate curve (e.g. a bootstrapped one).
+
+        Args:
+            market_key (str): ``IR:<CCY>:<TICKER>:SPOT``, referenced in the market map.
+            curve (RateCurve): The curve.
+
+        Raises:
+            ValueError: If the key format is invalid, not an IR SPOT key, or not in the market map.
+            TypeError: If ``curve`` is not a :class:`RateCurve`.
+        """
+        parts = market_key.split(":")
+        if len(parts) != 4 or parts[0] != RiskFactor.IR.value or parts[3] != MarketDataType.SPOT.value:
+            raise ValueError(f"'{market_key}' is not an IR curve key (expected 'IR:<CCY>:<TICKER>:SPOT')")
+        MarketMapValidator.validate_market({market_key: curve})
+        MarketMapValidator.validate_market_against_map({market_key: curve}, self._market_map)
+        self._market[market_key] = curve
+
     def get_ir_curve(self, ccy: Currency, ticker: Optional[str] = None) -> RateCurve:
         """Return the interest-rate curve for *ccy* with *ticker*.
 

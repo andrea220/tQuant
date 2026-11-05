@@ -31,6 +31,7 @@ def build_static_market_environment(evaluation_date: date) -> tq.MarketEnvironme
 
 def main() -> None:
     evaluation_date = date(2026, 1, 5)
+    tq.Settings.evaluation_date = evaluation_date
     market_env = build_static_market_environment(evaluation_date)
 
     settlement_delay = 3
@@ -67,7 +68,7 @@ def main() -> None:
     swap_engine.price(swap, market_env, autodiff=True)
 
     gradients = swap_engine.tape.gradient(
-        swap.price, market_env.get_ir_curve(tq.Currency.EUR, "6M")._rates
+        swap.price, market_env.get_ir_curve(tq.Currency.EUR, "6M").variables
     )
     gradient_values = [float(g.numpy()) if g is not None else None for g in gradients]
 

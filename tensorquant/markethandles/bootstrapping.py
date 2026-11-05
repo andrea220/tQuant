@@ -170,7 +170,7 @@ class CurveBootstrap:
                 interpolation,
                 daycounter_convention,
             )
-        self.market_env._market[curve_name] = bootstrapping_curve
+        self.market_env.set_ir_curve(curve_name, bootstrapping_curve)
         func = ObjectiveFunction(bootstrapping_curve, products, pricers, self.market_env)
         x = numpy.array(zero_rates, dtype=numpy.float64)
         bootstrapped_rates, jac = newton(func, x)
@@ -260,7 +260,7 @@ class ObjectiveFunction:
                 npv = pricer.calculate_price(product, self.market_env)
             # tape.gradient returns one gradient per watched variable;
             # None means that variable did not contribute to NPV_i → treat as 0
-            gradients = tape.gradient(npv, self.rate_curve._rates)
+            gradients = tape.gradient(npv, self.rate_curve.variables)
             res[i] = float(npv)
             jac[i, :] = [
                 float(g.numpy()) if g is not None else 0.0 for g in gradients

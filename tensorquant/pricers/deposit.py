@@ -1,8 +1,10 @@
+import tensorflow as tf
+
 from .pricer import Pricer
+from ..numericalhandles.dtypes import DTYPE
 from ..instruments.deposit import Deposit
 from ..markethandles.marketenvironment import MarketEnvironment
-from ..timehandles.utils import DayCounterConvention, Settings
-from ..timehandles.daycounter import DayCounter
+from ..timehandles.utils import Settings
 
 
 class DepositPricer(Pricer):
@@ -17,8 +19,12 @@ class DepositPricer(Pricer):
 
     def calculate_price(
         self, product: Deposit, market_env: MarketEnvironment
-    ) -> float:
+    ) -> tf.Tensor:
         """Price a Deposit using discount curve.
+
+        ``NPV = N P(0, start) - N (1 + r tau) P(0, end)`` (the start flow only if it is
+        not in the past, the end flow only before maturity), discount factors read at
+        the dates so the curve uses its own day count.
 
         Args:
             product (Deposit): The deposit to be priced.
@@ -26,7 +32,7 @@ class DepositPricer(Pricer):
                 access to market data (curves).
 
         Returns:
-            float: The NPV of the deposit.
+            tf.Tensor: float64 NPV of the deposit.
 
         Raises:
             TypeError: If the product is not a Deposit.
@@ -41,22 +47,12 @@ class DepositPricer(Pricer):
         except ValueError as e:
             raise ValueError(f"Unknown Curve: {e}") from e
 
-        day_counter = DayCounter(DayCounterConvention.Actual365)
-        ts = day_counter.year_fraction(Settings.evaluation_date, product.start_date)
-        te = day_counter.year_fraction(Settings.evaluation_date, product.end_date)
-        df_s = self.disc_curve.discount(ts)
-        df_e = self.disc_curve.discount(te)
-
-        start_cashflow = 0.0
-        if ts >= 0.0:
-            start_cashflow = 1.0
-        end_cashflow = 0.0
-        if te > 0.0:
-            yf = product.day_counter.year_fraction(
-                product.start_date, product.end_date
+        npv = tf.constant(0.0, dtype=DTYPE)
+        if product.start_date >= Settings.evaluation_date:
+            npv = npv + product.notional * tf.cast(self.disc_curve.discount(product.start_date), DTYPE)
+        if product.end_date > Settings.evaluation_date:
+            yf = product.day_counter.year_fraction(product.start_date, product.end_date)
+            npv = npv - product.notional * (1.0 + product.rate * yf) * tf.cast(
+                self.disc_curve.discount(product.end_date), DTYPE
             )
-            end_cashflow = 1.0 + product.rate * yf
-        start_cashflow *= product.notional
-        end_cashflow *= product.notional
-
-        return start_cashflow * df_s - end_cashflow * df_e
+        return npv
