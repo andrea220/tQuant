@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Optional
 from enum import Enum
@@ -428,135 +428,6 @@ class MarketEnvironment:
     # Alternative constructors
     # ------------------------------------------------------------------
 
-    @classmethod
-    def from_data_path(
-        cls,
-        evaluation_date: date,
-        data_path: str,
-        calibration_set: str,
-    ) -> "MarketEnvironment":
-        """Build a :class:`MarketEnvironment` from a standardised data folder.
-
-        Reads the four CSV files produced by the MDM data store
-        (``curve.csv``, ``spot.csv``, ``vol.csv``, ``dividends.csv``) and
-        constructs all market objects automatically.
-
-        Expected CSV schemas
-        --------------------
-        ``curve.csv``
-            Columns: ``CURVE_NAME`` (str), ``CURVE_PILLAR`` (date, format
-            ``%d-%m-%Y``), ``CURVE_DATA`` (float, zero-coupon bond prices).
-            Optional column: ``CURRENCY`` (3-letter ISO code; defaults to
-            ``"EUR"`` when absent).
-
-        ``spot.csv``
-            Columns: ``ticker`` (e.g. ``"ISP IM Equity"``), ``currency``,
-            ``spot_price``, ``repo``, ``div_yield``.
-
-        ``vol.csv``
-            Columns: ``ticker``, ``currency``, ``maturity`` (ISO date),
-            ``strike`` (float), ``volatility`` (percent, e.g. 25.0 → 0.25).
-
-        ``dividends.csv``
-            Columns: ``ticker``, ``currency``, ``Ex Date``, ``Declared Date``,
-            ``Amount Per Share``.  ``Payment Date`` is used when present.
-
-        The market keys produced are:
-        - ``IR:<CCY>:<CURVE_NAME>:SPOT`` for each unique curve in ``curve.csv``
-        - ``EQ:<CCY>:<TICKER>:SPOT|REPO|DIVYIELD|VOL|DIV`` for equities
-
-        Args:
-            evaluation_date (date): Pricing / reference date.  The date is
-                also used to derive the dated sub-folder
-                (``YYYYMMDD`` appended to ``data_path``).
-            data_path (str): Base data directory.  The string
-                ``evaluation_date.strftime("%Y%m%d")`` is appended to obtain
-                the dated folder, which must contain ``calibration_set``.
-            calibration_set (str): Sub-directory name inside the dated folder
-                that contains the four CSV files.
-
-        Returns:
-            MarketEnvironment: A fully populated environment ready for pricing.
-
-        Raises:
-            FileNotFoundError: If any of the expected CSV files is missing.
-            ValueError: If the market or market_map structure is invalid.
-        """
-        _dc = DayCounter(DayCounterConvention.Actual365)
-
-        data_path = data_path + evaluation_date.strftime('%Y%m%d')
-        folder    = data_path + "/" + calibration_set
-
-        ir_curve_df = pd.read_csv(f"{folder}/curve.csv")
-        ir_curve_df['CURVE_PILLAR'] = pd.to_datetime(ir_curve_df['CURVE_PILLAR'], format='%d-%m-%Y').dt.date
-        ir_curve_df['CURVE_DATA']   = pd.to_numeric(ir_curve_df['CURVE_DATA'], errors='raise').astype(float)
-        estr_df  = ir_curve_df[ir_curve_df['CURVE_NAME'] == 'ESTR'].copy()
-        eur6m_df = ir_curve_df[ir_curve_df['CURVE_NAME'] == 'EUR6M'].copy()
-
-        eur_estr_curve = RateCurve.from_zcb(
-            evaluation_date,
-            estr_df['CURVE_PILLAR'].to_list(), estr_df['CURVE_DATA'].to_list(),
-            interp='LINEAR',
-            daycounter_convention=DayCounterConvention.Actual365,
-        )
-        eur_6m_curve = RateCurve.from_zcb(
-            evaluation_date,
-            eur6m_df['CURVE_PILLAR'].to_list(), eur6m_df['CURVE_DATA'].to_list(),
-            interp='LINEAR',
-            daycounter_convention=DayCounterConvention.Actual365,
-        )
-
-        spot_df = pd.read_csv(f"{folder}/spot.csv")
-        spot_df.fillna(0, inplace=True)
-
-        vol_df = pd.read_csv(f"{folder}/vol.csv")
-        vol_df['maturity'] = pd.to_datetime(vol_df['maturity']).dt.date
-
-        dividend_df = pd.read_csv(f"{folder}/dividends.csv")
-        dividend_df['Ex Date']       = pd.to_datetime(dividend_df['Ex Date']).dt.date
-        dividend_df['Declared Date'] = pd.to_datetime(dividend_df['Declared Date']).dt.date
-
-        market: dict[str, Any] = {
-            "IR:EUR:ESTR:SPOT": eur_estr_curve,
-            "IR:EUR:6M:SPOT":   eur_6m_curve,
-        }
-
-        for _, row in spot_df.iterrows():
-            ticker = row['ticker'].split()[0]
-            ccy    = row['currency']
-            market[f"EQ:{ccy}:{ticker}:SPOT"]     = float(row['spot_price'])
-            market[f"EQ:{ccy}:{ticker}:REPO"]     = float(row['repo'])
-            market[f"EQ:{ccy}:{ticker}:DIVYIELD"] = float(row['div_yield'])
-
-        for full_ticker, grp in vol_df.groupby('ticker'):
-            ticker    = full_ticker.split()[0]
-            ccy       = grp['currency'].iloc[0]
-            strikes   = sorted(grp['strike'].unique().tolist())
-            mat_dates = sorted(grp['maturity'].unique().tolist())
-            tenors    = [_dc.year_fraction(evaluation_date, m) for m in mat_dates]
-            pivot = (
-                grp.pivot(index='maturity', columns='strike', values='volatility') / 100.0
-            ).reindex(index=mat_dates, columns=strikes)
-            market[f"EQ:{ccy}:{ticker}:VOL"] = VolatilitySurface(
-                reference_date=evaluation_date,
-                calendar=None,
-                daycounter=_dc,
-                strike=strikes,
-                maturity=tenors,
-                volatility_matrix=pivot.values.tolist(),
-            )
-
-        for full_ticker, grp in dividend_df.groupby('ticker'):
-            ticker = full_ticker.split()[0]
-            ccy    = grp['currency'].iloc[0]
-            market[f"EQ:{ccy}:{ticker}:DIV"] = DividendCurve.from_dataframe(
-                reference_date=evaluation_date,
-                df=grp,
-                daycounter_convention=DayCounterConvention.Actual365,
-            )
-
-        return cls(market)
-
     MARKET_DATA_FILES = (
         "ir_curves.csv", "fx_spot.csv", "eq_spot.csv", "eq_vol.csv", "eq_dividends.csv", "correlations.csv",
     )
@@ -565,7 +436,7 @@ class MarketEnvironment:
     def from_folder(
         cls,
         root: str | os.PathLike,
-        evaluation_date: date,
+        evaluation_date: Optional[date] = None,
         calibration_set: Optional[str] = None,
     ) -> "MarketEnvironment":
         """Build a :class:`MarketEnvironment` from a ``marketdata/`` snapshot.
@@ -590,13 +461,15 @@ class MarketEnvironment:
 
         Args:
             root (str | os.PathLike): Base folder (e.g. ``"marketdata"``).
-            evaluation_date (date): Snapshot date (folder ``yyyymmdd``) and curve
-                reference date.
+            evaluation_date (date, optional): Snapshot date (folder ``yyyymmdd``)
+                and curve reference date; ``None`` takes the latest date folder.
             calibration_set (str, optional): Snapshot folder inside the date
                 folder (e.g. ``"1516"``); ``None`` takes the latest one.
 
         Returns:
-            MarketEnvironment: The populated environment.
+            MarketEnvironment: The populated environment; the snapshot read is in
+                ``evaluation_date`` and ``calibration_set`` (set
+                ``tq.Settings.evaluation_date`` from it before pricing).
 
         Raises:
             FileNotFoundError: If the snapshot folder does not exist or contains
@@ -604,6 +477,12 @@ class MarketEnvironment:
             ValueError: If the data are inconsistent (unknown quote type, an
                 incomplete vol grid, ...).
         """
+        if evaluation_date is None:
+            days = sorted(d.name for d in Path(root).iterdir()
+                          if d.is_dir() and d.name.isdigit() and len(d.name) == 8) if Path(root).is_dir() else []
+            if not days:
+                raise FileNotFoundError(f"No yyyymmdd snapshot folder in '{root}'")
+            evaluation_date = datetime.strptime(days[-1], "%Y%m%d").date()
         day_folder = Path(root) / evaluation_date.strftime("%Y%m%d")
         if calibration_set is None:
             sets = sorted(d.name for d in day_folder.iterdir() if d.is_dir()) if day_folder.is_dir() else []
@@ -695,7 +574,10 @@ class MarketEnvironment:
                 correlations[["factor_1", "factor_2", "corr"]].itertuples(index=False, name=None)
             )
 
-        return cls(market)
+        env = cls(market)
+        env.evaluation_date = evaluation_date
+        env.calibration_set = calibration_set
+        return env
 
     # ------------------------------------------------------------------
     # Interest-rate curves

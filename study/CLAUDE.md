@@ -30,7 +30,9 @@ Everything is in **English**.
   Only the key formula where it helps; no prose recaps.
 - Structure: title + one line on scope and related Q/A chapter -> imports -> market -> one
   section per concept (compute, print or plot) -> 1-3 short exercises.
-- Use the synthetic market (`examples/market_data.build_market_environment`) so it runs anywhere.
+- Use the synthetic market in `marketdata/` (`tq.MarketEnvironment.from_folder(REPO / "marketdata")`, latest
+  snapshot; set `tq.Settings.evaluation_date = mkt.evaluation_date`) so it runs anywhere. Strikes and spot ranges
+  as a fraction of spot, not hardcoded levels (snapshots change).
 - Real tQuant API only: check the code, do not invent methods. Reuse `examples/` logic, don't copy whole scripts.
 - Small, self-contained cells; plots inline (no `savefig`, no `matplotlib.use("Agg")`).
 - Must run top to bottom (Restart & Run All) in the env with `tensorflow` + `pip install -e .`.

@@ -1,8 +1,7 @@
 """
 2_options.py -- Prezzatura di vanilla options (European BS + American BS93).
 
-SOURCE_MKT_DATA = 'Real'      -> MDM datastore
-SOURCE_MKT_DATA = 'Generated' -> market_data.py (dati sintetici)
+Market data: snapshot in marketdata/ (latest by default, see SNAPSHOT_DATE / CALIBRATION_SET).
 """
 
 import io
@@ -19,23 +18,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tensorflow as tf
 
 import tensorquant as tq
-from market_data import EVALUATION_DATE as _EVAL_DATE_GEN, build_market_environment
 
 # ══════════════════════════════════════════════════════════════════════════════
 # INPUT DI PRICING
 # ══════════════════════════════════════════════════════════════════════════════
 
-SOURCE_MKT_DATA = "Real"      # 'Real' | 'Generated'
-TICKER          = "SX5E"      # Real: ISP | SX5E | AMZN | BABA
-                               # Generated: TICKER1 | TICKER2
+TICKER          = "TICKER1"   # TICKER1-30 EUR | TICKER31-40 GBP | TICKER41-50 USD
 
 MONEYNESS       = 1.00        # K = MONEYNESS * spot  (es. 0.90 OTM put, 1.10 OTM call)
 MATURITY_YEARS  = 1.0         # scadenza in anni
 
-# Parametri per SOURCE_MKT_DATA = 'Real'
-EVALUATION_DATE_REAL = date(2026, 5, 26)
-DATA_PATH            = "W:/Derivative/EquityDerivatives/AndreaC/dev/mdm/datastore/"
-CALIBRATION_SET      = "142910"
+# Market data: snapshot in marketdata/ (MarketEnvironment.from_folder)
+MARKET_DATA     = Path(__file__).resolve().parents[1] / "marketdata"
+SNAPSHOT_DATE   = None        # date(yyyy, m, d) | None = latest snapshot
+CALIBRATION_SET = None        # e.g. "1516"      | None = latest of the day
 
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -45,27 +41,16 @@ sep = "-" * 60
 
 
 def load_market() -> tuple[tq.MarketEnvironment, date]:
-    if SOURCE_MKT_DATA == "Real":
-        eval_date = EVALUATION_DATE_REAL
-        tq.Settings.evaluation_date = eval_date
-        mkt = tq.MarketEnvironment.from_data_path(
-            evaluation_date=eval_date,
-            data_path=DATA_PATH,
-            calibration_set=CALIBRATION_SET,
-        )
-    elif SOURCE_MKT_DATA == "Generated":
-        eval_date = _EVAL_DATE_GEN
-        tq.Settings.evaluation_date = eval_date
-        mkt = build_market_environment(eval_date)
-    else:
-        raise ValueError(f"SOURCE_MKT_DATA non valido: '{SOURCE_MKT_DATA}'")
-    return mkt, eval_date
+    mkt = tq.MarketEnvironment.from_folder(MARKET_DATA, SNAPSHOT_DATE, CALIBRATION_SET)
+    tq.Settings.evaluation_date = mkt.evaluation_date
+    return mkt, mkt.evaluation_date
 
 
 def main() -> None:
     tf.keras.backend.set_floatx("float64")
 
     market_env, EVALUATION_DATE = load_market()
+    snapshot = f"marketdata/{EVALUATION_DATE:%Y%m%d}/{market_env.calibration_set}"
 
     ccy    = market_env.get_currency(TICKER)
     spot   = float(market_env.get_eq_spot(TICKER, ccy=ccy))
@@ -76,7 +61,7 @@ def main() -> None:
     print(f"\n{SEP}")
     print(f"  INPUTS")
     print(f"{SEP}")
-    print(f"  Source      : {SOURCE_MKT_DATA}")
+    print(f"  Snapshot    : {snapshot}")
     print(f"  Ticker      : {TICKER} ({ccy.name})")
     print(f"  Eval date   : {EVALUATION_DATE}")
     print(f"  Spot        : {spot:.4f}")

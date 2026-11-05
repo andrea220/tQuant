@@ -1,9 +1,10 @@
 """
-Local Volatility Model — real market data from MDM datastore.
+Local Volatility Model — market data from a marketdata/ snapshot.
 
 Steps:
-  1. Load MarketEnvironment from a MDM datastore folder.
-  2. Extract spot, implied vol surface, discount curve, div yield.
+  1. Load MarketEnvironment from marketdata/ (MarketEnvironment.from_folder).
+  2. Extract spot, implied vol surface, discount curve, div yield (DIVYIELD, or the
+     continuous yield equivalent to the discrete dividends up to the last vol maturity).
   3. Calibrate LocalVolatilityModel (Dupire).
   4. Print calibration summary + MC sanity checks.
   5. Save plots to out/.
@@ -12,7 +13,7 @@ Steps:
 import io
 import os
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
@@ -31,13 +32,12 @@ import tensorquant as tq
 from tensorquant.models.localvolatility import LocalVolatilityModel
 
 # ----------------------------------------------------------------
-# Configuration — edit these to point to your datastore snapshot
+# Configuration
 # ----------------------------------------------------------------
-EVALUATION_DATE  = date(2026, 5, 7)
-DATA_PATH        = "W:/Derivative/EquityDerivatives/AndreaC/dev/mdm/datastore/"
-CALIBRATION_SET  = "152933"
-TICKER           = "SX5E"
-CCY              = tq.Currency.EUR
+MARKET_DATA      = Path(__file__).resolve().parents[1] / "marketdata"
+SNAPSHOT_DATE    = None        # date(yyyy, m, d) | None = latest snapshot
+CALIBRATION_SET  = None        # e.g. "1516"      | None = latest of the day
+TICKER           = "TICKER1"   # TICKER1-30 EUR | TICKER31-40 GBP | TICKER41-50 USD
 OUT_DIR          = Path(__file__).resolve().parent / "out"
 # ----------------------------------------------------------------
 
@@ -69,18 +69,16 @@ def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # ---- Load market environment ----
+    market_env = tq.MarketEnvironment.from_folder(MARKET_DATA, SNAPSHOT_DATE, CALIBRATION_SET)
+    EVALUATION_DATE = market_env.evaluation_date
     tq.Settings.evaluation_date = EVALUATION_DATE
-    market_env = tq.MarketEnvironment.from_data_path(
-        evaluation_date=EVALUATION_DATE,
-        data_path=DATA_PATH,
-        calibration_set=CALIBRATION_SET,
-    )
+    CCY = market_env.get_currency(TICKER)
+    equity = market_env.get_equity(TICKER, ccy=CCY)
 
     # ---- Extract market data ----
     spot       = tf.cast(market_env.get_eq_spot(TICKER, ccy=CCY), tf.float32)
     vol_surface = market_env.get_eq_vol_surface(TICKER, ccy=CCY)
     disc_curve  = market_env.get_ir_curve(CCY)
-    q_raw       = market_env.get_eq_div_yield(TICKER, ccy=CCY)
 
     T_grid    = tf.constant(vol_surface.maturity,          dtype=tf.float32)
     K_grid    = tf.constant(vol_surface.strike,            dtype=tf.float32)
@@ -88,7 +86,12 @@ def main() -> None:
 
     T_max = float(T_grid[-1].numpy())
     r     = tf.cast(disc_curve.zero_rate(T_max), tf.float32)
-    q     = tf.constant(float(q_raw or 0.0),                 dtype=tf.float32)
+    if equity.dividend_model == "discrete":
+        T_max_date = EVALUATION_DATE + timedelta(days=int(round(T_max * 365)))
+        q_value = float(equity.implied_div_yield(T_max_date))
+    else:
+        q_value = float(equity.div_yield) if equity.div_yield is not None else 0.0
+    q     = tf.constant(q_value,                             dtype=tf.float32)
     S0    = float(spot.numpy())
 
     nT, nK = T_grid.shape[0], K_grid.shape[0]

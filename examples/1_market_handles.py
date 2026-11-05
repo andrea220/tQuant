@@ -1,8 +1,7 @@
 """
 1_market_handles.py -- MarketEnvironment: step by step.
 
-SOURCE_MKT_DATA = 'Real'      -> MDM datastore
-SOURCE_MKT_DATA = 'Generated' -> market_data.py (dati sintetici)
+Market data: snapshot in marketdata/ (latest by default, see SNAPSHOT_DATE / CALIBRATION_SET).
 """
 
 import io
@@ -22,15 +21,15 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import tensorquant as tq
-from market_data import EVALUATION_DATE as _EVAL_DATE_GEN, build_market_environment
 
 # ── Configurazione ─────────────────────────────────────────────────────────────
 
-SOURCE_MKT_DATA = "Real"   # 'Real' | 'Generated'
 
-EVALUATION_DATE_REAL = date(2026, 5, 26)
-DATA_PATH            = "W:/Derivative/EquityDerivatives/AndreaC/dev/mdm/datastore/"
-CALIBRATION_SET      = "140226"
+# Market data: snapshot in marketdata/ (MarketEnvironment.from_folder)
+MARKET_DATA     = Path(__file__).resolve().parents[1] / "marketdata"
+SNAPSHOT_DATE   = None        # date(yyyy, m, d) | None = latest snapshot
+CALIBRATION_SET = None        # e.g. "1516"      | None = latest of the day
+TICKERS         = ["TICKER1", "TICKER31", "TICKER41"]   # shown: one per currency (EUR, GBP, USD)
 
 OUT_DIR = Path(__file__).resolve().parent / "out"
 
@@ -45,23 +44,9 @@ def section(title: str) -> None:
 # ── Caricamento market ─────────────────────────────────────────────────────────
 
 def load_market() -> tuple[tq.MarketEnvironment, date]:
-    if SOURCE_MKT_DATA == "Real":
-        eval_date  = EVALUATION_DATE_REAL
-        tq.Settings.evaluation_date = eval_date
-        mkt = tq.MarketEnvironment.from_data_path(
-            evaluation_date=eval_date,
-            data_path=DATA_PATH,
-            calibration_set=CALIBRATION_SET,
-        )
-        print(f"[Real] {DATA_PATH}{eval_date.strftime('%Y%m%d')}/{CALIBRATION_SET}")
-    elif SOURCE_MKT_DATA == "Generated":
-        eval_date  = _EVAL_DATE_GEN
-        tq.Settings.evaluation_date = eval_date
-        mkt = build_market_environment(eval_date)
-        print(f"[Generated] market_data.py  (eval date: {eval_date})")
-    else:
-        raise ValueError(f"SOURCE_MKT_DATA deve essere 'Real' o 'Generated', ricevuto: '{SOURCE_MKT_DATA}'")
-    return mkt, eval_date
+    mkt = tq.MarketEnvironment.from_folder(MARKET_DATA, SNAPSHOT_DATE, CALIBRATION_SET)
+    tq.Settings.evaluation_date = mkt.evaluation_date
+    return mkt, mkt.evaluation_date
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -70,11 +55,16 @@ def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     market_env, EVALUATION_DATE = load_market()
+    snapshot = f"marketdata/{EVALUATION_DATE:%Y%m%d}/{market_env.calibration_set}"
 
     print(f"Evaluation date : {EVALUATION_DATE}")
-    print(f"Market keys     : {len(market_env._market)}")
-    for k in sorted(market_env._market):
-        print(f"  {k:<38s}  {type(market_env._market[k]).__name__}")
+    factors = market_env.risk_factors()
+    kinds = {}
+    for k in factors:
+        kind = f"{k.split(':')[0]}:{k.split(':')[3]}"
+        kinds[kind] = kinds.get(kind, 0) + 1
+    print(f"Snapshot        : {snapshot}")
+    print("Risk factors    : " + ", ".join(f"{k} x{n}" for k, n in sorted(kinds.items())))
 
     # =========================================================================
     # Rate Curves
@@ -83,15 +73,14 @@ def main() -> None:
 
     query_pillars = [0.25, 0.50, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0]
 
-    ir_tickers = [
-        k.split(":")[2]
-        for k in sorted(market_env._market)
-        if k.startswith("IR:EUR:") and k.endswith(":SPOT")
+    ir_curves = [  # (Currency, curve name) for every curve in the snapshot
+        (tq.Currency[k.split(":")[1]], k.split(":")[2])
+        for k in factors if k.startswith("IR:")
     ]
 
-    for ticker in ir_tickers:
-        curve = market_env.get_ir_curve(tq.Currency.EUR, ticker=ticker)
-        print(f"\n  IR:EUR:{ticker}  (ref: {curve.reference_date}  "
+    for ccy, ticker in ir_curves:
+        curve = market_env.get_ir_curve(ccy, ticker=ticker)
+        print(f"\n  IR:{ccy.name}:{ticker}  (ref: {curve.reference_date}  "
               f"convention: {curve.daycounter_convention.name}  "
               f"nodi: {len(curve.nodes)})")
 
@@ -110,23 +99,23 @@ def main() -> None:
     # =========================================================================
     t_plt  = np.linspace(0.25, 10.0, 200)
     t_fwd  = np.linspace(0.25, 9.0,  180)
-    colors = plt.cm.tab10(np.linspace(0, 0.4, len(ir_tickers)))
+    colors = plt.cm.tab10(np.linspace(0, 0.4, len(ir_curves)))
 
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-    fig.suptitle(f"Rate Curves  [{EVALUATION_DATE}]  [{SOURCE_MKT_DATA}]",
+    fig.suptitle(f"Rate Curves  [{EVALUATION_DATE}]  [{snapshot}]",
                  fontsize=13, fontweight="bold")
 
     ax_zr, ax_df, ax_fwd = axes
 
-    for ticker, color in zip(ir_tickers, colors):
-        c  = market_env.get_ir_curve(tq.Currency.EUR, ticker=ticker)
+    for (ccy, ticker), color in zip(ir_curves, colors):
+        c  = market_env.get_ir_curve(ccy, ticker=ticker)
         zr = [-np.log(float(c.discount(t))) / t * 100 for t in t_plt]
         df = [float(c.discount(t)) for t in t_plt]
         fr = [float(c.forward_rate(t, t + 1.0)) * 100 for t in t_fwd]
 
-        ax_zr.plot(t_plt, zr, color=color, lw=1.8, label=f"EUR {ticker}")
-        ax_df.plot(t_plt, df, color=color, lw=1.8, label=f"EUR {ticker}")
-        ax_fwd.plot(t_fwd, fr, color=color, lw=1.8, label=f"EUR {ticker}")
+        ax_zr.plot(t_plt, zr, color=color, lw=1.8, label=f"{ccy.name} {ticker}")
+        ax_df.plot(t_plt, df, color=color, lw=1.8, label=f"{ccy.name} {ticker}")
+        ax_fwd.plot(t_fwd, fr, color=color, lw=1.8, label=f"{ccy.name} {ticker}")
 
         # scatter pillar nodes
         for d, r in c.nodes:
@@ -157,11 +146,7 @@ def main() -> None:
     section("DISCRETE DIVIDEND CURVES")
 
     # (ccy_str, ticker) per tutti gli EQ che hanno una DividendCurve
-    div_instruments = [
-        (k.split(":")[1], k.split(":")[2])
-        for k in sorted(market_env._market)
-        if k.startswith("EQ:") and k.endswith(":DIV")
-    ]
+    div_instruments = [(market_env.get_currency(t).name, t) for t in TICKERS]
 
     for ccy_str, ticker in div_instruments:
         ccy       = tq.Currency[ccy_str]
@@ -179,7 +164,7 @@ def main() -> None:
     palette = plt.cm.tab10(np.linspace(0, 1, len(div_instruments)))
 
     fig2, ax_div = plt.subplots(figsize=(12, 4))
-    fig2.suptitle(f"Discrete Dividends (% spot)  [{EVALUATION_DATE}]  [{SOURCE_MKT_DATA}]",
+    fig2.suptitle(f"Discrete Dividends (% spot)  [{EVALUATION_DATE}]  [{snapshot}]",
                   fontsize=13, fontweight="bold")
 
     for (ccy_str, ticker), color in zip(div_instruments, palette):
@@ -208,11 +193,7 @@ def main() -> None:
     # =========================================================================
     section("VOLATILITY SURFACES")
 
-    vol_instruments = [
-        (k.split(":")[1], k.split(":")[2])
-        for k in sorted(market_env._market)
-        if k.startswith("EQ:") and k.endswith(":VOL")
-    ]
+    vol_instruments = [(market_env.get_currency(t).name, t) for t in TICKERS]
 
     for ccy_str, ticker in vol_instruments:
         ccy  = tq.Currency[ccy_str]
@@ -244,7 +225,7 @@ def main() -> None:
 
     fig3, axes3 = plt.subplots(nrows, ncols, figsize=(5 * ncols, 4 * nrows),
                                 squeeze=False)
-    fig3.suptitle(f"Implied Volatility Smiles  [{EVALUATION_DATE}]  [{SOURCE_MKT_DATA}]",
+    fig3.suptitle(f"Implied Volatility Smiles  [{EVALUATION_DATE}]  [{snapshot}]",
                   fontsize=13, fontweight="bold")
 
     for idx, (ccy_str, ticker) in enumerate(vol_instruments):

@@ -19,8 +19,9 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 
 - Venv: `C:\dev\virtual_envs\tqenv` (Python 3.12), set up with `pip install -r requirements.txt -e .`.
 - Tests: `python -m unittest discover -s tests -v`
-- Examples: `python examples/<script>.py` — most read `SOURCE_MKT_DATA`: `'Generated'` uses the synthetic
-  market in `examples/market_data.py`; `'Real'` needs the MDM datastore on `W:/`, which **no longer exists** (do not look for it; see roadmap step 5).
+- Examples: `python examples/<script>.py`. Examples 1-4 and `local_vol_mdm` load the latest `marketdata/` snapshot
+  (`SNAPSHOT_DATE` / `CALIBRATION_SET` at the top select another one). The MDM datastore on `W:/` **no longer
+  exists** (do not look for it).
 - Set `TF_ENABLE_ONEDNN_OPTS=0` for reproducible numbers.
 
 ## Module map
@@ -59,7 +60,7 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
   `get_eq_dividends`, `get_currency`, `get_fx_spot(base, quote)` (direct, inverse or cross via a common
   currency; only stored pairs are risk factors), `get_correlation_matrix`, `get_correlation(names)`. Build from a snapshot with
   `MarketEnvironment.from_folder("marketdata", evaluation_date, calibration_set=None)` (latest snapshot of the day
-  when `None`); `from_data_path(...)` reads the old MDM layout (deprecated, `W:/` gone).
+  when `None`).
 - **Equity underlying**: `market_env.get_equity(ticker)` returns an `Equity` **view** (references, no copies) with
   spot, repo, dividends, vol surface and the currency discount curve; `forward(T)`, `pv_dividends(T)`,
   `implied_div_yield(T)`, `risk_factors()`, `summary(T)`. Dividend model from the data: `DIV` present → discrete
@@ -137,7 +138,7 @@ tests green.
       `sqrt(2)` in `_norm_cdf`); no pricer-local market variables; `examples/3_options.py` greeks via AAD;
       example `study/notebooks/04_black_scholes.ipynb`.
 - [ ] `DividendCurve` amounts as risk factors.
-- [ ] Examples 2-4 default to real tickers (ISP/SX5E): use `TICKER1` with `'Generated'`.
+- [x] Examples 2-4 default to `TICKER1` (marketdata/ snapshot).
 - [x] `Option.strike` is a float64 `tf.Variable` (was float32: strikes like 389.24 lost ~1e-5, parity error ~1e-5).
 
 ### 3. Interest rates (analytic pricers)
@@ -161,10 +162,13 @@ tests green.
 - [ ] `SwapExposureGenerator` passes a plain `dict` to `SwapPricer.price` (expects a `MarketEnvironment`): likely broken.
 - [ ] Unused, not exported: `pricers/localvolmc.py`, `models/localvol.py` (superseded by `models/localvolatility.py`).
 - [ ] `examples/local_vol.py` draws `tf.random.normal` before `tf.random.set_seed` (path stats not reproducible).
+- [ ] `LocalVolatilityModel` on the marketdata/ snapshot (`local_vol_mdm`, TICKER1): Dupire reprice errors grow
+      with T (up to ~30 at 5Y) and MC ATM vol is ~+4 vol points off at 5Y. Suspects: flat r and q (discrete
+      dividends as one equivalent yield), strong short-dated skew in the synthetic surface. Review in this step.
 
 ### 5. Market data I/O
 
-- [x] New market data layout, replacing the MDM CSV layout read by `MarketEnvironment.from_data_path`
+- [x] New market data layout, replacing the old MDM CSV layout (`from_data_path`, removed)
       (`curve.csv`, `spot.csv`, `vol.csv`, `dividends.csv`). Long-format CSV, ISO dates, decimal units, snake_case:
       ```
       marketdata/                 (repo root; synthetic data, committed)
@@ -183,11 +187,14 @@ tests green.
       Conventions come from the data (no hardcoded ESTR/EUR6M, day count, interp); market keys derived from the
       columns. Reader `MarketEnvironment.from_folder` done (default overnight curve per ccy: ESTR, SOFR, SONIA);
       writer `to_folder` not yet. Recheck pandas 3 here.
-- [ ] The `W:/` MDM datastore no longer exists: `from_data_path` and the `'Real'` branch of the examples
-      (`1_market_handles`, `2_forwards`, `3_options`, `4_montecarlo`, `local_vol_mdm`) to be replaced by `marketdata/`.
+- [x] Examples (`1_market_handles`, `2_forwards`, `3_options`, `4_montecarlo`, `local_vol_mdm`) and `study/`
+      notebooks 01-04 load `marketdata/` via `from_folder` (no date: latest snapshot; `env.evaluation_date`).
+- [x] Removed `examples/market_data.py` and `MarketEnvironment.from_data_path` (old MDM layout).
 - [x] FX spots and `CorrelationMatrix` in `MarketEnvironment` (keys, validation, risk factors, accessors).
 - [ ] Unit tests for FX (`get_fx_spot` inverse/cross and gradients) and `CorrelationMatrix` (validation,
       `submatrix`, `cholesky`): postponed, only checked by a script so far.
 - [ ] FX forward from the curves (`S * DF_base / DF_quote`); FX vol surfaces.
-- [ ] Synthetic market data generation modules in the library (today only `examples/market_data.py`), usable by
+- [ ] Synthetic curves: the 5bp random noise on pillar zero rates gives jagged instantaneous forwards (e.g. SONIA
+      4.0% -> 4.8% between 2Y and 3Y) with linear interpolation on zero rates. To review.
+- [ ] Synthetic market data generation modules in the library (today `marketdata/generate_synthetic.py`), usable by
       tests, examples and `study/` notebooks.
