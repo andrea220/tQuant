@@ -98,7 +98,7 @@ Run examples/notebooks only when changing them or when asked.
 |---|---|---|
 | `MarketEnvironment` accessors | `tests/test_marketenvironment.py` | spot, vol, repo, div yield, dividends, currency, default curve |
 | Risk factors | `tests/test_risk_factors.py` | float64 variables in curves/surfaces/EQ scalars, `risk_factors()`, gradients vs finite differences, bilinear weights |
-| `RateCurve` / `FlatCurve` / `DividendCurve` | `tests/test_rate_curve.py` | discount/zero/forward vs numpy reference, `from_zcb` round trip, PV dividends, float64 tensor outputs |
+| `RateCurve` / `FlatCurve` / `DividendCurve` | `tests/test_rate_curve.py` | discount/zero/forward/inst_fwd vs numpy reference, `from_zcb` round trip, PV dividends, float64 tensor outputs, inst_fwd gradient vs finite differences, Hull-White values that use inst_fwd (pinned) |
 | `timehandles/` | — | — |
 | `numericalhandles/dtypes.py` | `tests/test_dtypes.py` | `DTYPE`, `as_variable` (reuse, casts, no float32 round trip) |
 | `numericalhandles/` (interpolation, newton) | — | — |
@@ -116,7 +116,7 @@ unit tests for the area added first (see Testing), then all tests green.
 - [x] dtype policy for market objects: float64 variables and float64 tensor outputs (`discount(0)` no longer returns `int`).
 - [ ] dtype policy in pricers/models: float64 for analytic pricers, MC may stay float32 via `tf.cast`; today most
       are still `tf.float32` with ad-hoc casts → fixed pricer by pricer in the equity and interest-rate steps.
-- [ ] `RateCurve.inst_fwd` uses `math.log`, which converts to float and breaks the gradient.
+- [x] `RateCurve.inst_fwd` returns a differentiable float64 tensor (was `math.log` → float, no gradient).
 - [ ] `StochasticProcess.evolve(t0, x0, dt, dw)` vs subclasses `evolve(t_grid, dw)`; GBM `drift(dt)` differs too.
 - [ ] `PricerAssignment` uses `type(...) ==` and covers only Deposit/Ois/Fra/Swap.
 - [ ] `pandas` capped `<3` in `setup.py` until `MarketEnvironment.from_data_path` is checked on pandas 3.
@@ -138,5 +138,6 @@ unit tests for the area added first (see Testing), then all tests green.
 - [ ] `SwapExposureGenerator` passes a plain `dict` to `SwapPricer.price` (expects a `MarketEnvironment`): likely broken.
 - [ ] Swap/OIS/FRA/Deposit pricers: add tests that gradients reach `RateCurve.variables`.
 - [ ] `instruments/capfloor.py` is not exported and has no pricer.
+- [ ] `HullWhiteProcess.x0` calls `.numpy()` on the numpy value returned by `OrnsteinUhlenbeckProcess.x0`: `AttributeError`.
 - [ ] `examples/swap_pricing.py` never sets `tq.Settings.evaluation_date` (defaults to `date.today()`), so it fails
       once past fixings are needed.

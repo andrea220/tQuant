@@ -1,5 +1,5 @@
 from tensorflow import Tensor, Variable, constant, exp
-from math import log
+from tensorflow.math import log as tf_log
 import numpy
 from datetime import date, timedelta
 from typing import Union, Optional
@@ -321,18 +321,21 @@ class RateCurve:
 
         return (df1 / df2 - 1) / tau
 
-    def inst_fwd(self, t: float):
+    def inst_fwd(self, t: float) -> Tensor:
         """Calculates the instantaneous forward rate at a specific time.
+
+        Central difference of ``-log P(0, t)`` with step ``dt = 0.01``.
 
         Args:
             t (float): The time (in year fractions) to calculate the instantaneous forward rate.
 
         Returns:
-            float: The instantaneous forward rate.
+            tf.Tensor: Scalar float64 instantaneous forward rate, differentiable with
+                respect to :attr:`variables`.
         """
         # time-step needed for differentiation
         dt = 0.01
-        expr = -(log(self.discount(t + dt)) - log(self.discount(t - dt))) / (2 * dt)
+        expr = -(tf_log(self.discount(t + dt)) - tf_log(self.discount(t - dt))) / (2 * dt)
         return expr
 
     def _set_rates(self, rates: list[float]) -> None:

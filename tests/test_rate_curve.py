@@ -107,6 +107,64 @@ class TestRateCurveDtypes(unittest.TestCase):
         self.assertTrue(all(g is None for g in grads))
 
 
+class TestInstFwd(unittest.TestCase):
+    """inst_fwd: central difference of -log P with dt = 0.01."""
+
+    def setUp(self):
+        self.curve = make_curve()
+
+    def test_exact_inside_segments(self):
+        # Inside a segment -log P(t) = r(t)·t is quadratic, so the central difference
+        # is exact: f(t) = r(t) + t·r'(t).
+        cases = {
+            0.5: 0.020 + (0.002 / 0.75) * 0.25 + 0.5 * (0.002 / 0.75),
+            1.5: 0.0225 + 1.5 * 0.001,
+            3.0: 0.023 + (0.002 / 3.0) * 1.0 + 3.0 * (0.002 / 3.0),
+            7.0: 0.025,  # flat extrapolation
+            0.0: 0.020,  # flat extrapolation on the left
+        }
+        for t, expected in cases.items():
+            with self.subTest(t=t):
+                self.assertAlmostEqual(float(self.curve.inst_fwd(t)), expected, places=12)
+
+    def test_dtype(self):
+        f = self.curve.inst_fwd(1.5)
+        self.assertTrue(tf.is_tensor(f), f"expected a tensor, got {type(f).__name__}")
+        self.assertEqual(f.dtype, tf.float64)
+
+    def test_gradient_matches_finite_difference(self):
+        t, h = 1.5, 1e-6
+        with tf.GradientTape() as tape:
+            f = self.curve.inst_fwd(t)
+        grads = [0.0 if g is None else float(g) for g in tape.gradient(f, self.curve.variables)]
+        self.assertTrue(any(g != 0.0 for g in grads))
+        for i, var in enumerate(self.curve.variables):
+            base = float(var)
+            var.assign(base + h)
+            up = float(self.curve.inst_fwd(t))
+            var.assign(base - h)
+            dn = float(self.curve.inst_fwd(t))
+            var.assign(base)
+            self.assertAlmostEqual(grads[i], (up - dn) / (2 * h), places=6)
+
+
+class TestHullWhiteUsesInstFwd(unittest.TestCase):
+    """Hull-White consumes inst_fwd: values pinned before inst_fwd returned a tensor."""
+
+    def setUp(self):
+        from tensorquant.models.hullwhite import HullWhiteProcess
+
+        self.hw = HullWhiteProcess(make_curve(), 0.03, 0.01)
+
+    def test_pinned_values(self):
+        self.assertAlmostEqual(float(self.hw._process.x0), 0.02000000000000225, places=12)
+        self.assertAlmostEqual(float(self.hw.alpha(1.0)), 0.023873525915961924, places=12)
+        A, B = self.hw.A_B(1.0, 3.0)
+        self.assertAlmostEqual(float(A), 0.9970700983024687, places=12)
+        self.assertAlmostEqual(float(B), 1.941182213858376, places=12)
+        self.assertAlmostEqual(float(self.hw.zero_bond(1.0, 3.0, 0.021)), 0.9572420164457541, places=12)
+
+
 class TestDividendCurvePV(unittest.TestCase):
     def setUp(self):
         self.curve = make_curve()
