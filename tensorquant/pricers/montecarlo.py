@@ -4,243 +4,153 @@ import tensorflow as tf
 from .pricer import Pricer
 from ..instruments.autocallable import AutocallableOption
 from ..markethandles.marketenvironment import MarketEnvironment
-from ..models.stochasticprocess import StochasticProcess
-from ..timehandles.daycounter import DayCounter, DayCounterConvention
-from ..timehandles.schedule import ScheduleGenerator
-from ..timehandles.targetcalendar import TARGET
-from ..timehandles.utils import Settings, BusinessDayConvention, TimeUnit
+from ..models.localvolatility import LocalVolatilityModel
+from ..numericalhandles.dtypes import DTYPE
+from ..timehandles.utils import Settings
 
 
 class AutocallableMCPricer(Pricer):
-    """Monte Carlo pricer for :class:`AutocallableOption` products.
+    """Monte Carlo pricer for :class:`AutocallableOption` (phoenix: conditional coupons with optional
+    memory, autocall, capital-at-risk put at maturity), from the **investor's side**:
 
-    Simulates equity paths via a :class:`StochasticProcess` model and evaluates
-    the path-wise payoff of the autocallable phoenix structure:
-    conditional coupons, memory, autocall trigger, and capital-at-risk put at
-    maturity.
+    ``NPV = notional * E[ sum_i coupon_i P(0, pay_i) - put P(0, T) ]``,
+    ``put = participation * max(K - S_T, 0) / K`` if ``S_T <= payoff barrier`` and not called.
 
-    The price stored on the product via :meth:`Pricer.price` is expressed in
-    **currency units** (notional-adjusted NPV).
+    The model is built from the market at every pricing call
+    (``model.from_equity(market_env.get_equity(product.underlying), maturity, strike)``),
+    so one ``pricer.tape.gradient(product.price, market_env.risk_factors())`` gives the greeks.
+    Paths are simulated (stateless seed) on the union of the future fixing dates and a uniform
+    grid of step ``max_time_step``, with the vol-surface day count.
+
+    Coupon, autocall and put barriers are digitals: their pathwise derivative is zero, so AAD would
+    miss most of delta and vega. With ``barrier_smoothing = eps > 0`` every indicator
+    ``1{S >= B}`` becomes ``sigmoid((S - B) / (eps K))`` (eps = 1% of the strike by default):
+    a small, controlled price bias for smooth, differentiable greeks. ``eps = 0`` gives the
+    exact (hard) payoff.
 
     Args:
-        model: Calibrated :class:`StochasticProcess` (e.g.
-            :class:`GeometricBrownianMotion`).
-        n_paths: Number of Monte Carlo simulation paths.
-        seed: Seed passed to ``tf.random.normal`` for reproducibility.
-        daycounter_convention: Day-count convention used to convert dates to
-            year fractions for the simulation time grid.
-        calendar: Business-day calendar used to build the auxiliary monthly
-            discretization grid.  Defaults to TARGET when ``None``.
-        discretization_months: Step (in months) of the auxiliary grid added
-            on top of the product's own fixing dates.
+        model: Model class with ``from_equity`` (default :class:`LocalVolatilityModel`).
+        n_paths: Number of paths.
+        seed: Seed of the stateless Gaussian draws.
+        max_time_step: Largest simulation step (years).
+        barrier_smoothing: Width of the smoothed digitals as a fraction of the strike (0 = hard).
+
+    After pricing: ``product.coupon_pv``, ``product.put_pv`` (both per unit notional, put as a
+    positive value paid by the investor), ``product.standard_error`` (currency units);
+    ``pricer.paths`` ``[n_paths, n_fixings]`` at the future fixings ``pricer.date_grid`` (times in
+    ``pricer.time_grid``) for diagnostics.
     """
 
     def __init__(
         self,
-        model: StochasticProcess,
+        model: type = LocalVolatilityModel,
         n_paths: int = 20_000,
         seed: int = 42,
-        daycounter_convention: DayCounterConvention = DayCounterConvention.Actual360,
-        calendar=None,
-        discretization_months: int = 1,
+        max_time_step: float = 1.0 / 52.0,
+        barrier_smoothing: float = 0.01,
     ) -> None:
         super().__init__()
+        if not hasattr(model, "from_equity"):
+            raise TypeError(f"model must be a model class with a from_equity factory, got {model!r}")
+        if barrier_smoothing < 0:
+            raise ValueError("barrier_smoothing must be >= 0")
         self._model = model
         self._n_paths = n_paths
         self._seed = seed
-        self._daycounter = DayCounter(daycounter_convention)
-        self._calendar = calendar if calendar is not None else TARGET()
-        self._discretization_months = discretization_months
+        self._max_time_step = max_time_step
+        self._eps = barrier_smoothing
+        self.paths = None
+        self.time_grid = None
+        self.date_grid = None
 
     # ------------------------------------------------------------------
     # Pricer interface
     # ------------------------------------------------------------------
 
-    def calculate_price(
-        self, product: AutocallableOption, market_env: MarketEnvironment
-    ) -> tf.Tensor:
-        """Price an :class:`AutocallableOption` via Monte Carlo simulation.
+    def calculate_price(self, product: AutocallableOption, market_env: MarketEnvironment) -> tf.Tensor:
+        """Price an :class:`AutocallableOption` by Monte Carlo (investor's side).
 
         Args:
-            product: The autocallable option to price.
-            market_env: Market environment providing the discount curve.
+            product: The autocallable (``underlying`` must be set).
+            market_env: Market data (underlying via ``get_equity``).
 
         Returns:
-            NPV as a ``tf.Tensor`` in currency units (notional × price_pct).
+            tf.Tensor: float64 NPV in currency units, differentiable w.r.t. the market risk factors.
 
         Raises:
-            ValueError: If *product* is not an :class:`AutocallableOption`.
+            ValueError: If *product* is not an :class:`AutocallableOption`, has no underlying,
+                or the underlying has no vol surface.
         """
         if not isinstance(product, AutocallableOption):
             raise ValueError("AutocallableMCPricer only supports AutocallableOption")
+        if product.underlying is None:
+            raise ValueError("AutocallableOption.underlying must be set")
+        eq = market_env.get_equity(product.underlying, ccy=product.ccy)
+        if eq.vol_surface is None:
+            raise ValueError(f"No volatility surface for underlying '{product.underlying}'")
 
-        valuation_date = Settings.evaluation_date
-        disc_curve = market_env.get_ir_curve(product.ccy)
+        eval_date = Settings.evaluation_date
+        daycounter = eq.vol_surface.daycounter
+        fixings = sorted(d for d in set(product.coupon_fixing_dates) | set(product.autocall_fixing_dates)
+                         if d > eval_date)
+        if not fixings:
+            return tf.constant(0.0, dtype=DTYPE)
+        fixing_times = np.array([daycounter.year_fraction(eval_date, d) for d in fixings])
+        uniform = np.arange(self._max_time_step, fixing_times[-1], self._max_time_step)
+        time_grid = np.unique(np.concatenate([uniform, fixing_times]))
+        column = {d: i for i, d in enumerate(fixings)}     # paths are returned at the fixings only
 
-        date_grid, time_grid_tensor = self._build_date_grid(product, valuation_date)
-        s_t = self._simulate(time_grid_tensor)
+        model = self._model.from_equity(eq, product.end_date, float(product.strike))
+        dw = tf.random.stateless_normal([self._n_paths, len(time_grid)], seed=[self._seed, 0], dtype=DTYPE)
+        paths = model.evolve(tf.constant(time_grid, DTYPE), dw, observation_times=fixing_times)
+        self.paths, self.time_grid, self.date_grid = paths, fixing_times, fixings
 
-        price_pct = self._price_option_leg(
-            product, s_t, date_grid, disc_curve, valuation_date
-        )
-        return tf.constant(price_pct * product.notional, dtype=tf.float64)
+        coupon_pv, put_pv = self._payoff(product, paths, column, fixings, eq.discount_curve)
+        total = coupon_pv - put_pv
+        product.coupon_pv = tf.reduce_mean(coupon_pv)
+        product.put_pv = tf.reduce_mean(put_pv)
+        product.standard_error = product.notional * tf.math.reduce_std(tf.stop_gradient(total)) / self._n_paths ** 0.5
+        return product.notional * tf.reduce_mean(total)
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Payoff
     # ------------------------------------------------------------------
 
-    def _build_date_grid(self, product: AutocallableOption, valuation_date):
-        """Merge product fixing dates with the auxiliary discretization grid.
+    def _above(self, s: tf.Tensor, barrier: float, strike: float) -> tf.Tensor:
+        """``1{s >= barrier}``, smoothed with a sigmoid of width ``eps * strike`` when ``eps > 0``."""
+        if self._eps == 0.0:
+            return tf.cast(s >= barrier, DTYPE)
+        return tf.sigmoid((s - barrier) / (self._eps * strike))
 
-        Returns:
-            date_grid: Sorted list of :class:`datetime.date` objects.
-            time_grid_tensor: ``tf.Tensor`` of year fractions (float64).
-        """
-        schedule_gen = ScheduleGenerator(
-            self._calendar, BusinessDayConvention.ModifiedFollowing
-        )
-        disc_dates = schedule_gen.generate(
-            valuation_date,
-            product.end_date,
-            self._discretization_months,
-            TimeUnit.Months,
-        )
-        date_set = (
-            set(product.coupon_fixing_dates)
-            | set(product.autocall_fixing_dates)
-            | set(disc_dates)
-        )
-        date_grid = sorted(date_set)
-        time_grid = [
-            self._daycounter.year_fraction(valuation_date, d) for d in date_grid
-        ]
-        return date_grid, tf.constant(time_grid, dtype=tf.float64)
+    def _payoff(self, product, paths, column, fixings, curve):
+        """Path-wise discounted coupons and put, per unit notional (``[n_paths]`` each)."""
+        strike = float(product.strike)
+        coupon_index = {d: i for i, d in enumerate(product.coupon_fixing_dates)}
+        autocall_index = {d: i for i, d in enumerate(product.autocall_fixing_dates)}
+        last_coupon = product.coupon_fixing_dates[-1]
 
-    def _simulate(self, time_grid_tensor: tf.Tensor) -> tf.Tensor:
-        """Draw Gaussian variates and evolve the model.
+        n_paths = tf.shape(paths)[0]
+        alive = tf.ones([n_paths], DTYPE)
+        unpaid = tf.zeros([n_paths], DTYPE)
+        coupon_pv = tf.zeros([n_paths], DTYPE)
+        put_pv = tf.zeros([n_paths], DTYPE)
 
-        Returns:
-            Tensor of shape ``[n_paths, n_steps]``.
-        """
-        n_steps = time_grid_tensor.shape[0]
-        z = tf.random.normal(
-            (self._n_paths, n_steps), seed=self._seed, dtype=tf.float64
-        )
-        return self._model.evolve(time_grid_tensor, z)
-
-    def _price_option_leg(
-        self,
-        product: AutocallableOption,
-        s_t: tf.Tensor,
-        date_grid: list,
-        disc_curve,
-        valuation_date,
-    ) -> float:
-        """Path-wise Monte Carlo evaluation of the autocallable option leg.
-
-        Loops over all unique observation dates (union of coupon and autocall
-        fixing dates) in chronological order.  At each date it checks:
-
-        * **Coupon leg** — conditional coupon (with optional memory) if the
-          note is alive and spot ≥ coupon barrier.
-        * **Final redemption** — capital-at-risk put payoff on the last coupon
-          fixing date if spot ≤ payoff barrier.
-        * **Autocall leg** — knocks out paths where spot ≥ autocall barrier.
-
-        Args:
-            product: :class:`AutocallableOption` carrying schedules and payoff
-                parameters.
-            s_t: Simulated spot tensor of shape ``[n_paths, n_dates]``.
-            date_grid: List of dates mapped to the columns of *s_t*.
-            disc_curve: Discount curve exposing a ``discount(date)`` method.
-            valuation_date: Pricing date; past fixing dates are skipped.
-
-        Returns:
-            Mean present value as a fraction of notional.
-        """
-        strike = product.strike
-        coupon_fixing_dates = product.coupon_fixing_dates
-        coupon_payment_dates = product.coupon_payment_dates
-        coupon_rates = product.coupon_rates
-        coupon_barriers = product.coupon_barriers
-        autocall_fixing_dates = product.autocall_fixing_dates
-        autocall_payment_dates = product.autocall_payment_dates
-        autocall_barriers = product.autocall_barrier
-        payoff_barrier = product.payoff_barrier
-        payoff_participation = product.payoff_participation
-        memory = product.memory
-
-        n_paths = s_t.shape[0]
-        date_to_col = {d: j for j, d in enumerate(date_grid)}
-
-        coupon_map = {
-            d: (i, coupon_payment_dates[i])
-            for i, d in enumerate(coupon_fixing_dates)
-        }
-        autocall_map = {
-            d: (i, autocall_payment_dates[i])
-            for i, d in enumerate(autocall_fixing_dates)
-        }
-
-        all_fixing_dates = sorted(
-            set(coupon_fixing_dates) | set(autocall_fixing_dates)
-        )
-
-        alive = np.ones(n_paths, dtype=bool)
-        unpaid_coupons = np.zeros(n_paths, dtype=np.float64)
-        coupon_pv = np.zeros(n_paths, dtype=np.float64)
-        redemption_pv = np.zeros(n_paths, dtype=np.float64)
-
-        for fix_date in all_fixing_dates:
-            if fix_date <= valuation_date:
-                continue
-            if not alive.any():
-                break
-
-            col = date_to_col[fix_date]
-            s_i = s_t[:, col].numpy()
-
-            # --- coupon leg ---
-            if fix_date in coupon_map:
-                c_idx, c_pay_date = coupon_map[fix_date]
-                coupon_thr = coupon_barriers[c_idx] / 100.0 * strike
-                above_coupon = s_i >= coupon_thr
-                paid = alive & above_coupon
-
-                if memory:
-                    pay_amount = coupon_rates[c_idx] / 100.0 * (1.0 + unpaid_coupons)
-                else:
-                    pay_amount = coupon_rates[c_idx] / 100.0
-
-                df = float(disc_curve.discount(c_pay_date))
-                coupon_pv += np.where(paid, pay_amount, 0.0) * df
-
-                # --- capital-at-risk put at maturity ---
-                if (
-                    fix_date == coupon_fixing_dates[-1]
-                    and product.redemption_payoff is not None
-                ):
-                    below_barrier = s_i <= payoff_barrier / 100.0 * strike
-                    redemption_pv += np.where(
-                        alive & below_barrier,
-                        product.redemption_payoff(s_i, strike, payoff_participation),
-                        0.0,
-                    ) * df
-
-                # --- memory counter ---
-                unpaid_coupons = np.where(paid, 0.0, unpaid_coupons)
-                unpaid_coupons = np.where(
-                    alive & ~above_coupon, unpaid_coupons + 1.0, unpaid_coupons
-                )
-
-            # --- autocall leg ---
-            if fix_date in autocall_map:
-                a_idx, _ = autocall_map[fix_date]
-                autocall_thr = autocall_barriers[a_idx] / 100.0 * strike
-                above_autocall = s_i >= autocall_thr
-                alive = alive & ~above_autocall
-
-        total_pv = coupon_pv + redemption_pv
-        self._coupon_pv = float(coupon_pv.mean())
-        self._redemption_pv = float(redemption_pv.mean())
-        return float(total_pv.mean())
+        for d in fixings:
+            s = paths[:, column[d]]
+            if d in coupon_index:
+                i = coupon_index[d]
+                above = self._above(s, product.coupon_barriers[i] / 100.0 * strike, strike)
+                rate = product.coupon_rates[i] / 100.0
+                amount = rate * (1.0 + unpaid) if product.memory else rate * tf.ones_like(s)
+                df_pay = tf.cast(curve.discount(product.coupon_payment_dates[i]), DTYPE)
+                coupon_pv = coupon_pv + alive * above * amount * df_pay
+                if d == last_coupon and product.redemption_payoff is not None:
+                    below = 1.0 - self._above(s, product.payoff_barrier / 100.0 * strike, strike)
+                    put = product.payoff_participation * tf.maximum(strike - s, 0.0) / strike
+                    put_pv = put_pv + alive * below * put * df_pay
+                # memory: reset when paid, +1 when missed (alive paths)
+                unpaid = alive * (1.0 - above) * (unpaid + 1.0) + (1.0 - alive) * unpaid
+            if d in autocall_index:
+                j = autocall_index[d]
+                alive = alive * (1.0 - self._above(s, product.autocall_barrier[j] / 100.0 * strike, strike))
+        return coupon_pv, put_pv

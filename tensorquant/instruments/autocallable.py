@@ -170,10 +170,8 @@ class AutocallableOption(Product):
 
     @staticmethod
     def put_redemption(S_T, strike: float, partecipation: float):
-        """
-        Payoff di una put “nuda” in percentuale del notional:
+        """Capital-at-risk put as a fraction of notional: ``participation * max(K - S_T, 0) / K``.
 
-            put_redemption(S_T, K, partecipation)
-                = -max(K - S_T, 0) / K * partecipation
+        Positive value; the investor is short it (``AutocallableMCPricer`` subtracts it).
         """
         return np.maximum(strike - S_T, 0) / strike * partecipation

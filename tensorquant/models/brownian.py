@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Union
 
+import numpy as np
 import tensorflow as tf
 
 from .stochasticprocess import StochasticProcess
@@ -37,6 +38,20 @@ def _equity_carry_inputs(equity, maturity: Union[date, float]):
         carry = carry + equity.div_yield
     x0 = equity.spot - equity.pv_dividends(maturity)
     return x0, r, carry, tenor
+
+
+def observation_columns(t_grid, observation_times):
+    """Column indices of *observation_times* in *t_grid* (each must be a grid point, 1e-10 tolerance).
+
+    Raises:
+        ValueError: If an observation time is not on the grid.
+    """
+    grid = np.asarray(t_grid, dtype=float)
+    obs = np.atleast_1d(np.asarray(observation_times, dtype=float))
+    idx = np.clip(np.searchsorted(grid, obs - 1e-10), 0, len(grid) - 1)
+    if np.any(np.abs(grid[idx] - obs) > 1e-10):
+        raise ValueError("observation_times must be points of t_grid")
+    return idx
 
 
 class GeometricBrownianMotion(StochasticProcess):
@@ -88,21 +103,25 @@ class GeometricBrownianMotion(StochasticProcess):
     def size(self):
         return 1
 
-    def evolve(self, t_grid, dw):
+    def evolve(self, t_grid, dw, observation_times=None):
         """
         Args:
             t_grid: 1D tensor of shape [n_steps] with observation times, e.g. [0.25, 0.5, 0.75, 1.0]
             dw:     tensor of shape [n_paths, n_steps], standard normals
+            observation_times: optional subset of t_grid; if given, only those columns are returned
 
         Returns:
-            tensor of shape [n_paths, n_steps] with simulated process values
+            tensor of shape [n_paths, n_steps] (or [n_paths, len(observation_times)]) with simulated process values
         """
         t_grid = tf.cast(t_grid, DTYPE)
         dw = tf.cast(dw, DTYPE)
         t_full = tf.concat([tf.zeros([1], dtype=DTYPE), t_grid], axis=0)  # prepend 0
         dt = tf.reshape(t_full[1:] - t_full[:-1], [1, -1])  # [1, n_steps], one dt per step
         exp_factor = tf.math.exp(self.drift(dt) + self.diffusion(dt) * dw)
-        return self._x0 * tf.math.cumprod(exp_factor, axis=1)
+        paths = self._x0 * tf.math.cumprod(exp_factor, axis=1)
+        if observation_times is not None:
+            paths = tf.gather(paths, observation_columns(t_grid.numpy(), observation_times), axis=1)
+        return paths
 
 
 class ArithmeticBrownianMotion(StochasticProcess):
@@ -125,17 +144,21 @@ class ArithmeticBrownianMotion(StochasticProcess):
     def size(self):
         return 1
 
-    def evolve(self, t_grid, dw):
+    def evolve(self, t_grid, dw, observation_times=None):
         """
         Args:
             t_grid: 1D tensor of shape [n_steps] with observation times, e.g. [0.25, 0.5, 0.75, 1.0]
             dw:     tensor of shape [n_paths, n_steps], standard normals
+            observation_times: optional subset of t_grid; if given, only those columns are returned
 
         Returns:
-            tensor of shape [n_paths, n_steps] with simulated process values
+            tensor of shape [n_paths, n_steps] (or [n_paths, len(observation_times)]) with simulated process values
         """
         t_grid = tf.cast(t_grid, DTYPE)
         dw = tf.cast(dw, DTYPE)
         t_full = tf.concat([tf.zeros([1], dtype=DTYPE), t_grid], axis=0)  # prepend 0
         dt = tf.reshape(t_full[1:] - t_full[:-1], [1, -1])  # [1, n_steps], one dt per step
-        return self._x0 + tf.math.cumsum(self.drift(dt) + self.diffusion(dt) * dw, axis=1)
+        paths = self._x0 + tf.math.cumsum(self.drift(dt) + self.diffusion(dt) * dw, axis=1)
+        if observation_times is not None:
+            paths = tf.gather(paths, observation_columns(t_grid.numpy(), observation_times), axis=1)
+        return paths

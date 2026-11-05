@@ -86,7 +86,7 @@ class VanillaMCPricer(Pricer):
         T = eq.vol_surface.daycounter.year_fraction(Settings.evaluation_date, product.end_date)
         t_grid = tf.linspace(tf.constant(0.0, DTYPE), tf.constant(T, DTYPE), self._n_steps + 1)[1:]
         dw = tf.random.stateless_normal([self._n_paths, self._n_steps], seed=[self._seed, 0], dtype=DTYPE)
-        s_t = model.evolve(t_grid, dw)[:, -1]
+        s_t = model.evolve(t_grid, dw, observation_times=[T])[:, 0]
 
         k = tf.cast(product.strike, DTYPE)
         phi = tf.constant(float(product.option_type.value), dtype=DTYPE)

@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 
 from .stochasticprocess import StochasticProcess
-from .brownian import _equity_carry_inputs
+from .brownian import _equity_carry_inputs, observation_columns
 from ..numericalhandles.dtypes import DTYPE
 
 
@@ -285,20 +285,49 @@ def _interp_ty(sigma_ty, t_grid, y_grid, t, y):
     return s0 * (1.0 - wt) + s1 * wt
 
 
+def _rows_at(sigma_ty, lv_t, t_start):
+    """Local vol rows ``sigma(t_k, .)`` at every step start, linear in t: ``[n_steps, nY]`` (dense ops)."""
+    tc = tf.clip_by_value(t_start, lv_t[0], lv_t[-1])
+    i = tf.clip_by_value(tf.searchsorted(lv_t, tc, side="right") - 1, 0, tf.shape(lv_t)[0] - 2)
+    t0, t1 = tf.gather(lv_t, i), tf.gather(lv_t, i + 1)
+    w = ((tc - t0) / (t1 - t0))[:, None]
+    return tf.gather(sigma_ty, i) * (1.0 - w) + tf.gather(sigma_ty, i + 1) * w
+
+
 @tf.function(reduce_retracing=True)
-def _simulate_forward_ratio(sigma_ty, lv_t, lv_y, t_grid, dw):
-    """Paths of ``X_t = S_t / F(t)`` ``[n_paths, n_steps]``: ``d ln X = -sigma^2/2 dt + sigma dW``,
-    ``sigma = sigma_loc(t, ln X)`` (log-Euler, exact martingale step by step)."""
+def _simulate_forward_ratio_rows(sig_rows, lv_y, t_grid, dw):
+    """Log-Euler loop on ``ln X`` with one local vol row per step (rows read from a TensorArray).
+
+    The rows are not captured tensors gathered inside the loop: a ``gather`` on a captured tensor
+    has a sparse (IndexedSlices) gradient that the while-loop accumulates by concatenation, which
+    made the backward pass quadratic in the number of steps (16 s instead of 2 s at 260 steps).
+    """
     n_paths, n_steps = tf.shape(dw)[0], tf.shape(dw)[1]
     t_full = tf.concat([tf.zeros([1], DTYPE), t_grid], axis=0)
+    rows = tf.TensorArray(DTYPE, size=n_steps).unstack(sig_rows)
+    normals = tf.TensorArray(DTYPE, size=n_steps).unstack(tf.transpose(dw))
+    steps = tf.TensorArray(DTYPE, size=n_steps).unstack(t_full[1:] - t_full[:-1])
+    n_y = tf.shape(lv_y)[0]
     log_x = tf.zeros([n_paths], DTYPE)
     paths = tf.TensorArray(dtype=DTYPE, size=n_steps)
     for k in tf.range(n_steps):
-        dt = t_full[k + 1] - t_full[k]
-        sig = _interp_ty(sigma_ty, lv_t, lv_y, t_full[k], log_x)
-        log_x = log_x - 0.5 * tf.square(sig) * dt + sig * tf.sqrt(dt) * dw[:, k]
+        row, dt = rows.read(k), steps.read(k)
+        yc = tf.clip_by_value(log_x, lv_y[0], lv_y[-1])
+        j = tf.clip_by_value(tf.searchsorted(lv_y, yc, side="right") - 1, 0, n_y - 2)
+        y0, y1 = tf.gather(lv_y, j), tf.gather(lv_y, j + 1)
+        wy = (yc - y0) / (y1 - y0)
+        sig = tf.gather(row, j) * (1.0 - wy) + tf.gather(row, j + 1) * wy
+        log_x = log_x - 0.5 * tf.square(sig) * dt + sig * tf.sqrt(dt) * normals.read(k)
         paths = paths.write(k, tf.exp(log_x))
     return tf.transpose(paths.stack(), perm=[1, 0])
+
+
+def _simulate_forward_ratio(sigma_ty, lv_t, lv_y, t_grid, dw):
+    """Paths of ``X_t = S_t / F(t)`` ``[n_paths, n_steps]``: ``d ln X = -sigma^2/2 dt + sigma dW``,
+    ``sigma = sigma_loc(t, ln X)`` bilinear in (t, y) (log-Euler, exact martingale step by step)."""
+    t_grid = tf.cast(t_grid, DTYPE)
+    t_start = tf.concat([tf.zeros([1], DTYPE), t_grid[:-1]], axis=0)
+    return _simulate_forward_ratio_rows(_rows_at(sigma_ty, lv_t, t_start), lv_y, t_grid, dw)
 
 
 def _bilinear_interp(sigma_TK, T_grid, K_grid, t, S):
@@ -665,7 +694,7 @@ class LocalVolatilityModel(StochasticProcess):
     # Main simulation
     # ------------------------------------------------------------------
 
-    def evolve(self, t_grid, dw):
+    def evolve(self, t_grid, dw, observation_times=None):
         """
         Simulate paths using a log-Euler (Milstein-order-0) scheme with
         Dupire local volatility.  Interface is consistent with GBM in
@@ -677,6 +706,8 @@ class LocalVolatilityModel(StochasticProcess):
             t_grid: [n_steps] observation times (year fractions), e.g.
                     tf.linspace(0.0, 1.0, 52)[1:] for weekly steps to T=1.
             dw:     [n_paths, n_steps] standard-normal increments.
+            observation_times: optional subset of t_grid; only those columns are returned
+                    (forward mode: the market forward is computed only there).
 
         Returns:
             paths [n_paths, n_steps]  — spot at each observation time
@@ -691,11 +722,15 @@ class LocalVolatilityModel(StochasticProcess):
         """
         dw = tf.cast(tf.convert_to_tensor(dw), DTYPE)
         t_grid = tf.cast(tf.convert_to_tensor(t_grid), DTYPE)
+        cols = None if observation_times is None else observation_columns(t_grid.numpy(), observation_times)
         if getattr(self, "_mode", None) == "forward":
             x = _simulate_forward_ratio(self._sigma_ty, self._lv_t, self._lv_y, t_grid, dw)
+            times = t_grid.numpy()
+            if cols is not None:          # forwards (and the correction) only where observed
+                x, times = tf.gather(x, cols, axis=1), times[cols]
             if self._martingale_correction:
                 x = x / tf.reduce_mean(x, axis=0, keepdims=True)
-            forwards = tf.stack([self._forward(t) for t in t_grid.numpy()])
+            forwards = tf.stack([self._forward(t) for t in times])
             return x * forwards[None, :]
         # Local vol surface once, eagerly (differentiable w.r.t. self._C)
         sigma_TK = _dupire_local_vol(
@@ -704,5 +739,6 @@ class LocalVolatilityModel(StochasticProcess):
             r=self._r, q=self._q,
             eps=self._eps, sig_cap=self._cap,
         )
-        return _simulate_log_euler(sigma_TK, self._T_grid, self._K_grid, self._S0, self._r, self._q, t_grid, dw)
+        paths = _simulate_log_euler(sigma_TK, self._T_grid, self._K_grid, self._S0, self._r, self._q, t_grid, dw)
+        return paths if cols is None else tf.gather(paths, cols, axis=1)
 
