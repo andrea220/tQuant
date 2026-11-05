@@ -46,7 +46,7 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
   `product.price` and the tape on `pricer.tape`; greeks via `pricer.tape.gradient(product.price, <tf.Variable>)`.
 - **Risk factors live in market objects** as float64 `tf.Variable`s with stable identity (update with `assign`):
   `RateCurve.variables` (one per pillar; `FlatCurve` has one), `VolatilitySurface.volatility_matrix`
-  (`[n_maturities, n_strikes]`), and EQ `SPOT|REPO|DIVYIELD` (wrapped by `MarketEnvironment`, one shared
+  (`[n_maturities, n_strikes]`), `DividendCurve.variables` (amounts `[n]`, ex-dates fixed), and EQ `SPOT|REPO|DIVYIELD` (wrapped by `MarketEnvironment`, one shared
   variable per key). `market_env.risk_factors()` returns `{market_key: [variables]}`, so one
   `tape.gradient(price, market_env.risk_factors())` gives bucketed rho, vega per node and delta.
   Pricers must not create their own variables from market data nor detach with `.numpy()`/`float()`; the only
@@ -107,9 +107,9 @@ Run examples/notebooks only when changing them or when asked.
 |---|---|---|
 | `MarketEnvironment` accessors | `tests/test_marketenvironment.py` | spot, vol, repo, div yield, dividends, currency, default curve |
 | Risk factors | `tests/test_risk_factors.py` | float64 variables in curves/surfaces/EQ scalars, `risk_factors()`, gradients vs finite differences, bilinear weights |
-| `RateCurve` / `FlatCurve` / `DividendCurve` | `tests/test_rate_curve.py` | discount/zero/forward/inst_fwd vs numpy reference, `from_zcb` round trip, PV dividends, float64 tensor outputs, inst_fwd gradient vs finite differences, Hull-White values that use inst_fwd (pinned) |
-| `Equity` view | `tests/test_equity.py` | references to market objects, dividend model selection, PV/forward vs closed form, forward vs `BlackScholesPricer`, implied yield, gradients (spot, repo, pillars vs FD), summary |
-| `BlackScholesPricer` | `tests/test_black_scholes.py` | EU/AM prices and greeks pinned from the float32 version, EU vs closed form, put–call parity, forward = `Equity.forward`, delta/rho per pillar/vega per node vs bumps, dividend models (discrete, continuous sticky yield, DIVYIELD-only), float64 |
+| `RateCurve` / `FlatCurve` / `DividendCurve` | `tests/test_rate_curve.py` | discount/zero/forward/inst_fwd vs numpy reference, `from_zcb` round trip, PV dividends, amounts as float64 variable (PV gradient = discount factor, `assign`), float64 tensor outputs, inst_fwd gradient vs finite differences, Hull-White values that use inst_fwd (pinned) |
+| `Equity` view | `tests/test_equity.py` | references to market objects, dividend model selection, PV/forward vs closed form, forward vs `BlackScholesPricer`, implied yield, gradients (spot, repo, pillars vs FD, dividend amounts vs closed form), summary |
+| `BlackScholesPricer` | `tests/test_black_scholes.py` | EU/AM prices and greeks pinned from the float32 version, EU vs closed form, put–call parity, forward = `Equity.forward`, delta/rho per pillar/vega per node vs bumps, dividend models (discrete, continuous sticky yield, DIVYIELD-only), dPrice/dD_i vs bumps (both models) and = -delta·P(0,ex_i) (discrete), float64 |
 | FX / `CorrelationMatrix` | — | postponed (see roadmap step 5) |
 | `timehandles/` | — | — |
 | `numericalhandles/dtypes.py` | `tests/test_dtypes.py` | `DTYPE`, `as_variable` (reuse, casts, no float32 round trip) |
@@ -137,7 +137,8 @@ tests green.
 - [x] `BlackScholesPricer` on `Equity` and market risk factors, float64 (kernels dtype-generic; fixed a float32
       `sqrt(2)` in `_norm_cdf`); no pricer-local market variables; `examples/3_options.py` greeks via AAD;
       example `study/notebooks/04_black_scholes.ipynb`.
-- [ ] `DividendCurve` amounts as risk factors.
+- [x] `DividendCurve` amounts as risk factors (`EQ:<ccy>:<ticker>:DIV` in `risk_factors()`, dense gradient);
+      notebook 03 shows dF/dD_i.
 - [x] Examples 2-4 default to `TICKER1` (marketdata/ snapshot).
 - [x] `Option.strike` is a float64 `tf.Variable` (was float32: strikes like 389.24 lost ~1e-5, parity error ~1e-5).
 

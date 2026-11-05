@@ -350,6 +350,55 @@ class TestRiskFactors(BSTestCase):
                 self.assertAlmostEqual(grad[i, j], (bumped[0] - bumped[1]) / (2 * h), places=5)
 
 
+class TestDividendSensitivities(BSTestCase):
+    def bump_dividend(self, factory, i, h, model):
+        var = self.mkt.get_eq_dividends("DISC").variables[0]
+        base = var.numpy().copy()
+        out = []
+        for sign in (1, -1):
+            bumped = base.copy()
+            bumped[i] += sign * h
+            var.assign(bumped)
+            opt = factory()
+            self.price(opt, model)
+            out.append(float(opt.price))
+        var.assign(base)
+        return (out[0] - out[1]) / (2 * h)
+
+    def test_price_gradient_wrt_dividends_vs_bump(self):
+        var = self.mkt.get_eq_dividends("DISC").variables[0]
+        for model in ("discrete", "continuous"):
+            for ot in ("Call", "Put"):
+                factory = lambda ot=ot: make_option(EXPIRIES["1Y"], ot, 100.0)
+                opt = factory()
+                pricer = self.price(opt, model, autodiff=True)
+                grad = pricer.tape.gradient(opt.price, var).numpy()
+                for i in range(len(grad)):
+                    with self.subTest(model=model, type=ot, dividend=i):
+                        self.assertAlmostEqual(grad[i], self.bump_dividend(factory, i, 1e-5, model), places=6)
+
+    def test_dividend_after_expiry_has_no_sensitivity(self):
+        var = self.mkt.get_eq_dividends("DISC").variables[0]
+        ex_dates = self.mkt.get_eq_dividends("DISC").ex_dates
+        opt = make_option(EXPIRIES["1Y"], "Call", 100.0)
+        pricer = self.price(opt, autodiff=True)
+        grad = pricer.tape.gradient(opt.price, var).numpy()
+        after = [i for i, d in enumerate(ex_dates) if d > EXPIRIES["1Y"]]
+        self.assertTrue(after)
+        for i in after:
+            self.assertEqual(grad[i], 0.0)
+
+    def test_discrete_dividend_gradient_is_minus_delta_times_df(self):
+        """Discrete model: S* = S - PV, so dV/dD_i = -dV/dS * P(0, ex_i) for ex_i <= T."""
+        eq = self.mkt.get_equity("DISC")
+        opt = make_option(EXPIRIES["1Y"], "Call", 100.0)
+        pricer = self.price(opt, autodiff=True)
+        d_spot, d_div = pricer.tape.gradient(opt.price, [eq.spot, eq.dividends.variables[0]])
+        for g, d in zip(d_div.numpy(), eq.dividends.ex_dates):
+            if d <= EXPIRIES["1Y"]:
+                self.assertAlmostEqual(g, -float(d_spot) * float(eq.discount_curve.discount(d)), places=12)
+
+
 class TestEquityDividendModels(BSTestCase):
     def test_continuous_divyield_underlying(self):
         """CONT has no DIV: q = DIVYIELD + repo whatever the pricer's dividend_model."""

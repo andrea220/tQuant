@@ -194,6 +194,31 @@ class TestDividendCurvePV(unittest.TestCase):
         self.assertEqual(float(pv), 0.0)
         self.assertEqual(pv.dtype, tf.float64)
 
+    def test_amounts_are_a_float64_variable(self):
+        (var,) = self.divs.variables
+        self.assertIsInstance(var, tf.Variable)
+        self.assertEqual(var.dtype, tf.float64)
+        self.assertEqual(var.shape, (2,))
+        self.assertEqual(self.divs.amounts, [1.2, 1.3])
+
+    def test_pv_gradient_is_discount_factor(self):
+        """dPV/dD_i = P(0, ex_i) for ex_i <= horizon, 0 after."""
+        (var,) = self.divs.variables
+        with tf.GradientTape() as tape:
+            pv = self.divs.pv_dividends(date(2026, 7, 1), self.curve)
+        grad = tape.gradient(pv, var).numpy()
+        self.assertAlmostEqual(grad[0], ref_discount((date(2026, 6, 15) - EVAL_DATE).days / 365.0), places=13)
+        self.assertEqual(grad[1], 0.0)
+
+    def test_assign_moves_pv(self):
+        (var,) = self.divs.variables
+        horizon = date(2027, 1, 1)
+        base = float(self.divs.pv_dividends(horizon, self.curve))
+        var.assign([2.4, 1.3])
+        df1 = ref_discount((date(2026, 6, 15) - EVAL_DATE).days / 365.0)
+        self.assertAlmostEqual(float(self.divs.pv_dividends(horizon, self.curve)) - base, 1.2 * df1, places=13)
+        self.assertEqual(self.divs.amounts, [2.4, 1.3])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -410,7 +410,7 @@ class MarketEnvironment:
         - ``FX:<QUOTE>:<PAIR>:SPOT`` -> one scalar variable (stored pairs only)
         - ``CORR:ALL:GLOBAL:SPOT``   -> the correlation matrix ``[n, n]``
 
-        Discrete dividends (``DIV``) are not risk factors yet.
+        - ``EQ:<CCY>:<TICKER>:DIV``  -> the dividend amounts ``[n]`` (ex-dates fixed)
 
         Returns:
             dict[str, list[tf.Variable]]: Market key -> list of variables.
@@ -418,7 +418,7 @@ class MarketEnvironment:
         factors: dict[str, list[tf.Variable]] = {}
         for key in sorted(self._market):
             value = self._market[key]
-            if isinstance(value, (RateCurve, VolatilitySurface, CorrelationMatrix)):
+            if isinstance(value, (RateCurve, VolatilitySurface, CorrelationMatrix, DividendCurve)):
                 factors[key] = value.variables
             elif self._is_scalar_key(key):
                 factors[key] = [value]

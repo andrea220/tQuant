@@ -209,11 +209,25 @@ class TestForwardGradients(unittest.TestCase):
             var.assign(base)
             self.assertAlmostEqual(grads[i], (up - dn) / (2 * h), places=5)
 
+    def test_forward_gradient_wrt_dividends(self):
+        """dF/dD_i = -P(0, ex_i) e^{-repo T} / P(0, T) for ex_i <= T, 0 after."""
+        eq = self.mkt.get_equity("DISC")
+        (var,) = eq.dividends.variables
+        with tf.GradientTape() as tape:
+            F = eq.forward(EXPIRY)
+        grad = tape.gradient(F, var).numpy()
+        T = yf(EXPIRY)
+        for g, d in zip(grad, EX_DATES):
+            expected = -ref_df(yf(d)) * np.exp(-REPO * T) / ref_df(T) if d <= EXPIRY else 0.0
+            self.assertAlmostEqual(g, expected, places=12)
+
     def test_risk_factors(self):
         eq = self.mkt.get_equity("DISC")
         rf = eq.risk_factors()
-        self.assertEqual(sorted(rf), ["EQ:EUR:DISC:REPO", "EQ:EUR:DISC:SPOT", "EQ:EUR:DISC:VOL", "IR:EUR:ESTR:SPOT"])
+        self.assertEqual(sorted(rf), ["EQ:EUR:DISC:DIV", "EQ:EUR:DISC:REPO", "EQ:EUR:DISC:SPOT", "EQ:EUR:DISC:VOL",
+                                      "IR:EUR:ESTR:SPOT"])
         self.assertIs(rf["EQ:EUR:DISC:SPOT"][0], eq.spot)
+        self.assertIs(rf["EQ:EUR:DISC:DIV"][0], eq.dividends.variables[0])
         cont = self.mkt.get_equity("CONT").risk_factors()
         self.assertIn("EQ:EUR:CONT:DIVYIELD", cont)
         self.assertNotIn("EQ:EUR:BARE:REPO", self.mkt.get_equity("BARE").risk_factors())

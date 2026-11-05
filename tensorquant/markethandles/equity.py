@@ -177,13 +177,16 @@ class Equity:
         Returns:
             dict[str, list[tf.Variable]]: Same structure as
                 :meth:`MarketEnvironment.risk_factors`, restricted to this equity
-                (spot, repo, dividend yield if used, vol surface, discount curve).
+                (spot, repo, dividend yield or discrete dividend amounts, vol
+                surface, discount curve).
         """
         factors = {self._key("SPOT"): [self.spot]}
         if self._repo_is_market:
             factors[self._key("REPO")] = [self.repo]
         if self.div_yield is not None:
             factors[self._key("DIVYIELD")] = [self.div_yield]
+        if self.dividends is not None:
+            factors[self._key("DIV")] = self.dividends.variables
         if self.vol_surface is not None:
             factors[self._key("VOL")] = self.vol_surface.variables
         curve_key = self.discount_curve.name or f"IR:{self.currency.name}:DISCOUNT:SPOT"

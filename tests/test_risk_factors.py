@@ -102,6 +102,7 @@ class TestRiskFactors(unittest.TestCase):
         self.assertEqual(
             sorted(rf),
             [
+                "EQ:EUR:SX5E:DIV",
                 "EQ:EUR:SX5E:DIVYIELD",
                 "EQ:EUR:SX5E:REPO",
                 "EQ:EUR:SX5E:SPOT",

@@ -6,6 +6,7 @@ from typing import Optional, Union
 
 import tensorflow as tf
 
+from ..numericalhandles.dtypes import DTYPE, as_variable
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
 from .utils import Currency
 
@@ -23,12 +24,16 @@ class DividendCurve:
     ex-date on or before that date are automatically excluded from present-value
     calculations (they have already detached from the stock price).
 
+    The amounts are a risk factor: one float64 ``tf.Variable`` of shape ``[n]``
+    (``variables``), so :meth:`pv_dividends` is differentiable w.r.t. each
+    amount. Update them with ``assign``; dates are fixed data.
+
     Attributes:
         _reference_date (date): Evaluation / curve anchor date.
         _currency (Currency): Currency of the dividend amounts.
         _ex_dates (list[date]): Ex-dividend dates, sorted ascending.
-        _amounts (list[float]): Cash amount per share corresponding to each
-            ex-date.
+        _amounts (tf.Variable): float64 ``[n]`` cash amount per share for each
+            ex-date (risk factor).
         _declared_dates (list[date] | None): Announcement dates (informational
             only).
         _payment_dates (list[date] | None): Actual cash-payment dates
@@ -101,7 +106,9 @@ class DividendCurve:
         # Sort everything by ex_date ascending
         order = sorted(range(n), key=lambda i: ex_dates[i])
         self._ex_dates: list[date] = [ex_dates[i] for i in order]
-        self._amounts: list[float] = [amounts[i] for i in order]
+        self._amounts: tf.Variable = as_variable(
+            [float(amounts[i]) for i in order], name="DIV_AMOUNTS"
+        )
         self._declared_dates: Optional[list[date]] = (
             [declared_dates[i] for i in order] if declared_dates is not None else None
         )
@@ -222,8 +229,13 @@ class DividendCurve:
 
     @property
     def amounts(self) -> list[float]:
-        """Cash amounts per share corresponding to each ex-date."""
-        return self._amounts
+        """Cash amounts per share for each ex-date, as floats (values of ``variables``)."""
+        return [float(a) for a in self._amounts.numpy()]
+
+    @property
+    def variables(self) -> list[tf.Variable]:
+        """Risk-factor variables: ``[amounts]`` (float64, shape ``[n]``)."""
+        return [self._amounts]
 
     @property
     def declared_dates(self) -> Optional[list[date]]:
@@ -259,7 +271,7 @@ class DividendCurve:
 
         data: dict = {
             "ex_date": self._ex_dates,
-            "amount":  self._amounts,
+            "amount":  self.amounts,
         }
         if self._declared_dates is not None:
             data["declared_date"] = self._declared_dates
@@ -304,7 +316,7 @@ class DividendCurve:
         cutoff = self._to_date(t) if isinstance(t, float) else t
         return [
             (d, a)
-            for d, a in zip(self._ex_dates, self._amounts)
+            for d, a in zip(self._ex_dates, self.amounts)
             if self._reference_date < d <= cutoff
         ]
 
@@ -330,7 +342,7 @@ class DividendCurve:
         d2 = self._to_date(t2) if isinstance(t2, float) else t2
         return [
             (d, a)
-            for d, a in zip(self._ex_dates, self._amounts)
+            for d, a in zip(self._ex_dates, self.amounts)
             if d1 < d <= d2
         ]
 
@@ -361,19 +373,22 @@ class DividendCurve:
                 method) used to compute :math:`P(0, ex_i)`.
 
         Returns:
-            tf.Tensor: Scalar tensor with the present value of dividends.
-                Returns zero (``tf.constant(0.0, dtype=tf.float64)``) if there
-                are no dividends in the range.
+            tf.Tensor: float64 scalar, differentiable w.r.t. the amounts
+                (``variables``) and the discount curve. Zero if there are no
+                dividends in the range.
         """
-        divs = self.dividends_before(t)
-        if not divs:
-            return tf.constant(0.0, dtype=tf.float64)
+        cutoff = self._to_date(t) if isinstance(t, float) else t
+        idx = [i for i, d in enumerate(self._ex_dates) if self._reference_date < d <= cutoff]
+        if not idx:
+            return tf.constant(0.0, dtype=DTYPE)
 
-        total = tf.constant(0.0, dtype=tf.float64)
-        for ex_date, amount in divs:
-            df = tf.cast(discount_curve.discount(ex_date), tf.float64)
-            total = total + tf.constant(amount, dtype=tf.float64) * df
-        return total
+        # Dense weights (P(0, ex_i) inside the horizon, 0 outside): dense gradient w.r.t. the amounts.
+        zero = tf.constant(0.0, dtype=DTYPE)
+        weights = tf.stack([
+            tf.cast(discount_curve.discount(d), DTYPE) if i in idx else zero
+            for i, d in enumerate(self._ex_dates)
+        ])
+        return tf.reduce_sum(self._amounts * weights)
 
     # ------------------------------------------------------------------
     # Dunder helpers
