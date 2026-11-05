@@ -1,60 +1,178 @@
-from datetime import date
-from pathlib import Path
+"""
+Local Volatility Model (Dupire) — calibration check by Monte Carlo, static synthetic market.
+
+For each maturity of the vol surface:
+  1. Build ``LocalVolatilityModel.from_equity`` (market vol nodes, re-gridded before Dupire).
+  2. Simulate to that maturity (stateless seed).
+  3. Check the MC forward against ``Equity.forward`` and the MC implied vols (OTM options:
+     puts below the forward, calls above) against the market vols at every strike node
+     (errors in vol points, with their standard error).
+
+``analyse_local_vol`` is reused by ``local_vol_mdm.py`` on the marketdata/ snapshot.
+"""
+
+import io
+import os
 import sys
+from datetime import date, timedelta
+from pathlib import Path
 
-import tensorflow as tf
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import numpy as np
-
-# Ensure local package is imported when running `python examples/...`
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import numpy as np
+import tensorflow as tf
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from scipy.optimize import brentq
+from scipy.stats import norm
 
 import tensorquant as tq
 from tensorquant.models.localvolatility import LocalVolatilityModel
 
+N_PATHS = 50_000
+STEPS_PER_YEAR = 50
+SEED = 42
 
-def bs_call_price(
-    spot: tf.Tensor,
-    strike: tf.Tensor,
-    maturity: tf.Tensor,
-    rate: tf.Tensor,
-    dividend_yield: tf.Tensor,
-    volatility: tf.Tensor,
-) -> tf.Tensor:
-    maturity = tf.maximum(tf.cast(maturity, tf.float64), tf.constant(1e-10, tf.float64))
-    volatility = tf.maximum(tf.cast(volatility, tf.float64), tf.constant(1e-10, tf.float64))
-    sqrt_t = tf.sqrt(maturity)
-    d1 = (
-        tf.math.log(spot / strike)
-        + (rate - dividend_yield + 0.5 * tf.square(volatility)) * maturity
-    ) / (volatility * sqrt_t)
-    d2 = d1 - volatility * sqrt_t
-    normal_cdf = lambda x: 0.5 * (1.0 + tf.math.erf(x / tf.sqrt(tf.constant(2.0, tf.float64))))
-    return (
-        spot * tf.exp(-dividend_yield * maturity) * normal_cdf(d1)
-        - strike * tf.exp(-rate * maturity) * normal_cdf(d2)
-    )
+
+def black_call(F: float, K: float, sigma: float, T: float, DF: float) -> float:
+    d1 = (np.log(F / K) + 0.5 * sigma * sigma * T) / (sigma * np.sqrt(T))
+    return DF * (F * norm.cdf(d1) - K * norm.cdf(d1 - sigma * np.sqrt(T)))
+
+
+def black_otm(F: float, K: float, sigma: float, T: float, DF: float) -> float:
+    """Out-of-the-money option: put below the forward, call above (put via parity)."""
+    call = black_call(F, K, sigma, T, DF)
+    return call - DF * (F - K) if K < F else call
+
+
+def implied_vol(price: float, F: float, K: float, T: float, DF: float) -> float:
+    """Implied vol of an OTM price (ITM calls have almost no vega: tiny price errors explode)."""
+    try:
+        return brentq(lambda s: black_otm(F, K, s, T, DF) - price, 1e-4, 3.0)
+    except ValueError:
+        return float("nan")
+
+
+def analyse_local_vol(market_env: tq.MarketEnvironment, ticker: str, out_dir: Path) -> None:
+    """Monte Carlo calibration check of the local vol model on *ticker*; plots in *out_dir*."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    eval_date = tq.Settings.evaluation_date
+    eq = market_env.get_equity(ticker)
+    vs = eq.vol_surface
+    S0 = float(eq.spot)
+    K = np.array(vs.strike)
+    print(f"\n{ticker} ({eq.currency.name})  spot={S0:.4f}  dividends={eq.dividend_model}  "
+          f"repo={float(eq.repo):.4%}")
+    print(f"strike nodes {K[0]:.4f}..{K[-1]:.4f} ({K[0] / S0:.0%}..{K[-1] / S0:.0%} of spot), "
+          f"maturities {[round(t, 2) for t in vs.maturity]}")
+
+    rows, paths_last, t_last, model_last = [], None, None, None
+    for t_node in vs.maturity:
+        expiry = eval_date + timedelta(days=max(1, int(round(t_node * 365))))
+        T = vs.daycounter.year_fraction(eval_date, expiry)
+        model = LocalVolatilityModel.from_equity(eq, expiry)
+        n_steps = max(5, int(round(STEPS_PER_YEAR * T)))
+        t_grid = tf.linspace(tf.constant(0.0, tf.float64), tf.constant(T, tf.float64), n_steps + 1)[1:]
+        dw = tf.random.stateless_normal([N_PATHS, n_steps], seed=[SEED, 0], dtype=tf.float64)
+        paths = model.evolve(t_grid, dw).numpy()
+        s_t = paths[:, -1]
+        DF, F = float(eq.discount_curve.discount(expiry)), float(eq.forward(expiry))
+        iv_mkt = np.array([float(vs.volatility(k, T)) for k in K])
+        iv_mc, iv_se = [], []
+        for k, iv in zip(K, iv_mkt):
+            payoff = DF * (np.maximum(k - s_t, 0.0) if k < F else np.maximum(s_t - k, 0.0))  # OTM
+            vega = DF * F * norm.pdf((np.log(F / k) + 0.5 * iv * iv * T) / (iv * np.sqrt(T))) * np.sqrt(T)
+            iv_mc.append(implied_vol(payoff.mean(), F, k, T, DF))
+            iv_se.append(payoff.std() / np.sqrt(N_PATHS) / vega)
+        rows.append(dict(T=T, F=F, F_mc=s_t.mean(), F_se=s_t.std() / np.sqrt(N_PATHS),
+                         iv_mkt=iv_mkt, iv_mc=np.array(iv_mc), iv_se=np.array(iv_se),
+                         outside=np.mean((s_t < K[0]) | (s_t > K[-1]))))
+        paths_last, t_last, model_last = paths, t_grid.numpy(), model
+
+    # ---- tables ----
+    print("\nForward: MC vs Equity.forward")
+    for r in rows:
+        print(f"  T={r['T']:5.2f}  MC {r['F_mc']:10.4f} +/- {r['F_se']:.4f}   F {r['F']:10.4f}   "
+              f"diff {(r['F_mc'] - r['F']) / r['F_se']:+5.1f} SE   paths outside the strike nodes {r['outside']:.0%}")
+    hdr = " ".join(f"{k / S0:7.0%}" for k in K)
+    print(f"\nImplied vol error MC - market (vol points), K/S0:\n  {'T':>5s}  {hdr}   max|err|/SE")
+    for r in rows:
+        err = (r["iv_mc"] - r["iv_mkt"]) * 100
+        print(f"  {r['T']:5.2f}  " + " ".join(f"{e:+7.2f}" for e in err)
+              + f"   {np.nanmax(np.abs(err) / (r['iv_se'] * 100)):5.1f}")
+    tt, kk = np.meshgrid(vs.maturity, K, indexing="ij")
+    loc = model_last.sigma_loc(tf.constant(tt.ravel(), tf.float64), tf.constant(kk.ravel(), tf.float64))
+    loc = loc.numpy().reshape(tt.shape)
+    print(f"\nLocal vol at the nodes (model of the last maturity), K/S0:\n  {'T':>5s}  {hdr}")
+    for t, row in zip(vs.maturity, loc):
+        print(f"  {t:5.2f}  " + " ".join(f"{v:7.4f}" for v in row))
+
+    # ---- plot 1: smiles (market IV, MC IV +/- 2 SE, local vol) ----
+    n = len(rows)
+    fig, axes = plt.subplots(1, n, figsize=(3.6 * n, 3.6), squeeze=False)
+    fig.suptitle(f"Local vol — {ticker}: market vs MC implied vols (OTM options)", fontweight="bold")
+    for ax, r, lv in zip(axes[0], rows, loc):
+        ax.plot(K / S0, r["iv_mkt"], "o-", color="steelblue", label="market IV")
+        ax.errorbar(K / S0, r["iv_mc"], yerr=2 * r["iv_se"], fmt="s", color="tomato", ms=4, label="MC IV ±2SE")
+        ax.plot(K / S0, lv, "--", color="grey", label="local vol")
+        lo, hi = r["iv_mkt"].min(), r["iv_mkt"].max()
+        ax.set_ylim(lo - 0.5 * (hi - lo) - 0.02, hi + 0.5 * (hi - lo) + 0.02)   # far-OTM short-dated SE bars are huge
+        ax.set_title(f"T={r['T']:.2f}Y", fontsize=10)
+        ax.set_xlabel("K / S0")
+        ax.grid(alpha=0.3)
+    axes[0][0].legend(fontsize=7)
+    plt.tight_layout()
+    plt.savefig(out_dir / "local_vol_smiles.png", dpi=120)
+    plt.close()
+
+    # ---- plot 2: paths of the last maturity, MC forward vs Equity.forward ----
+    fwd_eq = [float(eq.forward(eval_date + timedelta(days=max(1, int(round(t * 365)))))) for t in t_last]
+    fig2, ax2 = plt.subplots(figsize=(10, 4.5))
+    for path in paths_last[np.random.default_rng(0).choice(N_PATHS, 200, replace=False)]:
+        ax2.plot(t_last, path, color="steelblue", alpha=0.05, lw=0.6)
+    ax2.plot(t_last, paths_last.mean(axis=0), color="tomato", lw=2, label="MC E[S_t]")
+    ax2.plot(t_last, fwd_eq, "k--", lw=1.5, label="Equity.forward(t)")
+    lo, hi = np.percentile(paths_last[:, -1], [10, 90])
+    ax2.set_ylim(0.8 * lo, 1.1 * hi)
+    ax2.set_title(f"Local vol paths — {ticker} (model of T={t_last[-1]:.2f}Y: flat r, q)", fontsize=11)
+    ax2.set_xlabel("t (years)")
+    ax2.legend()
+    ax2.grid(alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(out_dir / "local_vol_paths.png", dpi=120)
+    plt.close()
+
+    # ---- plot 3: implied vol errors with the MC band ----
+    fig3, ax3 = plt.subplots(figsize=(8, 4.5))
+    for r, color in zip(rows, plt.cm.viridis(np.linspace(0, 0.9, n))):
+        err = (r["iv_mc"] - r["iv_mkt"]) * 100
+        ax3.plot(K / S0, err, "o-", color=color, ms=3, label=f"T={r['T']:.2f}")
+        ax3.fill_between(K / S0, -2 * r["iv_se"] * 100, 2 * r["iv_se"] * 100, color=color, alpha=0.06)
+    ax3.axhline(0, color="black", lw=0.8)
+    ax3.set_ylim(-5, 5)   # vol points; far-OTM short-dated options have very wide bands
+    ax3.set_title(f"MC implied vol - market (vol points), band = ±2 SE — {ticker}", fontsize=11)
+    ax3.set_xlabel("K / S0")
+    ax3.legend(fontsize=7, ncol=2)
+    ax3.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(out_dir / "local_vol_mc_calls.png", dpi=120)
+    plt.close()
+    print(f"\nPlots saved to {out_dir}: local_vol_smiles.png, local_vol_paths.png, local_vol_mc_calls.png")
 
 
 def build_static_market_environment(evaluation_date: date) -> tq.MarketEnvironment:
+    """Wide strike grid (30%-170%) with a smooth quadratic smile, continuous carry (repo -3.5%)."""
     daycounter = tq.DayCounter(tq.DayCounterConvention.Actual365)
     spot = 5.174
     moneyness_grid = [0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.00, 1.10, 1.20, 1.30, 1.40, 1.50, 1.60, 1.70]
     strike_grid = [round(spot * m, 4) for m in moneyness_grid]
     maturity_grid = [0.25, 0.75, 1.50, 3.00]
-
-    # Smooth quadratic smile: (m-1)^2 is C-inf, no kink at ATM.
-    # Dupire requires a differentiable IV surface; abs(m-1) creates a delta-like
-    # spike in d²C/dK² at ATM that artificially deflates local vol there.
-    volatility_matrix = []
-    for base_vol in [0.34, 0.31, 0.29, 0.27]:
-        row = []
-        for m in moneyness_grid:
-            smile_bump = 0.15 * (m - 1.0) ** 2
-            row.append(round(base_vol + smile_bump, 5))
-        volatility_matrix.append(row)
-
+    # Smooth quadratic smile: (m-1)^2 is C-inf, no kink at ATM (Dupire needs a differentiable surface).
+    volatility_matrix = [[round(base_vol + 0.15 * (m - 1.0) ** 2, 5) for m in moneyness_grid]
+                         for base_vol in [0.34, 0.31, 0.29, 0.27]]
     estr_curve = tq.RateCurve(
         reference_date=evaluation_date,
         pillars=[0.25, 0.5, 1.0, 2.0, 5.0],
@@ -62,7 +180,6 @@ def build_static_market_environment(evaluation_date: date) -> tq.MarketEnvironme
         interp="LINEAR",
         daycounter_convention=tq.DayCounterConvention.Actual365,
     )
-
     vol_surface = tq.VolatilitySurface(
         reference_date=evaluation_date,
         calendar=None,
@@ -71,362 +188,20 @@ def build_static_market_environment(evaluation_date: date) -> tq.MarketEnvironme
         maturity=maturity_grid,
         volatility_matrix=volatility_matrix,
     )
-
-    market = {
+    return tq.MarketEnvironment(market={
         "IR:EUR:ESTR:SPOT": estr_curve,
         "EQ:EUR:TESTCTP:SPOT": spot,
         "EQ:EUR:TESTCTP:VOL": vol_surface,
         "EQ:EUR:TESTCTP:REPO": -0.035,
         "EQ:EUR:TESTCTP:DIVYIELD": 0.0,
-    }
-    return tq.MarketEnvironment(market=market)
+    })
 
 
 def main() -> None:
     evaluation_date = date(2026, 3, 31)
     tq.Settings.evaluation_date = evaluation_date
-    market_env = build_static_market_environment(evaluation_date)
-
-    ticker = "TESTCTP"
-    ccy = tq.Currency.EUR
-
-    spot = tf.cast(market_env.get_eq_spot(ticker, ccy=ccy), tf.float64)
-    vol_surface = market_env.get_eq_vol_surface(ticker, ccy=ccy)
-    disc_curve = market_env.get_ir_curve(ccy)
-
-    T_grid = tf.constant(vol_surface.maturity, dtype=tf.float64)
-    K_grid = tf.constant(vol_surface.strike, dtype=tf.float64)
-    iv_matrix = tf.Variable(tf.cast(vol_surface.volatility_matrix, tf.float64))
-
-    # Flat-rate approximation: extract r from the ESTR curve at the longest
-    # grid maturity. For Dupire on sparse grids this is a standard convention.
-    T_max = float(T_grid[-1].numpy())
-    r = tf.cast(disc_curve.zero_rate(T_max), tf.float64)
-    q = tf.cast(market_env.get_eq_div_yield(ticker, ccy=ccy), tf.float64)
-
-    local_vol_model = LocalVolatilityModel.from_implied_vol(
-        iv_matrix=iv_matrix,
-        T_grid=T_grid,
-        K_grid=K_grid,
-        S0=spot,
-        r=r,
-        q=q,
-    )
-
-    # --- Compute market call prices (BS with full r, q) ---
-    market_call_prices = []
-    for i in range(T_grid.shape[0]):
-        row = bs_call_price(
-            spot=spot,
-            strike=K_grid,
-            maturity=T_grid[i],
-            rate=r,
-            dividend_yield=q,
-            volatility=iv_matrix[i, :],
-        )
-        market_call_prices.append(row)
-    market_call_matrix = tf.stack(market_call_prices, axis=0)   # [nT, nK]
-
-    # --- Call price diffs (butterfly proxy for d²C/dK²) ---
-    call_price_diffs     = market_call_matrix[:, 1:] - market_call_matrix[:, :-1]
-
-    # --- Calibrate local vol surface from the same call prices ---
-    TT, KK = tf.meshgrid(T_grid, K_grid, indexing="ij")
-    sigma_loc_flat  = local_vol_model.sigma_loc(tf.reshape(TT, [-1]), tf.reshape(KK, [-1]))
-    sigma_loc_matrix = tf.reshape(sigma_loc_flat, tf.shape(TT))   # [nT, nK]
-
-    # --- Sanity check: reprice with local vol and compare to market ---
-    # Approximation: use σ_loc(T_i, K_j) as a flat vol in Black formula
-    # and compare to market IV. For a well-calibrated LV surface the
-    # discrepancy should be small around ATM and larger at the wings
-    # (finite-difference noise on sparse grids is expected).
-    model_call_prices = []
-    for i in range(T_grid.shape[0]):
-        row = bs_call_price(
-            spot=spot,
-            strike=K_grid,
-            maturity=T_grid[i],
-            rate=r,
-            dividend_yield=q,
-            volatility=sigma_loc_matrix[i, :],
-        )
-        model_call_prices.append(row)
-    model_call_matrix = tf.stack(model_call_prices, axis=0)   # [nT, nK]
-    price_error       = model_call_matrix - market_call_matrix   # [nT, nK]
-    abs_price_error   = tf.abs(price_error)
-
-    # --- Quick path simulation ---
-    n_paths    = 2000
-    n_steps    = 60
-    t_grid_sim = tf.linspace(tf.constant(0.0), tf.constant(T_max), n_steps + 1)[1:]
-    dw         = tf.random.normal([n_paths, n_steps], dtype=tf.float64)
-    paths      = local_vol_model.evolve(t_grid_sim, dw)
-
-    # --- Output ---
-    nT, nK = T_grid.shape[0], K_grid.shape[0]
-    col_w = 10
-
-    def fmt_row(values):
-        return "  ".join(f"{v:>{col_w}.5f}" for v in values)
-
-    header_k = "  ".join(f"K={k:>6.3f}" for k in K_grid.numpy())
-
-    print("\n=== Local Vol Calibration (full Dupire: r, q, non-uniform grid) ===")
-    print(f"spot={float(spot.numpy()):.4f}  r={float(r.numpy()):.4f}  q={float(q.numpy()):.4f}")
-    print(f"T grid: {T_grid.numpy().tolist()}")
-    print(f"K grid: {K_grid.numpy().tolist()}")
-
-    print(f"\n{'Implied vol surface (market)':}")
-    print("  " + header_k)
-    for i in range(nT):
-        print(f"  T={T_grid[i].numpy():.2f}  " + fmt_row(iv_matrix[i].numpy()))
-
-    print(f"\n{'Local vol surface (Dupire)':}")
-    print("  " + header_k)
-    for i in range(nT):
-        print(f"  T={T_grid[i].numpy():.2f}  " + fmt_row(sigma_loc_matrix[i].numpy()))
-
-    print(f"\n{'Market call prices (BS)':}")
-    print("  " + header_k)
-    for i in range(nT):
-        print(f"  T={T_grid[i].numpy():.2f}  " + fmt_row(market_call_matrix[i].numpy()))
-
-    print(f"\n{'Call price diffs by strike (dC/dK proxy)':}")
-    for i in range(nT):
-        print(f"  T={T_grid[i].numpy():.2f}  " + fmt_row(call_price_diffs[i].numpy()))
-
-    print(f"\n{'Reprice error: BS(sigma_loc) - market call (model vs market)':}")
-    print("  " + header_k)
-    for i in range(nT):
-        print(f"  T={T_grid[i].numpy():.2f}  " + fmt_row(price_error[i].numpy()))
-
-    print(f"\n{'Max abs reprice error per maturity':}")
-    for i in range(nT):
-        print(f"  T={T_grid[i].numpy():.2f}  max_abs={float(tf.reduce_max(abs_price_error[i]).numpy()):.6f}")
-
-    print(f"\nSimulated paths shape: {paths.shape}")
-    print(f"Mean terminal spot (T={T_max:.2f}): {float(tf.reduce_mean(paths[:, -1]).numpy()):.4f}")
-
-    # ----------------------------------------------------------------
-    # Monte Carlo sanity checks
-    # Simulate paths at the exact maturity dates in T_grid so that
-    # each terminal slice S[:,i] corresponds to T_grid[i].
-    # ----------------------------------------------------------------
-    n_mc    = 50_000
-    n_steps = 100
-    tf.random.set_seed(42)
-
-    # evolve() returns [n_paths, n_steps] at each t in t_grid.
-    # We pass T_grid directly so that step i ends exactly at T_grid[i].
-    dw_mc   = tf.random.normal([n_mc, T_grid.shape[0]], dtype=tf.float64)
-    # One step per maturity: evolve with t_grid = T_grid (single-step per maturity).
-    # For smoother paths use sub-steps and pick the last of each segment.
-    # Here we use a fine grid and sub-sample at the maturity indices.
-    t_fine      = tf.linspace(0.0, T_max, n_steps + 1)[1:]               # [n_steps]
-    dw_fine     = tf.random.normal([n_mc, n_steps], dtype=tf.float64)
-    paths_mc    = local_vol_model.evolve(t_fine, dw_fine)                 # [n_mc, n_steps]
-
-    # Indices of t_fine closest to each T_grid[i]
-    t_fine_np   = t_fine.numpy()
-    maturity_idx = [int(np.argmin(np.abs(t_fine_np - float(T_grid[i].numpy())))) for i in range(nT)]
-    terminal     = [paths_mc[:, idx] for idx in maturity_idx]            # list of [n_mc]
-
-    print("\n" + "=" * 70)
-    print("Monte Carlo Sanity Checks")
-    print("=" * 70)
-
-    for i in range(nT):
-        Ti       = float(T_grid[i].numpy())
-        S_T      = terminal[i]                                            # [n_mc]
-        log_S_T  = tf.math.log(S_T / spot)
-
-        # 1) Forward match: E[S_T] vs theoretical forward
-        mc_fwd      = float(tf.reduce_mean(S_T).numpy())
-        theo_fwd    = float(spot.numpy()) * float(tf.exp((r - q) * Ti).numpy())
-        fwd_err_pct = (mc_fwd - theo_fwd) / theo_fwd * 100
-
-        # 2) MC call and put prices at each strike
-        df_T     = float(tf.exp(-r * Ti).numpy())
-        mc_calls = df_T * tf.reduce_mean(
-            tf.maximum(S_T[:, None] - K_grid[None, :], 0.0), axis=0
-        ).numpy()                                                          # [nK]
-        mc_puts  = df_T * tf.reduce_mean(
-            tf.maximum(K_grid[None, :] - S_T[:, None], 0.0), axis=0
-        ).numpy()                                                          # [nK]
-
-        # 3) Put-call parity error: C - P - (S0*e^{-qT} - K*e^{-rT})
-        pcp_lhs  = mc_calls - mc_puts
-        pcp_rhs  = (float(spot.numpy()) * float(tf.exp(-q * Ti).numpy())
-                    - K_grid.numpy() * df_T)
-        pcp_err  = np.abs(pcp_lhs - pcp_rhs)
-
-        # 4) Vol proxy: std of log-returns vs ATM implied vol
-        atm_idx  = int(np.argmin(np.abs(K_grid.numpy() - float(spot.numpy()))))
-        mc_vol   = float(tf.math.reduce_std(log_S_T).numpy()) / np.sqrt(Ti)
-        mkt_atm  = float(iv_matrix[i, atm_idx].numpy())
-
-        # 5) MC call error vs market
-        mc_call_err = np.abs(mc_calls - market_call_matrix[i].numpy())
-
-        print(f"\n  T = {Ti:.2f}Y")
-        print(f"    [1] Forward — MC: {mc_fwd:.4f}  |  Theo: {theo_fwd:.4f}  |  Error: {fwd_err_pct:+.3f}%")
-        print(f"    [2] ATM vol proxy — MC std/sqrt(T): {mc_vol:.4f}  |  Market ATM IV: {mkt_atm:.4f}  |  Diff: {mc_vol - mkt_atm:+.4f}")
-        print(f"    [3] Put-call parity — max abs error: {pcp_err.max():.6f}  |  mean: {pcp_err.mean():.6f}")
-        print(f"    [4] MC call vs market — max abs: {mc_call_err.max():.4f}  |  mean: {mc_call_err.mean():.4f}")
-        print(f"        (strikes: " + "  ".join(f"K={k:.2f}: {e:.4f}" for k, e in
-              zip(K_grid.numpy()[::3], mc_call_err[::3])) + ")")
-
-    # ----------------------------------------------------------------
-    # Plot: simulated paths + analytical vs simulated forward
-    # ----------------------------------------------------------------
-    t_np       = t_fine.numpy()                                       # [n_steps]
-    paths_np   = paths_mc.numpy()                                     # [n_mc, n_steps]
-    S0_val     = float(spot.numpy())
-    r_val      = float(r.numpy())
-    q_val      = float(q.numpy())
-
-    # Analytical forward at each time step
-    fwd_theo   = S0_val * np.exp((r_val - q_val) * t_np)             # [n_steps]
-    # Simulated forward (cross-sectional mean)
-    fwd_mc     = paths_np.mean(axis=0)                                # [n_steps]
-
-    fig_paths, ax_p = plt.subplots(figsize=(11, 5))
-    fig_paths.suptitle("MC Paths — Local Vol Model (TESTCTP)", fontsize=13, fontweight="bold")
-
-    # Clip y-axis to [1%, 99%] percentile of terminal values to avoid
-    # extreme paths squashing the view.
-    p01 = float(np.percentile(paths_np[:, -1], 20))
-    p99 = float(np.percentile(paths_np[:, -1], 80))
-    margin = (p99 - p01) * 0.10
-    y_lo, y_hi = max(0.0, p01 - margin), p99 + margin
-
-    # Background paths: plot a random subset, heavily faded
-    n_show = min(300, paths_np.shape[0])
-    rng    = np.random.default_rng(0)
-    idx    = rng.choice(paths_np.shape[0], n_show, replace=False)
-    for path in paths_np[idx]:
-        ax_p.plot(t_np, path, color="steelblue", alpha=0.04, linewidth=0.6)
-
-    # Simulated forward (mean path)
-    ax_p.plot(t_np, fwd_mc,   color="tomato",  linewidth=2.2,
-              label="Simulated forward  E[S_t]", zorder=3)
-    # Analytical forward
-    ax_p.plot(t_np, fwd_theo, color="black",   linewidth=1.8,
-              linestyle="--", label="Analytical forward  S\u2080\u00b7e^{(r-q)t}", zorder=4)
-
-    # Maturity markers
-    for Ti in T_grid.numpy():
-        ax_p.axvline(Ti, color="grey", linestyle=":", linewidth=0.9, alpha=0.6)
-        ax_p.text(Ti + 0.02, y_hi * 0.98, f"T={Ti:.2f}", fontsize=7,
-                  color="grey", va="top")
-
-    ax_p.axhline(S0_val, color="dimgrey", linestyle=":", linewidth=0.9, alpha=0.5,
-                 label=f"S\u2080 = {S0_val:.2f}")
-    ax_p.set_ylim(y_lo, y_hi)
-    ax_p.set_xlabel("Time (years)")
-    ax_p.set_ylabel("Spot")
-    ax_p.legend(fontsize=9)
-    ax_p.grid(True, alpha=0.25)
-
-    plt.tight_layout()
-    plt.savefig("examples/local_vol_paths.png", dpi=150)
-    plt.show()
-    print("Paths plot saved to examples/local_vol_paths.png")
-
-    # ----------------------------------------------------------------
-    # Plot: MC call prices vs market (one panel per maturity)
-    # ----------------------------------------------------------------
-    fig_mc, axes_mc = plt.subplots(1, nT, figsize=(5 * nT, 4), sharey=False)
-    fig_mc.suptitle("MC Call Prices vs Market — TESTCTP", fontsize=13, fontweight="bold")
-
-    for i in range(nT):
-        Ti   = float(T_grid[i].numpy())
-        df_T = float(tf.exp(-r * Ti).numpy())
-        mc_c = df_T * tf.reduce_mean(
-            tf.maximum(terminal[i][:, None] - K_grid[None, :], 0.0), axis=0
-        ).numpy()
-
-        ax = axes_mc[i]
-        ax.plot(K_grid.numpy(), market_call_matrix[i].numpy(),
-                color="steelblue", marker="o", label="Market (BS)")
-        ax.plot(K_grid.numpy(), mc_c,
-                color="tomato", marker="s", linestyle="--", label="MC Local Vol")
-        ax.axvline(float(spot.numpy()), color="grey", linestyle=":", linewidth=1, label="ATM")
-        ax.set_title(f"T = {Ti:.2f}Y", fontsize=11)
-        ax.set_xlabel("Strike")
-        ax.set_ylabel("Call price" if i == 0 else "")
-        ax.legend(fontsize=8)
-        ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig("examples/local_vol_mc_calls.png", dpi=150)
-    plt.show()
-    print("MC plot saved to examples/local_vol_mc_calls.png")
-
-    # --- Plots: one column per maturity, three rows ---
-    K_np   = K_grid.numpy()
-    T_np   = T_grid.numpy()
-    iv_np  = iv_matrix.numpy()
-    lv_np  = sigma_loc_matrix.numpy()
-    mc_np  = market_call_matrix.numpy()
-    ml_np  = model_call_matrix.numpy()
-    err_np = price_error.numpy()
-    S0     = float(spot.numpy())
-
-    fig, axes = plt.subplots(3, nT, figsize=(5 * nT, 12), sharex="col")
-    fig.suptitle("Local Vol Calibration — TESTCTP", fontsize=14, fontweight="bold")
-
-    row_titles = [
-        "Implied vol vs Local vol",
-        "Call prices: market vs LV reprice",
-        "Reprice error (LV - market)",
-    ]
-
-    for i in range(nT):
-        T_label = f"T = {T_np[i]:.2f}Y"
-
-        # Row 0 — smile: IV vs LV
-        ax = axes[0, i]
-        ax.plot(K_np, iv_np[i], color="steelblue", marker="o", label="Implied vol (market)")
-        ax.plot(K_np, lv_np[i], color="tomato",    marker="s", linestyle="--", label="Local vol (Dupire)")
-        ax.axvline(S0, color="grey", linestyle=":", linewidth=1, label="ATM")
-        ax.set_title(T_label, fontsize=11)
-        ax.set_ylabel("Volatility" if i == 0 else "")
-        ax.legend(fontsize=8)
-        ax.grid(True, alpha=0.3)
-
-        # Row 1 — call prices: market vs LV
-        ax = axes[1, i]
-        ax.plot(K_np, mc_np[i], color="steelblue", marker="o", label="Market call")
-        ax.plot(K_np, ml_np[i], color="tomato",    marker="s", linestyle="--", label="LV reprice")
-        ax.axvline(S0, color="grey", linestyle=":", linewidth=1)
-        ax.set_ylabel("Call price" if i == 0 else "")
-        ax.legend(fontsize=8)
-        ax.grid(True, alpha=0.3)
-
-        # Row 2 — reprice error
-        ax = axes[2, i]
-        ax.bar(K_np, err_np[i], width=(K_np[1] - K_np[0]) * 0.5, color=[
-            "tomato" if e < 0 else "steelblue" for e in err_np[i]
-        ], alpha=0.8)
-        ax.axhline(0, color="black", linewidth=0.8)
-        ax.axvline(S0, color="grey", linestyle=":", linewidth=1)
-        ax.set_ylabel("Price error" if i == 0 else "")
-        ax.set_xlabel("Strike")
-        ax.grid(True, alpha=0.3, axis="y")
-
-    for row, title in enumerate(row_titles):
-        axes[row, 0].annotate(
-            title, xy=(-0.3, 0.5), xycoords="axes fraction",
-            fontsize=10, fontweight="bold", va="center", rotation=90,
-        )
-
-    plt.tight_layout()
-    plt.savefig("examples/local_vol_smiles.png", dpi=150)
-    plt.show()
-    print("Plot saved to examples/local_vol_smiles.png")
+    analyse_local_vol(build_static_market_environment(evaluation_date), "TESTCTP", Path(__file__).resolve().parent)
 
 
 if __name__ == "__main__":
-    tf.keras.backend.set_floatx("float64")
     main()

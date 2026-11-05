@@ -1,10 +1,13 @@
 from datetime import date
-from typing import Union
+from typing import Sequence, Union
+
+import numpy as np
+import tensorflow as tf
+from scipy.interpolate import CubicSpline
 
 from .stochasticprocess import StochasticProcess
 from .brownian import _equity_carry_inputs
 from ..numericalhandles.dtypes import DTYPE
-import tensorflow as tf
 
 
 # ============================================================
@@ -161,7 +164,105 @@ def _dupire_local_vol(C, T, K, r=0.0, q=0.0, eps=1e-10, sig_cap=4.0):
     denom     = tf.maximum(0.5 * tf.square(K_row) * tf.maximum(d2K, eps), eps)
     sig2      = tf.maximum(numerator, 0.0) / denom
 
-    return tf.sqrt(tf.clip_by_value(sig2, 0.0, sig_cap))
+    # floor inside the sqrt: sqrt'(0) is infinite and 0 * inf = nan in the gradient
+    return tf.sqrt(tf.clip_by_value(sig2, 1e-12, sig_cap))
+
+
+# ============================================================
+# Re-gridding of the implied vol surface before Dupire
+# ============================================================
+
+def _strike_weights(k_nodes: np.ndarray, k_new: np.ndarray) -> np.ndarray:
+    """Weights ``W [n_new, n_nodes]`` with ``iv(k_new) = W @ iv(k_nodes)``.
+
+    Natural cubic spline in log-strike inside the node range; outside, linear in
+    log-strike with the slope of the two edge nodes (the skew is continued). Both
+    are linear in the node values, so ``W`` is built once by splining unit vectors.
+    """
+    x, y = np.log(k_nodes), np.log(k_new)
+    n = len(x)
+    W = np.empty((len(y), n))
+    lo, hi = y < x[0], y > x[-1]
+    for j in range(n):
+        e = np.zeros(n)
+        e[j] = 1.0
+        col = CubicSpline(x, e, bc_type="natural")(np.clip(y, x[0], x[-1]))
+        col[lo] = e[0] + (e[1] - e[0]) / (x[1] - x[0]) * (y[lo] - x[0])
+        col[hi] = e[-1] + (e[-1] - e[-2]) / (x[-1] - x[-2]) * (y[hi] - x[-1])
+        W[:, j] = col
+    return W
+
+
+def _time_weights(t_nodes: np.ndarray, t_new: np.ndarray) -> np.ndarray:
+    """Weights ``W [n_new, n_nodes]`` with ``w(t_new) = W @ w(t_nodes)`` for total variance ``w = iv^2 T``.
+
+    Linear in total variance between node maturities; flat implied vol before the
+    first and after the last node (``w`` proportional to ``T``).
+    """
+    W = np.zeros((len(t_new), len(t_nodes)))
+    for a, t in enumerate(t_new):
+        if t <= t_nodes[0]:
+            W[a, 0] = t / t_nodes[0]
+        elif t >= t_nodes[-1]:
+            W[a, -1] = t / t_nodes[-1]
+        else:
+            i = int(np.searchsorted(t_nodes, t)) - 1
+            u = (t - t_nodes[i]) / (t_nodes[i + 1] - t_nodes[i])
+            W[a, i], W[a, i + 1] = 1.0 - u, u
+    return W
+
+
+def regrid_implied_vol(
+    iv_matrix,
+    t_nodes: Sequence[float],
+    k_nodes: Sequence[float],
+    strike_range: tuple = (0.1, 5.0),
+    n_strikes: int = 60,
+    time_step: float = 1.0 / 12.0,
+    iv_bounds: tuple = (0.05, 1.5),
+):
+    """Implied vol on a wide, fine (T, K) grid for Dupire, differentiable w.r.t. the node vols.
+
+    Dupire needs dC/dT and d2C/dK2 on a grid that covers where paths go. The market
+    grid is usually narrow (e.g. 60%-140% of spot) and coarse: paths outside it get the
+    local vol of the edge nodes and the skew is cut, which underprices the wings and,
+    at long maturities, the whole smile. Here the surface is re-gridded with linear
+    operators on the node values (``tf.matmul``), so gradients reach every node:
+
+    - strikes: ``n_strikes`` log-spaced points over ``strike_range`` times the central
+      node strike ``sqrt(K_min K_max)``; natural cubic spline in log K inside the nodes,
+      skew continued linearly in log K outside;
+    - maturities: points before the first node (flat implied vol), the first node, then
+      every ``time_step`` up to the last node; total variance linear in T.
+
+    Args:
+        iv_matrix: ``[nT, nK]`` node implied vols (e.g. ``VolatilitySurface.volatility_matrix``).
+        t_nodes: ``[nT]`` node maturities (year fractions, increasing).
+        k_nodes: ``[nK]`` node strikes (increasing).
+        strike_range: Strike range as multiples of the central node strike.
+        n_strikes: Number of strikes of the new grid.
+        time_step: Maturity step of the new grid (years).
+        iv_bounds: Floor and cap on the re-gridded implied vols.
+
+    Returns:
+        tuple: ``(iv_new [nT', nK'] tf.Tensor, t_new np.ndarray, k_new np.ndarray)``.
+    """
+    t_nodes, k_nodes = np.asarray(t_nodes, dtype=float), np.asarray(k_nodes, dtype=float)
+    k_ref = np.sqrt(k_nodes[0] * k_nodes[-1])
+    k_new = k_ref * np.exp(np.linspace(np.log(strike_range[0]), np.log(strike_range[1]), n_strikes))
+    steps = np.arange(time_step, t_nodes[-1], time_step)
+    # points before the first node (flat implied vol there): otherwise the first Dupire row,
+    # used for every t < T_0, holds the forward vol between the first two nodes
+    n_short = max(2, int(np.ceil(t_nodes[0] / time_step)))
+    short = t_nodes[0] * np.arange(1, n_short) / n_short
+    t_new = np.unique(np.concatenate([short, [t_nodes[0]], steps[steps > t_nodes[0]], [t_nodes[-1]]]))
+
+    iv = tf.cast(iv_matrix, DTYPE)
+    w_nodes = tf.square(iv) * tf.constant(t_nodes[:, None], DTYPE)                 # [nT, nK]
+    w_t = tf.matmul(tf.constant(_time_weights(t_nodes, t_new), DTYPE), w_nodes)    # [nT', nK]
+    iv_t = tf.sqrt(w_t / tf.constant(t_new[:, None], DTYPE))
+    iv_new = tf.matmul(iv_t, tf.constant(_strike_weights(k_nodes, k_new).T, DTYPE))  # [nT', nK']
+    return tf.clip_by_value(iv_new, iv_bounds[0], iv_bounds[1]), t_new, k_new
 
 
 def _bilinear_interp(sigma_TK, T_grid, K_grid, t, S):
@@ -207,6 +308,27 @@ def _bilinear_interp(sigma_TK, T_grid, K_grid, t, S):
     s0 = s00 * (1.0 - wk) + s01 * wk
     s1 = s10 * (1.0 - wk) + s11 * wk
     return s0 * (1.0 - wt) + s1 * wt
+
+
+@tf.function(reduce_retracing=True)
+def _simulate_log_euler(sigma_TK, T_grid, K_grid, S0, r, q, t_grid, dw):
+    """Log-Euler paths ``[n_paths, n_steps]`` with local vol ``sigma_TK`` (bilinear in (t, S)).
+
+    Module-level ``tf.function`` on tensors only: compiled once per input signature
+    (not per model instance) and differentiable w.r.t. ``sigma_TK``, ``S0``, ``r``, ``q``.
+    """
+    n_paths = tf.shape(dw)[0]
+    n_steps = tf.shape(dw)[1]
+    t_full = tf.concat([tf.zeros([1], DTYPE), t_grid], axis=0)  # [n_steps+1]
+    S = tf.fill([n_paths], S0)
+    paths = tf.TensorArray(dtype=DTYPE, size=n_steps)
+    for k in tf.range(n_steps):
+        t0 = t_full[k]
+        dt = t_full[k + 1] - t_full[k]
+        sig = _bilinear_interp(sigma_TK, T_grid, K_grid, tf.fill([n_paths], t0), S)
+        S = S * tf.exp((r - q - 0.5 * tf.square(sig)) * dt + sig * tf.sqrt(dt) * dw[:, k])
+        paths = paths.write(k, S)
+    return tf.transpose(paths.stack(), perm=[1, 0])
 
 
 # ============================================================
@@ -344,11 +466,18 @@ class LocalVolatilityModel(StochasticProcess):
         strike: float = None,
         dupire_eps: float = 1e-10,
         sigma_cap: float = 4.0,
+        regrid: bool = True,
+        strike_range: tuple = (0.1, 5.0),
+        n_strikes: int = 60,
+        time_step: float = 1.0 / 12.0,
     ) -> "LocalVolatilityModel":
         """Dupire model for one option on *equity*, from the market risk factors (differentiable).
 
         Implied vols are the surface nodes (``volatility_matrix``, a market variable), so
-        gradients reach every node. Spot and carry are flat up to *maturity*, as in
+        gradients reach every node. With ``regrid`` (default) Dupire runs on the wide, fine
+        grid of :func:`regrid_implied_vol` instead of the market nodes (TICKER1 snapshot,
+        MC implied vols at the nodes vs market: 5Y ATM -4.7 vol points on the market grid,
+        within 0.3 re-gridded). Spot and carry are flat up to *maturity*, as in
         :meth:`GeometricBrownianMotion.from_equity`: escrowed ``S* = S - PV(div)`` with
         ``q = repo`` (discrete dividends), or ``S`` with ``q = div_yield + repo``;
         ``r = -ln P(0,T)/T``. The forward is exact at *maturity* only (flat r, q).
@@ -359,6 +488,8 @@ class LocalVolatilityModel(StochasticProcess):
             strike (float, optional): Unused (same signature as the GBM factory).
             dupire_eps (float): Numerical floor in the Dupire denominator.
             sigma_cap (float): Upper cap on the local vol.
+            regrid (bool): Re-grid the implied vols before Dupire (see :func:`regrid_implied_vol`).
+            strike_range, n_strikes, time_step: Re-gridding parameters.
 
         Returns:
             LocalVolatilityModel: Model whose inputs are market tensors.
@@ -370,9 +501,11 @@ class LocalVolatilityModel(StochasticProcess):
             raise ValueError(f"No volatility surface for underlying '{equity.ticker}'")
         x0, r, q, _ = _equity_carry_inputs(equity, maturity)
         surface = equity.vol_surface
+        iv, t_grid, k_grid = surface.volatility_matrix, surface.maturity, surface.strike
+        if regrid:
+            iv, t_grid, k_grid = regrid_implied_vol(iv, t_grid, k_grid, strike_range, n_strikes, time_step)
         return cls.from_implied_vol(
-            surface.volatility_matrix, surface.maturity, surface.strike, S0=x0, r=r, q=q,
-            dupire_eps=dupire_eps, sigma_cap=sigma_cap,
+            iv, t_grid, k_grid, S0=x0, r=r, q=q, dupire_eps=dupire_eps, sigma_cap=sigma_cap,
         )
 
     # ------------------------------------------------------------------
@@ -454,7 +587,6 @@ class LocalVolatilityModel(StochasticProcess):
     # Main simulation
     # ------------------------------------------------------------------
 
-    @tf.function
     def evolve(self, t_grid, dw):
         """
         Simulate paths using a log-Euler (Milstein-order-0) scheme with
@@ -479,40 +611,14 @@ class LocalVolatilityModel(StochasticProcess):
             dw     = tf.random.normal([n_paths, n_steps])
             paths  = model.evolve(t_grid, dw)
         """
-        dw     = tf.cast(tf.convert_to_tensor(dw),     DTYPE)
+        dw = tf.cast(tf.convert_to_tensor(dw), DTYPE)
         t_grid = tf.cast(tf.convert_to_tensor(t_grid), DTYPE)
-
-        n_paths = tf.shape(dw)[0]
-        n_steps = tf.shape(dw)[1]
-
-        # Prepend t=0 so we can compute dt for the first step
-        t_full = tf.concat([tf.zeros([1], DTYPE), t_grid], axis=0)  # [n_steps+1]
-
-        # Precompute σ_loc surface once (differentiable w.r.t. self._C)
+        # Local vol surface once, eagerly (differentiable w.r.t. self._C)
         sigma_TK = _dupire_local_vol(
             tf.cast(self._C, DTYPE),
             self._T_grid, self._K_grid,
             r=self._r, q=self._q,
             eps=self._eps, sig_cap=self._cap,
         )
-
-        S     = tf.fill([n_paths], self._S0)
-        paths = tf.TensorArray(dtype=DTYPE, size=n_steps)
-
-        for k in tf.range(n_steps):
-            t0 = t_full[k]
-            dt = t_full[k + 1] - t_full[k]
-
-            t_v = tf.fill([n_paths], t0)
-            sig = _bilinear_interp(sigma_TK, self._T_grid, self._K_grid, t_v, S)
-
-            # Log-Euler step
-            drift = (self._r - self._q - 0.5 * tf.square(sig)) * dt
-            diff  = sig * tf.sqrt(dt) * dw[:, k]
-            S     = S * tf.exp(drift + diff)
-
-            paths = paths.write(k, S)
-
-        # [n_steps, n_paths] → [n_paths, n_steps]
-        return tf.transpose(paths.stack(), perm=[1, 0])
+        return _simulate_log_euler(sigma_TK, self._T_grid, self._K_grid, self._S0, self._r, self._q, t_grid, dw)
 

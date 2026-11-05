@@ -182,5 +182,69 @@ class TestLocalVol(MCTestCase):
         self.assertAlmostEqual(grad[i, j], (out[0] - out[1]) / (2 * h), delta=1e-3 * abs(grad[i, j]))
 
 
+
+def skewed_market(regrid_ticker: str = "SKEW") -> MarketEnvironment:
+    """Narrow (70%-130%), coarse grid with a strong skew: paths leave the grid, as in the marketdata/ snapshot."""
+    strikes = [70.0, 80.0, 90.0, 100.0, 110.0, 120.0, 130.0]
+    maturities = [0.25, 0.5, 1.0, 2.0, 3.0]
+    iv = [[0.30 - 0.25 * np.log(k / S0) / np.sqrt(max(t, 0.25)) + 0.2 * np.log(k / S0) ** 2 for k in strikes]
+          for t in maturities]
+    surface = VolatilitySurface(
+        reference_date=EVAL_DATE, calendar=None, daycounter=DayCounter(DayCounterConvention.Actual365),
+        strike=strikes, maturity=maturities, volatility_matrix=iv,
+    )
+    return MarketEnvironment(market={
+        "IR:EUR:ESTR:SPOT": tq.RateCurve(EVAL_DATE, PILLARS, RATES, "LINEAR", DayCounterConvention.Actual365),
+        f"EQ:EUR:{regrid_ticker}:SPOT": S0,
+        f"EQ:EUR:{regrid_ticker}:REPO": 0.0,
+        f"EQ:EUR:{regrid_ticker}:VOL": surface,
+    })
+
+
+class TestRegrid(unittest.TestCase):
+    def test_weights_reproduce_the_nodes(self):
+        from tensorquant.models.localvolatility import _strike_weights, _time_weights
+        k, t = np.array([70.0, 85.0, 100.0, 120.0, 150.0]), np.array([0.25, 0.5, 1.0, 3.0])
+        np.testing.assert_allclose(_strike_weights(k, k), np.eye(len(k)), atol=1e-12)
+        np.testing.assert_allclose(_time_weights(t, t), np.eye(len(t)), atol=1e-12)
+
+    def test_flat_surface_stays_flat_and_gradient_reaches_nodes(self):
+        from tensorquant.models.localvolatility import regrid_implied_vol
+        iv = tf.Variable(np.full((3, 4), 0.25), dtype=tf.float64)
+        with tf.GradientTape() as tape:
+            new, t_new, k_new = regrid_implied_vol(iv, [0.5, 1.0, 2.0], [80.0, 95.0, 110.0, 130.0])
+            total = tf.reduce_sum(new)
+        np.testing.assert_allclose(new.numpy(), 0.25, atol=1e-12)
+        self.assertGreater(len(k_new), 4)
+        self.assertEqual(t_new[-1], 2.0)
+        self.assertTrue(np.all(np.abs(tape.gradient(total, iv).numpy()) > 0))  # spline weights may be < 0
+
+    def test_skewed_smile_repriced_at_the_nodes(self):
+        """MC implied vols at the 2Y nodes within 1.5 vol points with re-gridding; the market grid is far worse."""
+        from scipy.optimize import brentq
+        from scipy.stats import norm
+        tq.Settings.evaluation_date = EVAL_DATE
+        mkt = skewed_market()
+        eq = mkt.get_equity("SKEW")
+        expiry = date(2028, 5, 14)  # 2Y
+        T = eq.vol_surface.daycounter.year_fraction(EVAL_DATE, expiry)
+        DF, F = float(eq.discount_curve.discount(expiry)), float(eq.forward(expiry))
+        t_grid = tf.linspace(tf.constant(0.0, tf.float64), tf.constant(T, tf.float64), 101)[1:]
+        dw = tf.random.stateless_normal([40_000, 100], seed=[3, 0], dtype=tf.float64)
+
+        def implied(price, K):
+            f = lambda s: DF * (F * norm.cdf((np.log(F / K) + 0.5 * s * s * T) / (s * np.sqrt(T)))
+                                - K * norm.cdf((np.log(F / K) - 0.5 * s * s * T) / (s * np.sqrt(T)))) - price
+            return brentq(f, 1e-4, 3.0)
+
+        worst = {}
+        for regrid in (True, False):
+            s_t = tq.LocalVolatilityModel.from_equity(eq, expiry, regrid=regrid).evolve(t_grid, dw).numpy()[:, -1]
+            worst[regrid] = max(abs(implied(np.mean(DF * np.maximum(s_t - K, 0.0)), K) - float(eq.vol_surface.volatility(K, T)))
+                                for K in eq.vol_surface.strike)
+        self.assertLess(worst[True], 0.015)
+        self.assertGreater(worst[False], 2 * worst[True])
+
+
 if __name__ == "__main__":
     unittest.main()
