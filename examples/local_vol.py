@@ -2,7 +2,8 @@
 Local Volatility Model (Dupire) — calibration check by Monte Carlo, static synthetic market.
 
 For each maturity of the vol surface:
-  1. Build ``LocalVolatilityModel.from_equity`` (market vol nodes, re-gridded before Dupire).
+  1. Build ``LocalVolatilityModel.from_equity`` (Gatheral local vol on the market vol nodes in
+     forward moneyness; simulation of S/F(t) on the market forward).
   2. Simulate to that maturity (stateless seed).
   3. Check the MC forward against ``Equity.forward`` and the MC implied vols (OTM options:
      puts below the forward, calls above) against the market vols at every strike node
@@ -33,7 +34,8 @@ import tensorquant as tq
 from tensorquant.models.localvolatility import LocalVolatilityModel
 
 N_PATHS = 50_000
-STEPS_PER_YEAR = 50
+STEPS_PER_YEAR = 100
+MIN_STEPS = 100        # short maturities need enough Euler steps
 SEED = 42
 
 
@@ -74,7 +76,7 @@ def analyse_local_vol(market_env: tq.MarketEnvironment, ticker: str, out_dir: Pa
         expiry = eval_date + timedelta(days=max(1, int(round(t_node * 365))))
         T = vs.daycounter.year_fraction(eval_date, expiry)
         model = LocalVolatilityModel.from_equity(eq, expiry)
-        n_steps = max(5, int(round(STEPS_PER_YEAR * T)))
+        n_steps = max(MIN_STEPS, int(round(STEPS_PER_YEAR * T)))
         t_grid = tf.linspace(tf.constant(0.0, tf.float64), tf.constant(T, tf.float64), n_steps + 1)[1:]
         dw = tf.random.stateless_normal([N_PATHS, n_steps], seed=[SEED, 0], dtype=tf.float64)
         paths = model.evolve(t_grid, dw).numpy()

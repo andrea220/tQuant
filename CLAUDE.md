@@ -29,7 +29,7 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 | Package | Main classes |
 |---|---|
 | `timehandles/` | `Settings` (global `evaluation_date`), `DayCounter` + `DayCounterConvention`, `Calendar`, `TARGET`, `ScheduleGenerator`, `DateGrid`, enums `TimeUnit`, `BusinessDayConvention`, `CompoundingType`, `Frequency` |
-| `numericalhandles/` | `LinearInterp`, `newton`, `newton_1d`, `DTYPE` + `as_variable` (dtype of market data, risk-factor variables) |
+| `numericalhandles/` | `LinearInterp`, `natural_cubic_spline` (TF, value/d1/d2, linear wings, differentiable in knots and values), `newton`, `newton_1d`, `DTYPE` + `as_variable` (dtype of market data, risk-factor variables) |
 | `markethandles/` | `MarketEnvironment`, `RiskFactor`, `MarketDataType`, `MarketMapValidator`, `RateCurve` / `FlatCurve` / `DefaultCurve`, `VolatilitySurface` / `BlackConstantVolatility`, `DividendCurve`, `Equity` (underlying view), `CorrelationMatrix`, `InterestRate`, `CurveBootstrap`; `utils.py`: `Currency`, `OptionType`, `ExerciseType`, `PayoffType`, `SwapType`, `Position` |
 | `index/` | `Index` (ABC), `OvernightIndex`, `IborIndex`, `InflationIndex` |
 | `flows/` | `CashFlow`, `Coupon` (ABC), `FixedCoupon`/`FixedRateLeg`, `FloatingCoupon`/`FloatingRateLeg` |
@@ -114,7 +114,7 @@ Run examples/notebooks only when changing them or when asked.
 | `timehandles/` | — | — |
 | `numericalhandles/dtypes.py` | `tests/test_dtypes.py` | `DTYPE`, `as_variable` (reuse, casts, no float32 round trip) |
 | `numericalhandles/` (interpolation, newton) | — | — |
-| `VanillaMCPricer` (GBM, local vol) | `tests/test_vanilla_mc.py` | GBM vs BS within 3 SE (discrete/continuous, call/put), float64, exact maturity, stateless seed, n_steps-invariance, AAD greeks reach market factors, delta/vega vs BS, delta vs common-random-numbers bump, dV/dD_i = −delta·P(ex_i); LV: flat surface = BS within 3 SE, vega reaches nodes, node vega vs CRN bump; `regrid_implied_vol` (node weights = identity, flat stays flat, gradient), skewed narrow grid repriced at the nodes within 1.5 vol points (market grid ≥ 2x worse) |
+| `VanillaMCPricer` (GBM, local vol) | `tests/test_vanilla_mc.py` | GBM vs BS within 3 SE (discrete/continuous, call/put), float64, exact maturity, stateless seed, n_steps-invariance, AAD greeks reach market factors, delta/vega vs BS, delta vs common-random-numbers bump, dV/dD_i = −delta·P(ex_i); LV: flat surface = BS within 3 SE, vega reaches nodes, node vega vs CRN bump; forward mode (`from_equity`): MC mean = `Equity.forward` at every step (discrete dividends), arbitrage-free SSVI on a narrow grid repriced at the 1Y/3Y nodes (OTM implied vols within 0.6/1.0 vol points), arbitrage warning, delta and node vega vs CRN bumps; `natural_cubic_spline` vs scipy and gradients vs FD |
 | Rate pricers / flows | `tests/test_rate_pricers.py` | Deposit/FRA/Swap/OIS prices pinned, float64 tensors, gradients per pillar of both curves vs bumps, deposit closed form (ACT/365 and ACT/360 curves), FRA standard formula, fixed leg = sum amount·P(pay), single-curve floating legs telescope to N(P(s)−P(e)), NPV = 0 at the fair rate |
 | `CurveBootstrap`, `PricerAssignment` | `tests/test_bootstrap.py` | ESTR (deposit + OIS) and 6M (FRA + swaps) stripped, instruments reprice to 0, curves registered via `set_ir_curve`, float64 variables; factory incl. `VanillaOption` |
 
@@ -176,18 +176,28 @@ tests green.
 - [ ] `SwapExposureGenerator` passes a plain `dict` to `SwapPricer.price` (expects a `MarketEnvironment`): likely broken.
 - [ ] Unused, not exported: `pricers/localvolmc.py`, `models/localvol.py` (superseded by `models/localvolatility.py`).
 - [x] `examples/local_vol.py` reproducible (stateless draws, seed 42).
-- [x] `LocalVolatilityModel` wings: the market grid (60%-140% of spot, coarse) left most long-dated paths outside it,
-      with the local vol clamped to the edge nodes and the skew cut: MC implied vols at the nodes (TICKER1) were
-      −4.7 vol points ATM and −15.6 at 60% at 5Y. `from_equity(regrid=True)` (default) runs Dupire on
-      `regrid_implied_vol`: 60 log-spaced strikes over 0.1-5x the central strike (natural cubic spline in log K,
-      skew continued linearly outside), monthly maturities (total variance linear in T); linear operators on the
-      node vols, so vega still reaches every node. Points before the first node (flat vol): the first Dupire row
-      was used for every t < T_0 and held the forward vol between the first two nodes (−5 vol points at 3M on the
-      `local_vol` market). Now (OTM implied vols, `local_vol_mdm` on TICKER1): 6M-3Y within ±0.7 vol points.
-      (The "+4 vol points" printed by `local_vol_mdm` was std(log S_T)/√T, not an implied vol.)
-- [ ] `LocalVolatilityModel` residuals (TICKER1, OTM implied vols at the nodes): 5Y about −1 vol point (−2.2 at
-      60%), 3M wing at 60% −4.7, 1M wing above 120% up to +9 (local vol → ~0 there); static `local_vol` market:
-      3M wing at 30% +23. Short end and far wings of the re-gridded Dupire surface still to review.
+- [x] `LocalVolatilityModel.from_equity` (forward mode): simulates `X = S/F(t)` on the market forward
+      (`Equity.forward`; discrete dividends as proportional drops) with Gatheral's local vol in total implied variance
+      and forward moneyness `y = ln(K/F(T))` (`gatheral_local_vol`): per maturity a TF natural cubic spline of
+      `w = iv²T` in y through the strike nodes, Lee-linear wings (|dw/dy| ≤ 1.9), total variance linear in T;
+      derivatives from the spline (the old call-price finite differences collapsed at short maturities and far
+      wings: local vol → 0 at 1M above 120%). Differentiable w.r.t. vol nodes, spot, repo, dividends, curve
+      (knots move with the forward). Martingale correction (MC forward = F(t) exactly). Static-arbitrage
+      diagnostics on `model.arbitrage` + warning where the surface has data. Defaults `n_y=300`, `time_step=1/96`
+      (converged: 1/365 gives the same numbers); short maturities need ≥ 100 Euler steps.
+      History: the market grid (60%-140%) first cut the skew (5Y ATM −4.7, 60% −15.6 vol points); the
+      "+4 vol points" of the old `local_vol_mdm` was std(log S_T)/√T, not an implied vol.
+      Results (OTM implied vols at the nodes, MC − market): `local_vol` static market (arbitrage-free) within the MC
+      noise (5 seeds at 3Y: mean ≈ 0, ±0.5 ATM / ±1 at 170% with 100k paths); `local_vol_vanilla` LV 7.2933 vs
+      BS 7.2930; TICKER1 on the SSVI snapshot: all nodes 1M-5Y within ~0.3 vol points (1M/3M: mean over 5 seeds
+      within ±0.2), except the 1M 140% call (~3 sd OTM, not measurable with 50k paths).
+- [x] Synthetic vol surfaces are SSVI (`marketdata/generate_synthetic.py`, snapshot `20261105/2130`): power-law
+      `phi = eta/sqrt(theta(1+theta))`, `eta(1+|rho|) <= 2`, increasing ATM total variance, forward moneyness with
+      the dividend forward (= `Equity.forward` to 1e-16): free of static arbitrage (min g +0.24 over the 50
+      tickers). Same random draws as before: spots, repos, dividends, curves, FX, correlations unchanged. The
+      previous surfaces (snapshot `20261105/1516`, still in the repo) had butterfly arbitrage from 1Y (g −0.36 at 5Y).
+- [ ] Local vol MC noise is large in the wings and at long maturities (OTM call at 170%, 3Y: ±1 vol point with
+      100k paths): variance reduction (antithetics, control variate on the forward) not done.
 - [x] `examples/local_vol.py` / `local_vol_mdm.py`: one analysis (`analyse_local_vol` in `local_vol.py`, reused by
       `local_vol_mdm.py`): `from_equity` per maturity, MC forward vs `Equity.forward`, MC implied vols of OTM
       options vs market at every node with SE (removed `std(log S_T)/√T` "ATM vol" and `BS(σ_loc)` "reprice error").

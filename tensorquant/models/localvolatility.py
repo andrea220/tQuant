@@ -3,7 +3,6 @@ from typing import Sequence, Union
 
 import numpy as np
 import tensorflow as tf
-from scipy.interpolate import CubicSpline
 
 from .stochasticprocess import StochasticProcess
 from .brownian import _equity_carry_inputs
@@ -169,100 +168,137 @@ def _dupire_local_vol(C, T, K, r=0.0, q=0.0, eps=1e-10, sig_cap=4.0):
 
 
 # ============================================================
-# Re-gridding of the implied vol surface before Dupire
+# Local vol from total implied variance (Gatheral), forward moneyness
 # ============================================================
 
-def _strike_weights(k_nodes: np.ndarray, k_new: np.ndarray) -> np.ndarray:
-    """Weights ``W [n_new, n_nodes]`` with ``iv(k_new) = W @ iv(k_nodes)``.
-
-    Natural cubic spline in log-strike inside the node range; outside, linear in
-    log-strike with the slope of the two edge nodes (the skew is continued). Both
-    are linear in the node values, so ``W`` is built once by splining unit vectors.
-    """
-    x, y = np.log(k_nodes), np.log(k_new)
-    n = len(x)
-    W = np.empty((len(y), n))
-    lo, hi = y < x[0], y > x[-1]
-    for j in range(n):
-        e = np.zeros(n)
-        e[j] = 1.0
-        col = CubicSpline(x, e, bc_type="natural")(np.clip(y, x[0], x[-1]))
-        col[lo] = e[0] + (e[1] - e[0]) / (x[1] - x[0]) * (y[lo] - x[0])
-        col[hi] = e[-1] + (e[-1] - e[-2]) / (x[-1] - x[-2]) * (y[hi] - x[-1])
-        W[:, j] = col
-    return W
-
-
-def _time_weights(t_nodes: np.ndarray, t_new: np.ndarray) -> np.ndarray:
-    """Weights ``W [n_new, n_nodes]`` with ``w(t_new) = W @ w(t_nodes)`` for total variance ``w = iv^2 T``.
-
-    Linear in total variance between node maturities; flat implied vol before the
-    first and after the last node (``w`` proportional to ``T``).
-    """
-    W = np.zeros((len(t_new), len(t_nodes)))
+def _time_operators(t_nodes: np.ndarray, t_new: np.ndarray):
+    """``w(t) = A @ w_nodes`` and ``dw/dt = B @ w_nodes``: total variance linear in T between node
+    maturities at fixed forward moneyness; flat implied vol before the first / after the last node."""
+    A, B = np.zeros((len(t_new), len(t_nodes))), np.zeros((len(t_new), len(t_nodes)))
     for a, t in enumerate(t_new):
         if t <= t_nodes[0]:
-            W[a, 0] = t / t_nodes[0]
+            A[a, 0], B[a, 0] = t / t_nodes[0], 1.0 / t_nodes[0]
         elif t >= t_nodes[-1]:
-            W[a, -1] = t / t_nodes[-1]
+            A[a, -1], B[a, -1] = t / t_nodes[-1], 1.0 / t_nodes[-1]
         else:
-            i = int(np.searchsorted(t_nodes, t)) - 1
-            u = (t - t_nodes[i]) / (t_nodes[i + 1] - t_nodes[i])
-            W[a, i], W[a, i + 1] = 1.0 - u, u
-    return W
+            i = int(np.searchsorted(t_nodes, t, side="right")) - 1
+            h = t_nodes[i + 1] - t_nodes[i]
+            u = (t - t_nodes[i]) / h
+            A[a, i], A[a, i + 1] = 1.0 - u, u
+            B[a, i], B[a, i + 1] = -1.0 / h, 1.0 / h
+    return A, B
 
 
-def regrid_implied_vol(
+def gatheral_local_vol(
     iv_matrix,
     t_nodes: Sequence[float],
-    k_nodes: Sequence[float],
-    strike_range: tuple = (0.1, 5.0),
-    n_strikes: int = 60,
-    time_step: float = 1.0 / 12.0,
-    iv_bounds: tuple = (0.05, 1.5),
+    log_moneyness,
+    y_grid,
+    time_step: float = 1.0 / 24.0,
+    max_wing_slope: float = 1.9,
+    g_floor: float = 1e-3,
+    sigma_cap: float = 2.0,
 ):
-    """Implied vol on a wide, fine (T, K) grid for Dupire, differentiable w.r.t. the node vols.
+    """Local vol on a (t, y) grid from the implied vol nodes, ``y = ln(K / F(T))``.
 
-    Dupire needs dC/dT and d2C/dK2 on a grid that covers where paths go. The market
-    grid is usually narrow (e.g. 60%-140% of spot) and coarse: paths outside it get the
-    local vol of the edge nodes and the skew is cut, which underprices the wings and,
-    at long maturities, the whole smile. Here the surface is re-gridded with linear
-    operators on the node values (``tf.matmul``), so gradients reach every node:
+    Gatheral's formula in total implied variance ``w = iv^2 T``::
 
-    - strikes: ``n_strikes`` log-spaced points over ``strike_range`` times the central
-      node strike ``sqrt(K_min K_max)``; natural cubic spline in log K inside the nodes,
-      skew continued linearly in log K outside;
-    - maturities: points before the first node (flat implied vol), the first node, then
-      every ``time_step`` up to the last node; total variance linear in T.
+        sigma_loc^2 = (dw/dT) / g,
+        g = 1 - (y/w) w_y + 1/4 (-1/4 - 1/w + y^2/w^2) w_y^2 + 1/2 w_yy
+
+    (``g`` is the butterfly-arbitrage density factor, ``dw/dT`` at fixed y the calendar
+    one). Per node maturity, ``w`` is a natural cubic spline in y through the node strikes,
+    continued linearly outside (Lee: wing slope clipped to ``max_wing_slope`` < 2); in T it
+    is linear between nodes at fixed y. Derivatives come from the spline (no finite
+    differences on call prices, which are tiny at short maturities and in the far wings).
+    Differentiable w.r.t. the node vols and the node log-moneyness (i.e. the forwards).
 
     Args:
-        iv_matrix: ``[nT, nK]`` node implied vols (e.g. ``VolatilitySurface.volatility_matrix``).
+        iv_matrix: ``[nT, nK]`` node implied vols.
         t_nodes: ``[nT]`` node maturities (year fractions, increasing).
-        k_nodes: ``[nK]`` node strikes (increasing).
-        strike_range: Strike range as multiples of the central node strike.
-        n_strikes: Number of strikes of the new grid.
-        time_step: Maturity step of the new grid (years).
-        iv_bounds: Floor and cap on the re-gridded implied vols.
+        log_moneyness: ``[nT, nK]`` ``ln(K_j / F(T_i))`` (tensor; increasing along K).
+        y_grid: ``[nY]`` forward log-moneyness grid of the local vol.
+        time_step: Time step of the local vol grid (points before the first node included).
+        max_wing_slope: Clip on ``|dw/dy|`` used outside the strike nodes.
+        g_floor: Floor on ``g`` (cells below it have butterfly arbitrage).
+        sigma_cap: Cap on the local vol.
 
     Returns:
-        tuple: ``(iv_new [nT', nK'] tf.Tensor, t_new np.ndarray, k_new np.ndarray)``.
+        tuple: ``(sigma [nT', nY] tf.Tensor, t_grid np.ndarray [nT'], diagnostics dict)``;
+            diagnostics on the data region (y covered by the strike nodes of every maturity):
+            ``min_g``, ``min_dw_dt``, ``arbitrage_fraction`` (share of cells with ``g < g_floor`` or
+            ``dw/dT <= 0``); ``wing_arbitrage_fraction``: same share in the extrapolated wings.
     """
-    t_nodes, k_nodes = np.asarray(t_nodes, dtype=float), np.asarray(k_nodes, dtype=float)
-    k_ref = np.sqrt(k_nodes[0] * k_nodes[-1])
-    k_new = k_ref * np.exp(np.linspace(np.log(strike_range[0]), np.log(strike_range[1]), n_strikes))
-    steps = np.arange(time_step, t_nodes[-1], time_step)
-    # points before the first node (flat implied vol there): otherwise the first Dupire row,
-    # used for every t < T_0, holds the forward vol between the first two nodes
-    n_short = max(2, int(np.ceil(t_nodes[0] / time_step)))
-    short = t_nodes[0] * np.arange(1, n_short) / n_short
-    t_new = np.unique(np.concatenate([short, [t_nodes[0]], steps[steps > t_nodes[0]], [t_nodes[-1]]]))
+    from ..numericalhandles.interpolation import natural_cubic_spline
 
+    t_nodes = np.asarray(t_nodes, dtype=float)
     iv = tf.cast(iv_matrix, DTYPE)
-    w_nodes = tf.square(iv) * tf.constant(t_nodes[:, None], DTYPE)                 # [nT, nK]
-    w_t = tf.matmul(tf.constant(_time_weights(t_nodes, t_new), DTYPE), w_nodes)    # [nT', nK]
-    iv_t = tf.sqrt(w_t / tf.constant(t_new[:, None], DTYPE))
-    iv_new = tf.matmul(iv_t, tf.constant(_strike_weights(k_nodes, k_new).T, DTYPE))  # [nT', nK']
-    return tf.clip_by_value(iv_new, iv_bounds[0], iv_bounds[1]), t_new, k_new
+    y = tf.cast(y_grid, DTYPE)
+    rows = [natural_cubic_spline(log_moneyness[i], tf.square(iv[i]) * t_nodes[i], y, max_wing_slope)
+            for i in range(len(t_nodes))]
+    W, W_y, W_yy = (tf.stack([r[j] for r in rows]) for j in range(3))       # [nT, nY] each
+
+    n_short = max(2, int(np.ceil(t_nodes[0] / time_step)))
+    steps = np.arange(time_step, t_nodes[-1] + 1e-12, time_step)
+    t_grid = np.unique(np.concatenate([t_nodes[0] * np.arange(1, n_short + 1) / n_short,
+                                       steps[steps > t_nodes[0]], t_nodes]))
+    A, B = (tf.constant(m, DTYPE) for m in _time_operators(t_nodes, t_grid))
+    w = tf.maximum(tf.matmul(A, W), 1e-12)
+    w_y, w_yy, w_t = tf.matmul(A, W_y), tf.matmul(A, W_yy), tf.matmul(B, W)
+    g = 1.0 - y / w * w_y + 0.25 * (-0.25 - 1.0 / w + tf.square(y / w)) * tf.square(w_y) + 0.5 * w_yy
+    sig2 = tf.maximum(w_t, 1e-12) / tf.maximum(g, g_floor)
+    sigma = tf.sqrt(tf.clip_by_value(sig2, 1e-12, sigma_cap ** 2))
+
+    # data region: y covered by the strike nodes of every maturity (outside, w is extrapolated and the
+    # wings of two maturities can cross: floored, reported apart as wing_arbitrage_fraction)
+    lm = tf.stop_gradient(tf.cast(log_moneyness, DTYPE))
+    in_data = tf.logical_and(y >= tf.reduce_max(lm[:, 0]), y <= tf.reduce_min(lm[:, -1]))
+    bad = tf.logical_or(g < g_floor, w_t <= 0.0)
+
+    def share(mask):
+        cells = tf.boolean_mask(tf.cast(bad, DTYPE), mask, axis=1)
+        return float(tf.reduce_mean(cells)) if int(tf.size(cells)) else 0.0
+
+    g_data, wt_data = tf.boolean_mask(g, in_data, axis=1), tf.boolean_mask(w_t, in_data, axis=1)
+    diagnostics = {
+        "min_g": float(tf.reduce_min(g_data)),
+        "min_dw_dt": float(tf.reduce_min(wt_data)),
+        "arbitrage_fraction": share(in_data),
+        "wing_arbitrage_fraction": share(tf.logical_not(in_data)),
+    }
+    return sigma, t_grid, diagnostics
+
+
+def _interp_ty(sigma_ty, t_grid, y_grid, t, y):
+    """Bilinear ``sigma(t, y)`` at a scalar time ``t`` for a vector ``y`` (clamped to the grid)."""
+    n_t, n_y = tf.shape(t_grid)[0], tf.shape(y_grid)[0]
+    tc = tf.clip_by_value(t, t_grid[0], t_grid[-1])
+    yc = tf.clip_by_value(y, y_grid[0], y_grid[-1])
+    i = tf.clip_by_value(tf.searchsorted(t_grid, tf.reshape(tc, [1]), side="right")[0] - 1, 0, n_t - 2)
+    j = tf.clip_by_value(tf.searchsorted(y_grid, yc, side="right") - 1, 0, n_y - 2)
+    wt = (tc - t_grid[i]) / (t_grid[i + 1] - t_grid[i])
+    y0, y1 = tf.gather(y_grid, j), tf.gather(y_grid, j + 1)
+    wy = (yc - y0) / (y1 - y0)
+    r0, r1 = sigma_ty[i], sigma_ty[i + 1]
+    s0 = tf.gather(r0, j) * (1.0 - wy) + tf.gather(r0, j + 1) * wy
+    s1 = tf.gather(r1, j) * (1.0 - wy) + tf.gather(r1, j + 1) * wy
+    return s0 * (1.0 - wt) + s1 * wt
+
+
+@tf.function(reduce_retracing=True)
+def _simulate_forward_ratio(sigma_ty, lv_t, lv_y, t_grid, dw):
+    """Paths of ``X_t = S_t / F(t)`` ``[n_paths, n_steps]``: ``d ln X = -sigma^2/2 dt + sigma dW``,
+    ``sigma = sigma_loc(t, ln X)`` (log-Euler, exact martingale step by step)."""
+    n_paths, n_steps = tf.shape(dw)[0], tf.shape(dw)[1]
+    t_full = tf.concat([tf.zeros([1], DTYPE), t_grid], axis=0)
+    log_x = tf.zeros([n_paths], DTYPE)
+    paths = tf.TensorArray(dtype=DTYPE, size=n_steps)
+    for k in tf.range(n_steps):
+        dt = t_full[k + 1] - t_full[k]
+        sig = _interp_ty(sigma_ty, lv_t, lv_y, t_full[k], log_x)
+        log_x = log_x - 0.5 * tf.square(sig) * dt + sig * tf.sqrt(dt) * dw[:, k]
+        paths = paths.write(k, tf.exp(log_x))
+    return tf.transpose(paths.stack(), perm=[1, 0])
 
 
 def _bilinear_interp(sigma_TK, T_grid, K_grid, t, S):
@@ -462,51 +498,86 @@ class LocalVolatilityModel(StochasticProcess):
     def from_equity(
         cls,
         equity,
-        maturity: Union[date, float],
+        maturity: Union[date, float] = None,
         strike: float = None,
-        dupire_eps: float = 1e-10,
-        sigma_cap: float = 4.0,
-        regrid: bool = True,
-        strike_range: tuple = (0.1, 5.0),
-        n_strikes: int = 60,
-        time_step: float = 1.0 / 12.0,
+        n_y: int = 300,
+        y_range: tuple = (np.log(0.05), np.log(5.0)),
+        time_step: float = 1.0 / 96.0,
+        max_wing_slope: float = 1.9,
+        g_floor: float = 1e-3,
+        martingale_correction: bool = True,
     ) -> "LocalVolatilityModel":
-        """Dupire model for one option on *equity*, from the market risk factors (differentiable).
+        """Local vol model of *equity* on the market forward (differentiable w.r.t. the market).
 
-        Implied vols are the surface nodes (``volatility_matrix``, a market variable), so
-        gradients reach every node. With ``regrid`` (default) Dupire runs on the wide, fine
-        grid of :func:`regrid_implied_vol` instead of the market nodes (TICKER1 snapshot,
-        MC implied vols at the nodes vs market: 5Y ATM -4.7 vol points on the market grid,
-        within 0.3 re-gridded). Spot and carry are flat up to *maturity*, as in
-        :meth:`GeometricBrownianMotion.from_equity`: escrowed ``S* = S - PV(div)`` with
-        ``q = repo`` (discrete dividends), or ``S`` with ``q = div_yield + repo``;
-        ``r = -ln P(0,T)/T``. The forward is exact at *maturity* only (flat r, q).
+        Simulates ``X_t = S_t / F(t)`` with ``F(t) = equity.forward(t)`` (spot, repo, dividends,
+        discount curve) and returns ``S_t = F(t) X_t``: the forward is the market one at every
+        date (discrete dividends act as proportional drops in the dynamics). The local vol
+        comes from :func:`gatheral_local_vol` on the market vol nodes in forward moneyness
+        ``y = ln(K / F(T))``, so gradients reach the vol nodes, spot, repo, dividends and curve.
+
+        If the vol surface has static arbitrage where it has data (``g < g_floor`` or
+        ``dw/dT <= 0``), no local vol can reprice it: a warning is issued. Diagnostics are on
+        ``model.arbitrage`` (see :func:`gatheral_local_vol`).
 
         Args:
             equity (Equity): The underlying (``market_env.get_equity``).
-            maturity (Union[date, float]): Option maturity.
-            strike (float, optional): Unused (same signature as the GBM factory).
-            dupire_eps (float): Numerical floor in the Dupire denominator.
-            sigma_cap (float): Upper cap on the local vol.
-            regrid (bool): Re-grid the implied vols before Dupire (see :func:`regrid_implied_vol`).
-            strike_range, n_strikes, time_step: Re-gridding parameters.
+            maturity, strike: Unused (same factory signature as the GBM).
+            n_y (int): Points of the forward log-moneyness grid.
+            y_range (tuple): Range of that grid (``ln(K/F)``).
+            time_step (float): Time step of the local vol grid.
+            max_wing_slope (float): Lee wing-slope clip on ``|dw/dy|`` outside the strike nodes.
+            g_floor (float): Floor on the butterfly factor ``g``.
+            martingale_correction (bool): Rescale the simulated ``X_t`` to sample mean 1 at each
+                time, so the MC forward equals ``F(t)`` exactly (removes the forward noise).
 
         Returns:
-            LocalVolatilityModel: Model whose inputs are market tensors.
+            LocalVolatilityModel: Model in forward mode.
 
         Raises:
             ValueError: If the underlying has no vol surface.
         """
+        import warnings
+        from ..timehandles.utils import Settings
+        from datetime import timedelta
+
         if equity.vol_surface is None:
             raise ValueError(f"No volatility surface for underlying '{equity.ticker}'")
-        x0, r, q, _ = _equity_carry_inputs(equity, maturity)
         surface = equity.vol_surface
-        iv, t_grid, k_grid = surface.volatility_matrix, surface.maturity, surface.strike
-        if regrid:
-            iv, t_grid, k_grid = regrid_implied_vol(iv, t_grid, k_grid, strike_range, n_strikes, time_step)
-        return cls.from_implied_vol(
-            iv, t_grid, k_grid, S0=x0, r=r, q=q, dupire_eps=dupire_eps, sigma_cap=sigma_cap,
+        t_nodes = np.asarray(surface.maturity, dtype=float)
+        eval_date = Settings.evaluation_date
+        f_nodes = tf.stack([
+            tf.cast(equity.forward(eval_date + timedelta(days=max(1, int(round(t * 365))))), DTYPE)
+            for t in t_nodes
+        ])
+        log_k = tf.math.log(tf.constant(surface.strike, DTYPE))
+        log_moneyness = log_k[None, :] - tf.math.log(f_nodes)[:, None]
+        y_grid = np.linspace(y_range[0], y_range[1], n_y)
+        sigma_ty, lv_t, diagnostics = gatheral_local_vol(
+            surface.volatility_matrix, t_nodes, log_moneyness, y_grid,
+            time_step=time_step, max_wing_slope=max_wing_slope, g_floor=g_floor,
         )
+        if diagnostics["arbitrage_fraction"] > 0.0:
+            warnings.warn(
+                f"Vol surface of '{equity.ticker}' has static arbitrage on "
+                f"{diagnostics['arbitrage_fraction']:.1%} of the local vol grid where it has data (min g "
+                f"{diagnostics['min_g']:+.3f}, min dw/dT {diagnostics['min_dw_dt']:+.3g}): the local vol "
+                "is floored there and cannot reprice the surface exactly.",
+                stacklevel=2,
+            )
+        model = cls.__new__(cls)
+        model._mode = "forward"
+        model._equity = equity
+        model._sigma_ty = sigma_ty
+        model._lv_t = tf.constant(lv_t, DTYPE)
+        model._lv_y = tf.constant(y_grid, DTYPE)
+        model._S0 = tf.cast(equity.spot, DTYPE)
+        model._martingale_correction = martingale_correction
+        model.arbitrage = diagnostics
+        return model
+
+    def _forward(self, t) -> tf.Tensor:
+        """Market forward ``F(t)`` (forward mode), ``t`` in years."""
+        return tf.cast(self._equity.forward(float(t)), DTYPE)
 
     # ------------------------------------------------------------------
     # StochasticProcess interface
@@ -574,6 +645,13 @@ class LocalVolatilityModel(StochasticProcess):
         Returns:
             σ_loc(t, S): [n_paths]
         """
+        if getattr(self, "_mode", None) == "forward":
+            S = tf.cast(S, DTYPE)
+            t = tf.cast(t, DTYPE)
+            t_v = tf.broadcast_to(t, tf.shape(S))
+            y = tf.math.log(S / tf.stack([self._forward(float(v)) for v in t_v.numpy()]))
+            return tf.stack([_interp_ty(self._sigma_ty, self._lv_t, self._lv_y, t_v[i], y[i:i + 1])[0]
+                             for i in range(int(tf.shape(S)[0]))])
         sigma_TK = _dupire_local_vol(
             tf.cast(self._C, DTYPE),
             self._T_grid, self._K_grid,
@@ -613,6 +691,12 @@ class LocalVolatilityModel(StochasticProcess):
         """
         dw = tf.cast(tf.convert_to_tensor(dw), DTYPE)
         t_grid = tf.cast(tf.convert_to_tensor(t_grid), DTYPE)
+        if getattr(self, "_mode", None) == "forward":
+            x = _simulate_forward_ratio(self._sigma_ty, self._lv_t, self._lv_y, t_grid, dw)
+            if self._martingale_correction:
+                x = x / tf.reduce_mean(x, axis=0, keepdims=True)
+            forwards = tf.stack([self._forward(t) for t in t_grid.numpy()])
+            return x * forwards[None, :]
         # Local vol surface once, eagerly (differentiable w.r.t. self._C)
         sigma_TK = _dupire_local_vol(
             tf.cast(self._C, DTYPE),

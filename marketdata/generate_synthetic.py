@@ -4,6 +4,11 @@
 vol surface and discrete dividends; one OIS zero curve per currency; FX spots; equity
 correlations. Fixed seed: same values on each run; all dates are relative to the evaluation date.
 
+Vol surfaces are SSVI (Gatheral-Jacquier) in forward log-moneyness ``k = ln(K / F(T))``:
+``w(k, T) = theta/2 (1 + rho phi k + sqrt((phi k + rho)^2 + 1 - rho^2))``, ``theta(T) = atm(T)^2 T``
+increasing, ``phi(theta) = eta / sqrt(theta (1 + theta))`` with ``eta (1 + |rho|) <= 2``: free of
+static (butterfly and calendar) arbitrage by construction, so a local vol model can reprice them.
+
 Usage: python marketdata/generate_synthetic.py
 """
 
@@ -53,23 +58,17 @@ def ir_curves(rng) -> pd.DataFrame:
 
 
 def equities(rng):
-    spot_rows, vol_rows, div_rows = [], [], []
+    """Spots, repos, SSVI parameters and dividends (the vols need the curves: see ``vol_surfaces``)."""
+    spot_rows, div_rows, ssvi = [], [], {}
     for ticker, ccy in zip(TICKERS, CURRENCIES):
         spot = round(float(rng.uniform(10, 500)), 2)
         spot_rows.append({"ticker": ticker, "ccy": ccy, "spot": spot,
                           "repo": round(float(rng.uniform(0.0, 0.01)), 5), "div_yield": None})
 
-        # IV(T, m) = atm + ts (sqrt(T) - 1) + skew m / sqrt(max(T, 0.25)) + curv m^2,  m = ln(K/S)
+        # SSVI: ATM vol term structure atm + ts (sqrt(T) - 1); skew rho; eta = u * 2 / (1 + |rho|), u < 1
         atm, ts = rng.uniform(0.15, 0.40), rng.uniform(-0.04, 0.02)
-        skew, curv = rng.uniform(-0.20, -0.05), rng.uniform(0.10, 0.40)
-        for tm in VOL_TENORS_M:
-            t = tm / 12
-            for mny in VOL_MONEYNESS:
-                k = round(spot * mny, 2)
-                m = np.log(k / spot)
-                iv = atm + ts * (np.sqrt(t) - 1) + skew * m / np.sqrt(max(t, 0.25)) + curv * m ** 2
-                vol_rows.append({"ticker": ticker, "ccy": ccy, "expiry": add_months(EVALUATION_DATE, tm),
-                                 "strike": k, "vol": round(float(np.clip(iv, 0.05, 1.0)), 6)})
+        rho, u = rng.uniform(-0.80, -0.30), rng.uniform(0.50, 0.95)
+        ssvi[ticker] = dict(atm=atm, ts=ts, rho=rho, eta=u * 2.0 / (1.0 + abs(rho)))
 
         # Discrete dividends: yearly yield split in equal payments, growing 3% a year
         freq = DIV_FREQUENCY[ccy]
@@ -80,7 +79,48 @@ def equities(rng):
                              "pay_date": ex_date + timedelta(days=14), "amount": round(amount, 4)})
             ex_date = add_months(ex_date, 12 // freq)
             amount *= 1.03 ** (1 / freq)
-    return pd.DataFrame(spot_rows), pd.DataFrame(vol_rows), pd.DataFrame(div_rows)
+    return pd.DataFrame(spot_rows), ssvi, pd.DataFrame(div_rows)
+
+
+def _yf(d: date) -> float:
+    return (d - EVALUATION_DATE).days / 365.0
+
+
+def _discount(curve: pd.DataFrame, d: date) -> float:
+    """Discount factor as RateCurve: zero rates linear in the Actual365 pillar times, flat outside."""
+    t = _yf(d)
+    times = [_yf(x) for x in curve["pillar"]]
+    return float(np.exp(-np.interp(t, times, curve["value"]) * t))
+
+
+def forward(spot: float, repo: float, divs: pd.DataFrame, curve: pd.DataFrame, d: date) -> float:
+    """Equity forward as ``Equity.forward`` (discrete dividends): ``(S - PV(div)) e^{-repo T} / P(0, T)``."""
+    pv = sum(a * _discount(curve, x) for x, a in zip(divs["ex_date"], divs["amount"]) if EVALUATION_DATE < x <= d)
+    return (spot - pv) * np.exp(-repo * _yf(d)) / _discount(curve, d)
+
+
+def vol_surfaces(spots: pd.DataFrame, ssvi: dict, divs: pd.DataFrame, curves: pd.DataFrame) -> pd.DataFrame:
+    """SSVI implied vols on the strike grid (``VOL_MONEYNESS`` x spot) for ``VOL_TENORS_M``."""
+    rows = []
+    for row in spots.itertuples(index=False):
+        p = ssvi[row.ticker]
+        curve = curves[curves.ccy == row.ccy]
+        tdivs = divs[divs.ticker == row.ticker]
+        for tm in VOL_TENORS_M:
+            expiry = add_months(EVALUATION_DATE, tm)
+            t = _yf(expiry)
+            F = forward(row.spot, row.repo, tdivs, curve, expiry)
+            theta = (p["atm"] + p["ts"] * (np.sqrt(t) - 1.0)) ** 2 * t
+            phi = p["eta"] / np.sqrt(theta * (1.0 + theta))
+            for mny in VOL_MONEYNESS:
+                strike = round(row.spot * mny, 2)
+                k = np.log(strike / F)
+                w = 0.5 * theta * (1 + p["rho"] * phi * k + np.sqrt((phi * k + p["rho"]) ** 2 + 1 - p["rho"] ** 2))
+                rows.append({"ticker": row.ticker, "ccy": row.ccy, "expiry": expiry,
+                             "strike": strike, "vol": round(float(np.sqrt(w / t)), 6)})
+    vol = pd.DataFrame(rows)
+    assert vol["vol"].between(0.05, 1.5).all(), "SSVI vol out of range"
+    return vol
 
 
 def correlations(rng) -> pd.DataFrame:
@@ -99,9 +139,11 @@ def correlations(rng) -> pd.DataFrame:
 def main() -> None:
     rng = np.random.default_rng(SEED)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    spot, vol, div = equities(rng)
+    spot, ssvi, div = equities(rng)
+    curves = ir_curves(rng)
+    vol = vol_surfaces(spot, ssvi, div, curves)
     files = {
-        "ir_curves.csv": ir_curves(rng),
+        "ir_curves.csv": curves,
         "fx_spot.csv": pd.DataFrame(FX, columns=["base", "quote", "spot"]),
         "eq_spot.csv": spot,
         "eq_vol.csv": vol,

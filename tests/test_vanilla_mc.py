@@ -1,7 +1,7 @@
 """VanillaMCPricer: GBM and local vol built from the market (Equity view), float64, AAD greeks on market factors."""
 
 import unittest
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import tensorflow as tf
@@ -183,67 +183,179 @@ class TestLocalVol(MCTestCase):
 
 
 
-def skewed_market(regrid_ticker: str = "SKEW") -> MarketEnvironment:
-    """Narrow (70%-130%), coarse grid with a strong skew: paths leave the grid, as in the marketdata/ snapshot."""
+def ssvi_market(eta: float = 1.0, rho: float = -0.6, atm: float = 0.25, ticker: str = "SSVI") -> MarketEnvironment:
+    """Narrow (70%-130%), coarse grid sampled from an arbitrage-free SSVI surface (power-law phi,
+    eta (1 + |rho|) <= 2), with discrete dividends and repo: paths leave the grid, forward has jumps."""
     strikes = [70.0, 80.0, 90.0, 100.0, 110.0, 120.0, 130.0]
     maturities = [0.25, 0.5, 1.0, 2.0, 3.0]
-    iv = [[0.30 - 0.25 * np.log(k / S0) / np.sqrt(max(t, 0.25)) + 0.2 * np.log(k / S0) ** 2 for k in strikes]
-          for t in maturities]
+    base = MarketEnvironment(market={
+        "IR:EUR:ESTR:SPOT": tq.RateCurve(EVAL_DATE, PILLARS, RATES, "LINEAR", DayCounterConvention.Actual365),
+        f"EQ:EUR:{ticker}:SPOT": S0,
+        f"EQ:EUR:{ticker}:REPO": 0.005,
+        f"EQ:EUR:{ticker}:DIV": make_market().get_eq_dividends("DISC"),
+    })
+    eq = base.get_equity(ticker)
+    iv = []
+    for t in maturities:
+        F = float(eq.forward(EVAL_DATE + timedelta(days=int(round(t * 365)))))
+        theta = atm ** 2 * t
+        phi = eta / np.sqrt(theta * (1.0 + theta))
+        row = []
+        for k in strikes:
+            y = np.log(k / F)
+            w = 0.5 * theta * (1 + rho * phi * y + np.sqrt((phi * y + rho) ** 2 + 1 - rho ** 2))
+            row.append(np.sqrt(w / t))
+        iv.append(row)
     surface = VolatilitySurface(
         reference_date=EVAL_DATE, calendar=None, daycounter=DayCounter(DayCounterConvention.Actual365),
         strike=strikes, maturity=maturities, volatility_matrix=iv,
     )
-    return MarketEnvironment(market={
-        "IR:EUR:ESTR:SPOT": tq.RateCurve(EVAL_DATE, PILLARS, RATES, "LINEAR", DayCounterConvention.Actual365),
-        f"EQ:EUR:{regrid_ticker}:SPOT": S0,
-        f"EQ:EUR:{regrid_ticker}:REPO": 0.0,
-        f"EQ:EUR:{regrid_ticker}:VOL": surface,
-    })
+    market = {k: v for k, v in {
+        "IR:EUR:ESTR:SPOT": base.get_ir_curve(tq.Currency.EUR),
+        f"EQ:EUR:{ticker}:SPOT": S0,
+        f"EQ:EUR:{ticker}:REPO": 0.005,
+        f"EQ:EUR:{ticker}:DIV": make_market().get_eq_dividends("DISC"),
+        f"EQ:EUR:{ticker}:VOL": surface,
+    }.items()}
+    return MarketEnvironment(market=market)
 
 
-class TestRegrid(unittest.TestCase):
-    def test_weights_reproduce_the_nodes(self):
-        from tensorquant.models.localvolatility import _strike_weights, _time_weights
-        k, t = np.array([70.0, 85.0, 100.0, 120.0, 150.0]), np.array([0.25, 0.5, 1.0, 3.0])
-        np.testing.assert_allclose(_strike_weights(k, k), np.eye(len(k)), atol=1e-12)
-        np.testing.assert_allclose(_time_weights(t, t), np.eye(len(t)), atol=1e-12)
+def otm_implied_vol(price: float, F: float, K: float, T: float, DF: float) -> float:
+    from scipy.optimize import brentq
+    from scipy.stats import norm
 
-    def test_flat_surface_stays_flat_and_gradient_reaches_nodes(self):
-        from tensorquant.models.localvolatility import regrid_implied_vol
-        iv = tf.Variable(np.full((3, 4), 0.25), dtype=tf.float64)
+    def black_otm(s):
+        d1 = (np.log(F / K) + 0.5 * s * s * T) / (s * np.sqrt(T))
+        call = DF * (F * norm.cdf(d1) - K * norm.cdf(d1 - s * np.sqrt(T)))
+        return call - DF * (F - K) if K < F else call
+
+    return brentq(lambda s: black_otm(s) - price, 1e-4, 3.0)
+
+
+class TestNaturalCubicSpline(unittest.TestCase):
+    def test_vs_scipy_and_linear_wings(self):
+        from scipy.interpolate import CubicSpline
+        from tensorquant.numericalhandles.interpolation import natural_cubic_spline
+        x = np.array([-1.0, -0.4, 0.0, 0.3, 1.1])
+        f = np.array([0.5, 0.2, 0.1, 0.15, 0.4])
+        q = np.linspace(-0.9, 1.0, 40)
+        v, d1, d2 = natural_cubic_spline(x, f, q)
+        cs = CubicSpline(x, f, bc_type="natural")
+        np.testing.assert_allclose(v.numpy(), cs(q), atol=1e-14)
+        np.testing.assert_allclose(d1.numpy(), cs(q, 1), atol=1e-13)
+        np.testing.assert_allclose(d2.numpy(), cs(q, 2), atol=1e-12)
+        out = np.array([-2.0, 2.0])
+        v, d1, d2 = natural_cubic_spline(x, f, out)
+        np.testing.assert_allclose(v.numpy(), [f[0] + cs(x[0], 1) * (-1.0), f[-1] + cs(x[-1], 1) * 0.9], atol=1e-13)
+        np.testing.assert_allclose(d2.numpy(), 0.0)
+
+    def test_gradient_wrt_knots_and_values(self):
+        from tensorquant.numericalhandles.interpolation import natural_cubic_spline
+        x = tf.Variable([-1.0, -0.4, 0.0, 0.3, 1.1], dtype=tf.float64)
+        f = tf.Variable([0.5, 0.2, 0.1, 0.15, 0.4], dtype=tf.float64)
+        q = tf.constant([-1.5, -0.2, 0.5, 1.5], tf.float64)
         with tf.GradientTape() as tape:
-            new, t_new, k_new = regrid_implied_vol(iv, [0.5, 1.0, 2.0], [80.0, 95.0, 110.0, 130.0])
-            total = tf.reduce_sum(new)
-        np.testing.assert_allclose(new.numpy(), 0.25, atol=1e-12)
-        self.assertGreater(len(k_new), 4)
-        self.assertEqual(t_new[-1], 2.0)
-        self.assertTrue(np.all(np.abs(tape.gradient(total, iv).numpy()) > 0))  # spline weights may be < 0
+            total = tf.reduce_sum(natural_cubic_spline(x, f, q)[0])
+        gx, gf = tape.gradient(total, [x, f])
+        h = 1e-6
+        for var, g in ((x, gx), (f, gf)):
+            base = var.numpy().copy()
+            for i in range(len(base)):
+                out = []
+                for sgn in (1, -1):
+                    b = base.copy()
+                    b[i] += sgn * h
+                    var.assign(b)
+                    out.append(float(tf.reduce_sum(natural_cubic_spline(x, f, q)[0])))
+                var.assign(base)
+                self.assertAlmostEqual(float(g[i]), (out[0] - out[1]) / (2 * h), places=6)
 
-    def test_skewed_smile_repriced_at_the_nodes(self):
-        """MC implied vols at the 2Y nodes within 1.5 vol points with re-gridding; the market grid is far worse."""
-        from scipy.optimize import brentq
-        from scipy.stats import norm
+
+class TestLocalVolForward(unittest.TestCase):
+    def setUp(self):
         tq.Settings.evaluation_date = EVAL_DATE
-        mkt = skewed_market()
-        eq = mkt.get_equity("SKEW")
-        expiry = date(2028, 5, 14)  # 2Y
-        T = eq.vol_surface.daycounter.year_fraction(EVAL_DATE, expiry)
-        DF, F = float(eq.discount_curve.discount(expiry)), float(eq.forward(expiry))
-        t_grid = tf.linspace(tf.constant(0.0, tf.float64), tf.constant(T, tf.float64), 101)[1:]
-        dw = tf.random.stateless_normal([40_000, 100], seed=[3, 0], dtype=tf.float64)
+        self.mkt = ssvi_market()
+        self.eq = self.mkt.get_equity("SSVI")
 
-        def implied(price, K):
-            f = lambda s: DF * (F * norm.cdf((np.log(F / K) + 0.5 * s * s * T) / (s * np.sqrt(T)))
-                                - K * norm.cdf((np.log(F / K) - 0.5 * s * s * T) / (s * np.sqrt(T)))) - price
-            return brentq(f, 1e-4, 3.0)
+    def simulate(self, T, n_paths=40_000, seed=3, **kw):
+        model = tq.LocalVolatilityModel.from_equity(self.eq, **kw)
+        n = max(100, int(100 * T))
+        t_grid = tf.linspace(tf.constant(0.0, tf.float64), tf.constant(T, tf.float64), n + 1)[1:]
+        dw = tf.random.stateless_normal([n_paths, n], seed=[seed, 0], dtype=tf.float64)
+        return model, t_grid, model.evolve(t_grid, dw)
 
-        worst = {}
-        for regrid in (True, False):
-            s_t = tq.LocalVolatilityModel.from_equity(eq, expiry, regrid=regrid).evolve(t_grid, dw).numpy()[:, -1]
-            worst[regrid] = max(abs(implied(np.mean(DF * np.maximum(s_t - K, 0.0)), K) - float(eq.vol_surface.volatility(K, T)))
-                                for K in eq.vol_surface.strike)
-        self.assertLess(worst[True], 0.015)
-        self.assertGreater(worst[False], 2 * worst[True])
+    def test_no_arbitrage_reported_on_ssvi(self):
+        model = tq.LocalVolatilityModel.from_equity(self.eq)
+        self.assertEqual(model.arbitrage["arbitrage_fraction"], 0.0)
+        self.assertGreater(model.arbitrage["min_g"], 0.0)
+
+    def test_forward_is_the_market_forward(self):
+        """S_t = F(t) X_t with the martingale correction: MC mean = Equity.forward at every step (dividend jumps)."""
+        _, t_grid, paths = self.simulate(2.0, n_paths=5_000)
+        for k in range(0, len(t_grid), 25):
+            self.assertAlmostEqual(float(tf.reduce_mean(paths[:, k])), float(self.eq.forward(float(t_grid[k]))), places=8)
+
+    def test_ssvi_smile_repriced_at_the_nodes(self):
+        """Arbitrage-free surface on a narrow grid: MC implied vols (OTM options) at the 1Y and 3Y nodes."""
+        vs = self.eq.vol_surface
+        for T, tol in ((1.0, 0.6), (3.0, 1.0)):
+            expiry = EVAL_DATE + timedelta(days=int(round(T * 365)))
+            _, _, paths = self.simulate(T)
+            s_t = paths[:, -1].numpy()
+            F, DF = float(self.eq.forward(expiry)), float(self.eq.discount_curve.discount(expiry))
+            for K in vs.strike:
+                payoff = DF * (np.maximum(K - s_t, 0.0) if K < F else np.maximum(s_t - K, 0.0))
+                with self.subTest(T=T, K=K):
+                    self.assertLess(abs(otm_implied_vol(payoff.mean(), F, K, T, DF) - float(vs.volatility(K, T))), tol / 100)
+
+    def test_arbitrage_warning(self):
+        """Butterfly arbitrage (smile too convex) is detected and reported."""
+        strikes = [80.0, 90.0, 100.0, 110.0, 120.0]
+        iv = [[0.20 + 3.0 * np.log(k / S0) ** 2 for k in strikes] for _ in range(3)]
+        surface = VolatilitySurface(
+            reference_date=EVAL_DATE, calendar=None, daycounter=DayCounter(DayCounterConvention.Actual365),
+            strike=strikes, maturity=[0.5, 1.0, 2.0], volatility_matrix=iv,
+        )
+        mkt = MarketEnvironment(market={
+            "IR:EUR:ESTR:SPOT": tq.RateCurve(EVAL_DATE, PILLARS, RATES, "LINEAR", DayCounterConvention.Actual365),
+            "EQ:EUR:ARB:SPOT": S0,
+            "EQ:EUR:ARB:VOL": surface,
+        })
+        with self.assertWarns(UserWarning):
+            model = tq.LocalVolatilityModel.from_equity(mkt.get_equity("ARB"))
+        self.assertGreater(model.arbitrage["arbitrage_fraction"], 0.0)
+
+    def test_greeks_vs_common_random_numbers_bumps(self):
+        """Pathwise AAD delta and node vega of the pricer = derivatives of the same MC estimator."""
+        pricer_args = dict(model=tq.LocalVolatilityModel, n_paths=20_000, n_steps=100, seed=5)
+        make = lambda: make_option(EXPIRIES["1Y"], "Call", 100.0, underlying="SSVI")
+        opt = make()
+        pricer = tq.VanillaMCPricer(**pricer_args)
+        pricer.price(opt, self.mkt, autodiff=True)
+        spot, matrix = self.mkt.get_eq_spot("SSVI"), self.mkt.get_eq_vol_surface("SSVI").volatility_matrix
+        d_spot, d_vol = pricer.tape.gradient(opt.price, [spot, matrix])
+
+        def reprice():
+            o = make()
+            tq.VanillaMCPricer(**pricer_args).price(o, self.mkt)
+            return float(o.price)
+
+        h, out = 1e-3, []
+        for x in (S0 + h, S0 - h):
+            spot.assign(x)
+            out.append(reprice())
+        spot.assign(S0)
+        self.assertAlmostEqual(float(d_spot), (out[0] - out[1]) / (2 * h), delta=1e-3 * abs(float(d_spot)))
+
+        base, (i, j) = matrix.numpy().copy(), (2, 3)   # node T = 1Y, K = 100
+        out = []
+        for sgn in (1, -1):
+            m = base.copy()
+            m[i, j] += sgn * 1e-5
+            matrix.assign(m)
+            out.append(reprice())
+        matrix.assign(base)
+        self.assertAlmostEqual(float(d_vol[i, j]), (out[0] - out[1]) / 2e-5, delta=2e-3 * abs(float(d_vol[i, j])))
 
 
 if __name__ == "__main__":

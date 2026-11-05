@@ -2,8 +2,8 @@
 Local Volatility Model (Dupire) on a marketdata/ snapshot — calibration check by Monte Carlo.
 
 Same analysis as ``local_vol.py`` (``analyse_local_vol``): for each vol-surface maturity the
-model is built with ``LocalVolatilityModel.from_equity`` (market vol nodes, re-gridded before
-Dupire), the MC forward is checked against ``Equity.forward`` and the MC implied vols (OTM
+model is built with ``LocalVolatilityModel.from_equity`` (Gatheral local vol in forward
+moneyness, market forward), the MC forward is checked against ``Equity.forward`` and the MC implied vols (OTM
 options) against the market vols at every strike node. Plots in examples/out/.
 """
 
