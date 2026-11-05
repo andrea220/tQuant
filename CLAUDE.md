@@ -50,10 +50,10 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
   `tape.gradient(price, market_env.risk_factors())` gives bucketed rho, vega per node and delta.
   Pricers must not create their own variables from market data nor detach with `.numpy()`/`float()`.
   Migration in progress: `BlackScholesPricer` still creates local variables (`pricer._sigma`, `_r`, ...)
-  — refactor phase 2.
+  — equity step of the refactor roadmap.
 - **MarketEnvironment** is the only access point to market data. Flat dict with keys
   `RISKFACTOR:CCY:TICKER:TYPE`, e.g. `IR:EUR:ESTR:SPOT` → `RateCurve`, `EQ:EUR:SX5E:VOL` → `VolatilitySurface`,
-  `EQ:EUR:X:SPOT|REPO|DIVYIELD` → float, `EQ:EUR:X:DIV` → `DividendCurve`.
+  `EQ:EUR:X:SPOT|REPO|DIVYIELD` → float64 `tf.Variable` (a float is accepted as input and wrapped), `EQ:EUR:X:DIV` → `DividendCurve`.
   Typed accessors: `get_ir_curve`, `get_eq_spot`, `get_eq_vol_surface`, `get_eq_repo`, `get_eq_div_yield`,
   `get_eq_dividends`, `get_currency`. Build from CSV with `MarketEnvironment.from_data_path(...)`.
 - **Evaluation date** is global: set `tq.Settings.evaluation_date` before building/pricing.
@@ -76,26 +76,64 @@ If a needed piece is missing, **propose first** (which class/ABC/enum, where it 
 
 ## Code conventions
 
-- Market inputs and calibrated params are `tf.Variable`/`tf.Tensor`; scalar equity data (spot, repo,
-  div yield) may be `float` in the market dict.
+- Market inputs and calibrated params are float64 `tf.Variable`/`tf.Tensor`; scalar equity data (spot, repo,
+  div yield) may be passed as `float`, `MarketEnvironment` wraps them into `tf.Variable`s.
 - Google-style docstrings (Args/Returns/Raises); type hints everywhere; relative imports inside the package.
 - No access to `MarketEnvironment._market` outside `MarketEnvironment`.
 - Verify numbers against an independent check (closed form, MC, or the examples) when touching pricing code.
 
-## Known issues (refactor backlog)
+## Testing
 
-- `pandas` capped `<3` in `setup.py` until the CSV loading in `MarketEnvironment.from_data_path` is checked on pandas 3.
-- `examples/swap_pricing.py` never sets `tq.Settings.evaluation_date` (defaults to `date.today()`), so it fails once
-  past fixings are needed. Examples 2-4 default to real tickers (ISP/SX5E): use `TICKER1` with `'Generated'`.
-- dtypes are mixed: market objects are float64, most pricers/models still `tf.float32` (explicit casts needed).
-  Target: float64 for market data and analytic pricers; MC may stay float32 via `tf.cast`.
-- `RateCurve.inst_fwd` uses `math.log`, which converts to float and breaks the gradient.
-- `SwapExposureGenerator` passes a plain `dict` to `SwapPricer.price` (expects a `MarketEnvironment`): likely broken.
-- `examples/local_vol.py` draws `tf.random.normal` before `tf.random.set_seed`, so its path stats are not reproducible.
-- `DividendCurve` amounts are not risk factors yet (planned).
-- `StochasticProcess.evolve(t0, x0, dt, dw)` vs subclasses `evolve(t_grid, dw)`; GBM `drift(dt)` signature differs too.
-- `PricerAssignment` uses `type(...) ==` and covers only Deposit/Ois/Fra/Swap.
-- Not exported / unused: `instruments/capfloor.py`, `pricers/localvolmc.py`, `models/localvol.py`
-  (superseded by `models/localvolatility.py`).
-- `CurveBootstrap` writes into `market_env._market` directly.
-- Tests cover only `MarketEnvironment` (`tests/test_marketenvironment.py`).
+Regression safety comes from the unit tests in `tests/`, **not** from running `examples/` or `study/` notebooks.
+Run examples/notebooks only when changing them or when asked.
+
+- Run: `python -m unittest discover -s tests -v` (in `tqenv`, with `TF_ENABLE_ONEDNN_OPTS=0`).
+- Before refactoring an area, add tests that pin the current numbers (prices, greeks) with explicit tolerances,
+  then refactor until they are green. Add independent checks where possible: closed form, put–call parity,
+  finite differences vs AAD gradients, MC within a few standard errors.
+- Fixtures are self-contained and synthetic (no `W:/` datastore, no imports from `examples/`); fixed seeds; float64.
+- Keep the coverage table below up to date when adding tests.
+
+| Area | Test file | Covered |
+|---|---|---|
+| `MarketEnvironment` accessors | `tests/test_marketenvironment.py` | spot, vol, repo, div yield, dividends, currency, default curve |
+| Risk factors | `tests/test_risk_factors.py` | float64 variables in curves/surfaces/EQ scalars, `risk_factors()`, gradients vs finite differences, bilinear weights |
+| `timehandles/` | — | — |
+| `numericalhandles/` | — | — |
+| Equity pricers/models | — | — |
+| Rate pricers/flows/bootstrap | — | — |
+
+## Refactor roadmap
+
+Order: **1. shared handles → 2. equity → 3. interest rates**. Finish a step before starting the next:
+unit tests for the area added first (see Testing), then all tests green.
+
+### 1. Shared handles (`markethandles/`, `timehandles/`, `numericalhandles/`, base ABCs)
+
+- [x] Risk factors in market objects: float64 `variables`, `MarketEnvironment.risk_factors()`.
+- [ ] dtype policy: float64 for market data and analytic pricers, MC may stay float32 via `tf.cast`;
+      today most pricers/models are still `tf.float32` with ad-hoc casts.
+- [ ] `RateCurve.inst_fwd` uses `math.log`, which converts to float and breaks the gradient.
+- [ ] `StochasticProcess.evolve(t0, x0, dt, dw)` vs subclasses `evolve(t_grid, dw)`; GBM `drift(dt)` differs too.
+- [ ] `PricerAssignment` uses `type(...) ==` and covers only Deposit/Ois/Fra/Swap.
+- [ ] `pandas` capped `<3` in `setup.py` until `MarketEnvironment.from_data_path` is checked on pandas 3.
+
+### 2. Equity
+
+- [ ] `BlackScholesPricer`: still creates local variables (`pricer._sigma`, `_r`, ...) and detaches with `.numpy()`;
+      move to market risk factors (no aliases), update `examples/3_options.py` and `study/notebooks/02_dividends.ipynb`.
+- [ ] `VanillaMCPricer` + `LocalVolatilityModel`: check the gradient reaches `VolatilitySurface.volatility_matrix`.
+- [ ] `AutocallableMCPricer` returns floats: no AAD greeks.
+- [ ] `DividendCurve` amounts as risk factors.
+- [ ] Unused, not exported: `pricers/localvolmc.py`, `models/localvol.py` (superseded by `models/localvolatility.py`).
+- [ ] `examples/local_vol.py` draws `tf.random.normal` before `tf.random.set_seed` (path stats not reproducible).
+      Examples 2-4 default to real tickers (ISP/SX5E): use `TICKER1` with `'Generated'`.
+
+### 3. Interest rates
+
+- [ ] `CurveBootstrap` writes into `market_env._market` directly.
+- [ ] `SwapExposureGenerator` passes a plain `dict` to `SwapPricer.price` (expects a `MarketEnvironment`): likely broken.
+- [ ] Swap/OIS/FRA/Deposit pricers: add tests that gradients reach `RateCurve.variables`.
+- [ ] `instruments/capfloor.py` is not exported and has no pricer.
+- [ ] `examples/swap_pricing.py` never sets `tq.Settings.evaluation_date` (defaults to `date.today()`), so it fails
+      once past fixings are needed.
