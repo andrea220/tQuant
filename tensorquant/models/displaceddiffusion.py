@@ -1,4 +1,5 @@
 from .stochasticprocess import StochasticProcess
+from .brownian import observation_columns
 import tensorflow as tf
 import numpy as np
 from scipy import optimize
@@ -497,7 +498,7 @@ class DisplacedDiffusionModel(StochasticProcess):
     # ------------------------------------------------------------------
 
     @tf.function
-    def evolve(self, t_grid, dw):
+    def evolve(self, t_grid, dw, observation_times=None):
         """
         Simulate displaced-diffusion paths with piecewise-constant forward
         parameters and path-dependent displacement.
@@ -513,9 +514,10 @@ class DisplacedDiffusionModel(StochasticProcess):
         Args:
             t_grid: [n_steps] observation times (year fractions, t > 0).
             dw:     [n_paths, n_steps] standard-normal increments.
+            observation_times: optional subset of t_grid; only those columns are returned.
 
         Returns:
-            paths: [n_paths, n_steps]  spot at each observation time.
+            paths: [n_paths, n_steps]  spot at each observation time (or the observed columns).
         """
         dw     = tf.cast(tf.convert_to_tensor(dw),     tf.float64)
         t_grid = tf.cast(tf.convert_to_tensor(t_grid), tf.float64)
@@ -556,4 +558,7 @@ class DisplacedDiffusionModel(StochasticProcess):
 
             paths = paths.write(k, S)
 
-        return tf.transpose(paths.stack(), perm=[1, 0])
+        paths = tf.transpose(paths.stack(), perm=[1, 0])
+        if observation_times is not None:
+            paths = tf.gather(paths, observation_columns(t_grid.numpy(), observation_times), axis=1)
+        return paths

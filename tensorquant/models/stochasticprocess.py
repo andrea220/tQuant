@@ -2,126 +2,41 @@ from abc import ABC, abstractmethod
 
 
 class StochasticProcess(ABC):
-    """
-    Abstract base class for stochastic processes. This defines the common interface for different types
-    of stochastic processes used in mathematical finance and other fields.
+    """Common interface of the simulation models.
 
-    Methods:
-        size(): Returns the number of dimensions of the process.
-        initial_values(): Returns the initial value(s) of the process.
-        drift(t0, x0, dt): Computes the drift term of the process.
-        diffusion(t0, x0, dt): Computes the diffusion (volatility) term of the process.
-        expectation(t0, x0, dt): Returns the expected value of the process after a time increment dt.
-        std_deviation(t0, x0, dt): Returns the standard deviation of the process after a time increment dt.
-        evolve(t0, x0, dt, dw): Simulates the evolution of the process over a time increment dt using a random term dw.
-    """
+    Every model simulates on a time grid from pre-drawn standard normals::
 
-    def __init__(self):
-        """Initializes the StochasticProcess class."""
-        pass
+        paths = model.evolve(t_grid, dw)                          # [n_paths, n_steps(, ...)]
+        paths = model.evolve(t_grid, dw, observation_times=obs)   # only the observed columns
+
+    ``t_grid`` holds increasing year fractions (> 0, without 0); ``dw`` the standard normals
+    (``[n_paths, n_steps]``, or ``[n_paths, n_steps, k]`` for models with ``k`` shocks per step).
+    The draws are made by the caller (pricers use ``tf.random.stateless_normal``), so the same
+    seed gives the same paths and bumps use common random numbers.
+    """
 
     @abstractmethod
-    def size(self):
-        """
-        Returns the number of dimensions of the process.
-
-        Returns:
-            int: The number of dimensions (or factors) of the stochastic process.
-        """
-        pass
-
-    @property
-    def factors(self):
-        """
-        Returns the number of factors (dimensions) in the process.
-
-        Returns:
-            int: The number of factors (same as size()).
-        """
-        return self.size()
+    def size(self) -> int:
+        """Number of state dimensions (factors) of the process."""
 
     @abstractmethod
     def initial_values(self):
-        """
-        Returns the initial values of the process.
-
-        Returns:
-            float or numpy array: The initial value(s) of the process.
-        """
-        pass
+        """Initial value(s) of the state."""
 
     @abstractmethod
-    def drift(self, t0, x0, dt):
-        """
-        Computes the drift term of the process, which represents the deterministic trend.
+    def evolve(self, t_grid, dw, observation_times=None):
+        """Simulate the state on *t_grid* from the standard normals *dw*.
 
         Args:
-            t0 (float): The current time.
-            x0 (float or numpy array): The current value(s) of the process.
-            dt (float): The time increment.
+            t_grid: ``[n_steps]`` increasing times (year fractions, > 0).
+            dw: Standard normals, ``[n_paths, n_steps]`` (or with a trailing shock axis).
+            observation_times: Optional subset of ``t_grid``: only those columns are returned.
 
         Returns:
-            float or numpy array: The drift term at time t0 for the process.
+            tf.Tensor: Paths ``[n_paths, n_steps(, n_state)]`` (or the observed columns).
         """
-        pass
 
-    @abstractmethod
-    def diffusion(self, t0, x0, dt):
-        """
-        Computes the diffusion term of the process, which represents the stochastic component (volatility).
-
-        Args:
-            t0 (float): The current time.
-            x0 (float or numpy array): The current value(s) of the process.
-            dt (float): The time increment.
-
-        Returns:
-            float or numpy array: The diffusion (volatility) term at time t0.
-        """
-        pass
-
-    def expectation(self, t0, x0, dt):  # TODO add discretization schemes
-        """
-        Computes the expectation (mean) of the process at time t0 + dt, using Euler discretization.
-
-        Args:
-            t0 (float): The current time.
-            x0 (float or numpy array): The current value(s) of the process.
-            dt (float): The time increment.
-
-        Returns:
-            float or numpy array: The expected value(s) of the process at time t0 + dt.
-        """
-        return x0 + self.drift(t0, x0, dt)
-
-    def std_deviation(self, t0, x0, dt):
-        """
-        Computes the standard deviation of the process at time t0 + dt.
-
-        Args:
-            t0 (float): The current time.
-            x0 (float or numpy array): The current value(s) of the process.
-            dt (float): The time increment.
-
-        Returns:
-            float or numpy array: The standard deviation of the process at time t0 + dt.
-        """
-        return self.diffusion(t0, x0, dt)
-
-    def evolve(self, t0, x0, dt, dw):
-        """
-        Simulates the evolution of the process over a time increment dt using the Euler scheme.
-
-        Args:
-            t0 (float): The current time.
-            x0 (float or numpy array): The current value(s) of the process.
-            dt (float): The time increment.
-            dw (float or numpy array): The random term (typically drawn from a normal distribution).
-
-        Returns:
-            float or numpy array: The new value(s) of the process at time t0 + dt.
-        """
-        return (
-            self.expectation(t0=t0, x0=x0, dt=dt)
-            + self.std_deviation(t0=t0, x0=x0, dt=dt) * dw
-        )
+    @property
+    def factors(self) -> int:
+        """Alias of :meth:`size`."""
+        return self.size()

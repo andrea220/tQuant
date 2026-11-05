@@ -34,9 +34,9 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 | `index/` | `Index` (ABC), `OvernightIndex`, `IborIndex`, `InflationIndex` |
 | `flows/` | `CashFlow`, `Coupon` (ABC), `FixedCoupon`/`FixedRateLeg`, `FloatingCoupon`/`FloatingRateLeg` |
 | `instruments/` | `Product` (ABC), `Deposit`, `Fra`, `Swap`, `Ois`, `Option`/`VanillaOption`, `AutocallableOption`, `Cap`/`Floor`/`Collar`, generators in `helpers.py` |
-| `models/` | `StochasticProcess` (ABC), `GeometricBrownianMotion`, `ArithmeticBrownianMotion`, `OrnsteinUhlenbeckProcess`, `HullWhiteProcess`, `G2PlusPlusProcess`, `GaussianShortRateModel` (n-factor G1++/G2++ on the market curve: exact simulation of factors + integrals, closed-form bonds, AAD to the pillars), `LocalVolatilityModel` (Dupire), `DisplacedDiffusionModel` |
+| `models/` | `StochasticProcess` (ABC: `size`, `initial_values`, `evolve(t_grid, dw, observation_times=None)`), `GeometricBrownianMotion`, `ArithmeticBrownianMotion`, `GaussianShortRateModel` (n-factor G1++/G2++ on the market curve: exact simulation of factors + integrals, closed-form bonds, AAD to the pillars), `LocalVolatilityModel` (Gatheral on the market forward, `from_equity`), `DisplacedDiffusionModel` |
 | `pricers/` | `Pricer` (ABC), `BlackScholesPricer` (EU BS + American Bjerksund–Stensland; `dividend_model` discrete/continuous), `VanillaMCPricer` (model class with `from_equity`: GBM / local vol built from the market), `AutocallableMCPricer` (investor's side, local vol default, digitals smoothed: `barrier_smoothing`), `SwapPricer`, `OisPricer`, `FraPricer`, `DepositPricer`, coupon/leg discounting, `PricerAssignment` (factory, `isinstance`: Deposit/Ois/Fra/Swap/VanillaOption) |
-| `analytics/` | `SwapExposureGenerator` (swap MtM/EE/ENE/PFE under `GaussianShortRateModel`), legacy `GaussianPathGenerator`, `HullWhiteShortRateGenerator` |
+| `analytics/` | `SwapExposureGenerator` (swap MtM/EE/ENE/PFE under `GaussianShortRateModel`) |
 
 ## Key patterns
 
@@ -74,7 +74,8 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 1. New instrument → subclass `Product`; reuse `flows/` for cash flows.
 2. New pricer → subclass `Pricer`; read market data only via `MarketEnvironment` accessors; register it in
    `PricerAssignment` if it should be auto-selected.
-3. New model → subclass `StochasticProcess`; check `analytics/GaussianPathGenerator` first for Gaussian rate models.
+3. New model → subclass `StochasticProcess` (`evolve(t_grid, dw, observation_times=None)`, draws made by the caller);
+   Gaussian rate models: extend `GaussianShortRateModel`; equity models: a `from_equity` factory for the MC pricers.
 4. New market data type → extend `RiskFactor` / `MarketDataType` + `MarketMapValidator`, then add an accessor.
 5. New curve/surface → check `RateCurve`, `VolatilitySurface`, `DividendCurve` first; propose the structure before coding.
 6. Day count / calendars → extend the existing enums, no parallel classes.
@@ -167,20 +168,24 @@ tests green.
       `tape.gradient` gives pathwise delta, vega per node, rho, dividend sensitivities. Grid ends exactly at maturity
       (was the nearest point of a grid up to the last vol maturity), stateless Gaussian draws (CRN bumps),
       `product.standard_error`. Discrete dividends: escrowed `S − PV`, carry repo (as BS discrete).
-- [ ] `DisplacedDiffusionModel`: float64 now, but calibrated in numpy from `float()` market data (no AAD to market);
-      add `from_equity` and a TF calibration.
+- [ ] `DisplacedDiffusionModel`: float64, common `evolve`, but not wired to the market: built from floats (S0, flat r, q)
+      and calibrated in numpy/scipy (per-maturity root finding of beta, sigma on the smile), so no `from_equity`, no
+      AAD to the market, not usable by the MC pricers. To do: `from_equity` on the market forward (as local vol) and a
+      differentiable calibration (implicit function theorem on the calibration equations, or a TF solver).
 - [x] `LocalVolatilityModel.evolve`: the loop is a module-level `tf.function` on tensors (was a `tf.function` on a
       bound method: retraced per model and, with a temporary model, `self` garbage-collected → `None._C`).
-- [ ] `StochasticProcess.evolve(t0, x0, dt, dw)` vs subclasses `evolve(t_grid, dw)`; GBM `drift(dt)` differs too.
+- [x] 4d `StochasticProcess` reduced to `size`, `initial_values`, `evolve(t_grid, dw, observation_times=None)` (was an
+      Euler `evolve(t0, x0, dt, dw)` + drift/diffusion/expectation no pricer used, overridden with other signatures);
+      DD and `GaussianShortRateModel` (`evolve` = factors, `simulate` = draws + discount) on it.
 - [x] `HullWhiteProcess.x0` (was `.numpy()` on a numpy value: `AttributeError`).
 - [x] 4c `GaussianShortRateModel` (`hull_white`, `g2pp`; any n factors): `r = sum x_i + phi(t)` fitted to the market
       curve; exact joint simulation of `(x_i, int x_i)` (no time-step error, stateless seed, float64); bank-account
       discount `D(0,t) = P(0,t) exp(-sum I - V/2)`; Brigo-Mercurio closed-form bonds. The curve enters only through
       `P(0, .)`: rho by AAD. Checked against the legacy `HullWhiteProcess` / `G2PlusPlusProcess` closed forms.
-- [ ] Legacy `HullWhiteProcess` / `G2PlusPlusProcess` / `OrnsteinUhlenbeckProcess` (params as `.numpy()`, x0 copied
-      into a new `Variable`: no AAD to the curve; G2++ not simulable by `GaussianPathGenerator`) and
-      `GaussianPathGenerator` / `HullWhiteShortRateGenerator` (unseeded, per-date `RateCurve` rebuild): superseded by
-      `GaussianShortRateModel`, no longer used by the library: remove or adapt in 4d.
+- [x] Removed the legacy `HullWhiteProcess`, `G2PlusPlusProcess`, `OrnsteinUhlenbeckProcess`, `GaussianPathGenerator`,
+      `HullWhiteShortRateGenerator` (superseded by `GaussianShortRateModel`); their closed-form values are pinned in
+      `test_rate_curve` / `test_rates_mc`. The pinning caught a float32 round trip of numeric parameters in
+      `GaussianShortRateModel` (a = 0.03 → 0.0299999993): fixed.
 - [ ] Calibration of the Gaussian short rate models to rate vols (swaptions/caps): later (no swaption pricer).
 - [x] `VanillaMCPricer` + `LocalVolatilityModel`: the gradient reaches `VolatilitySurface.volatility_matrix` (tested).
 - [x] 4b `AutocallableMCPricer`: model class built from the market (`from_equity`, local vol default), payoff in TF
@@ -195,13 +200,12 @@ tests green.
       local vol forward mode `Equity.forward` (and the martingale correction) only there (was every step: 260 calls).
       Pricers pass the maturity / the fixings. Autocallable example: price 1.0 s, all greeks 2.2 s (was 1.6 + 20 s
       before both fixes), script 16 s incl. ~8 s TF import; same numbers.
-- [ ] Same `gather`-in-loop pattern in the legacy `_simulate_log_euler` (`LocalVolatilityModel(C, ...)` /
-      `from_implied_vol`).
 - [x] `SwapExposureGenerator` rewritten (was broken: `SwapPricer(market_map)` + `dict` market): vectorized swap MtM
       per path/date from the model bonds, index curve via a deterministic multiplicative basis to the discount
       curve, past-fixed coupons from the path fixing; EE, ENE, PFE, discounted EE; today = `SwapPricer` exactly,
       E[D V(t)] = PV(0) of the remaining flows. 5Y swap, 23 dates, 20k paths: ~5 s.
-- [ ] Unused, not exported: `pricers/localvolmc.py`, `models/localvol.py` (superseded by `models/localvolatility.py`).
+- [x] Removed `pricers/localvolmc.py`, `models/localvol.py` (unused) and the legacy local vol path (`LocalVolatilityModel(C, ...)`,
+      `from_implied_vol`, Dupire on call prices, `_simulate_log_euler`): only the forward/Gatheral model remains.
 - [x] `examples/local_vol.py` reproducible (stateless draws, seed 42).
 - [x] `LocalVolatilityModel.from_equity` (forward mode): simulates `X = S/F(t)` on the market forward
       (`Equity.forward`; discrete dividends as proportional drops) with Gatheral's local vol in total implied variance

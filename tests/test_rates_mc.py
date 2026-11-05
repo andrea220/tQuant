@@ -9,8 +9,6 @@ import tensorflow as tf
 import tensorquant as tq
 from tensorquant.index.curverateindex import IborIndex
 from tensorquant.instruments.helpers import SwapGenerator
-from tensorquant.models.g2 import G2PlusPlusProcess
-from tensorquant.models.hullwhite import HullWhiteProcess
 from tensorquant.pricers.fixedflow import FixedCouponDiscounting
 from tensorquant.pricers.floatingflow import FloatingCouponDiscounting
 
@@ -61,23 +59,24 @@ class TestClosedForms(RatesTestCase):
                     self.assertAlmostEqual(float(m.zero_bond(0.0, T, tf.zeros([1, m.size()], tf.float64))[0]),
                                            float(self.curve.discount(T)), places=14)
 
+    # Legacy HullWhiteProcess / G2PlusPlusProcess closed forms (removed), pinned on the same inputs
+    HW_BONDS = {(1.0, 4.0): [0.949350959054944, 0.9232685498151152, 0.8854823619908484],
+                (2.0, 7.0): [0.9067075755681021, 0.8674693209792198, 0.8117727051831314]}
+    HW_ALPHA = {1.0: 0.02404757138069243, 2.0: 0.026841118340126337}
+    G2_BONDS = {(0.01, -0.005): 0.8726451304277352, (-0.02, 0.003): 0.9549468705302201}
+
     def test_hull_white_matches_the_legacy_process(self):
-        """G1++ in x = r - phi(t) vs HullWhiteProcess in r: same bonds, phi = alpha."""
-        m, old = self.models()["HW"], HullWhiteProcess(self.curve, HW["a"], HW["sigma"])
+        """G1++ in x = r - phi(t): same bonds and phi = alpha as the legacy HullWhiteProcess in r."""
+        m = self.models()["HW"]
         x = tf.constant([[-0.01], [0.0], [0.015]], tf.float64)
-        for t, T in ((1.0, 4.0), (2.0, 7.0)):
-            np.testing.assert_allclose(m.zero_bond(t, T, x).numpy(), old.zero_bond(t, T, m.short_rate(t, x)).numpy(),
-                                       rtol=1e-9)   # legacy A(S,T) uses inst_fwd (~1e-11)
-            self.assertAlmostEqual(float(m.short_rate(t, tf.zeros([1, 1], tf.float64))[0]), float(old.alpha(t)), places=9)
-        self.assertAlmostEqual(old.x0, float(self.curve.inst_fwd(0.0)), places=12)   # was AttributeError
+        for (t, T), bonds in self.HW_BONDS.items():
+            np.testing.assert_allclose(m.zero_bond(t, T, x).numpy(), bonds, rtol=1e-9)   # legacy A(S,T) used inst_fwd
+            self.assertAlmostEqual(float(m.short_rate(t, tf.zeros([1, 1], tf.float64))[0]), self.HW_ALPHA[t], places=9)
 
     def test_g2pp_matches_the_legacy_process(self):
         m = self.models()["G2"]
-        old = G2PlusPlusProcess(self.curve, G2["a"], G2["b"], G2["sigma"], G2["eta"], G2["rho"])
-        for x, y in ((0.01, -0.005), (-0.02, 0.003)):
-            state = tf.constant([[x, y]], tf.float64)
-            self.assertAlmostEqual(float(m.zero_bond(2.0, 6.0, state)[0]), float(old.zero_bond(2.0, 6.0, x, y)), places=9)
-
+        for (x, y), bond in self.G2_BONDS.items():
+            self.assertAlmostEqual(float(m.zero_bond(2.0, 6.0, tf.constant([[x, y]], tf.float64))[0]), bond, places=9)
 
 class TestSimulation(RatesTestCase):
     N = 50_000

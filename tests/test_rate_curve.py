@@ -6,6 +6,8 @@ from datetime import date, timedelta
 import numpy as np
 import tensorflow as tf
 
+import tensorquant as tq
+
 from tensorquant.markethandles.dividendcurve import DividendCurve
 from tensorquant.markethandles.ircurve import FlatCurve, RateCurve
 from tensorquant.markethandles.utils import Currency
@@ -149,21 +151,24 @@ class TestInstFwd(unittest.TestCase):
 
 
 class TestHullWhiteUsesInstFwd(unittest.TestCase):
-    """Hull-White consumes inst_fwd: values pinned before inst_fwd returned a tensor."""
+    """Hull-White closed forms consume the curve (inst_fwd for phi): values pinned with the legacy
+    HullWhiteProcess (a = 3%, sigma = 1%), now through GaussianShortRateModel (x = r - phi(t))."""
 
     def setUp(self):
-        from tensorquant.models.hullwhite import HullWhiteProcess
-
-        self.hw = HullWhiteProcess(make_curve(), 0.03, 0.01)
+        tq.Settings.evaluation_date = EVAL_DATE
+        self.curve = make_curve()
+        self.hw = tq.GaussianShortRateModel.hull_white(self.curve, 0.03, 0.01)
 
     def test_pinned_values(self):
-        self.assertAlmostEqual(float(self.hw._process.x0), 0.02000000000000225, places=12)
-        self.assertAlmostEqual(float(self.hw.alpha(1.0)), 0.023873525915961924, places=12)
-        A, B = self.hw.A_B(1.0, 3.0)
-        self.assertAlmostEqual(float(A), 0.9970700983024687, places=12)
-        self.assertAlmostEqual(float(B), 1.941182213858376, places=12)
-        self.assertAlmostEqual(float(self.hw.zero_bond(1.0, 3.0, 0.021)), 0.9572420164457541, places=12)
-
+        zero = tf.zeros([1, 1], tf.float64)
+        self.assertAlmostEqual(float(self.curve.inst_fwd(0.0)), 0.02000000000000225, places=12)    # r(0)
+        self.assertAlmostEqual(float(self.hw.short_rate(1.0, zero)[0]), 0.023873525915961924, places=9)  # alpha(1)
+        B = float(self.hw._B(2.0)[0])
+        self.assertAlmostEqual(B, 1.941182213858376, places=12)
+        x = tf.constant([[0.021]], tf.float64) - (self.hw.short_rate(1.0, zero)[0] - 0.0)
+        bond = float(self.hw.zero_bond(1.0, 3.0, x)[0])                    # P(1, 3) at r(1) = 2.1%
+        self.assertAlmostEqual(bond, 0.9572420164457541, places=9)
+        self.assertAlmostEqual(bond / np.exp(-B * 0.021), 0.9970700983024687, places=9)          # A(1, 3)
 
 class TestDividendCurvePV(unittest.TestCase):
     def setUp(self):

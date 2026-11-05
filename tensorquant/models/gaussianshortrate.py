@@ -13,8 +13,11 @@ from ..timehandles.utils import Settings
 
 
 def _as_param(x) -> tf.Tensor:
-    """Model parameter as a float64 tensor (variables stay in the graph)."""
-    return tf.cast(tf.convert_to_tensor(x), DTYPE)
+    """Model parameter as a float64 tensor (variables stay in the graph; numbers go straight to float64,
+    not through float32)."""
+    if isinstance(x, (tf.Tensor, tf.Variable)):
+        return tf.cast(x, DTYPE)
+    return tf.convert_to_tensor(np.asarray(x, dtype=np.float64))
 
 
 class GaussianShortRateModel(StochasticProcess):
@@ -77,12 +80,6 @@ class GaussianShortRateModel(StochasticProcess):
 
     def initial_values(self) -> tf.Tensor:
         return tf.zeros([self.size()], DTYPE)
-
-    def drift(self, t0, x0, dt):
-        return -self._kappa * x0 * dt
-
-    def diffusion(self, t0, x0, dt):
-        return self._sigma * tf.sqrt(tf.cast(dt, DTYPE))
 
     @property
     def curve(self) -> RateCurve:
@@ -161,8 +158,45 @@ class GaussianShortRateModel(StochasticProcess):
                           tf.concat([tf.linalg.diag(b), tf.eye(n, dtype=DTYPE)], 1)], 0)
         return mean, cov
 
+    def _path(self, times: np.ndarray, dw: tf.Tensor):
+        """Exact transitions of ``z = (x, I)``: factors ``[n_paths, n_times, n]`` and ``sum_i I_i`` ``[n_paths, n_times]``."""
+        if np.any(np.diff(np.concatenate([[0.0], times])) <= 0):
+            raise ValueError("times must be increasing and > 0")
+        n = self.size()
+        dw = tf.cast(dw, DTYPE)
+        z = tf.zeros([tf.shape(dw)[0], 2 * n], DTYPE)
+        xs, integrals = [], []
+        t_prev = 0.0
+        for k, t in enumerate(times):
+            mean, cov = self._transition(t - t_prev)
+            chol = tf.linalg.cholesky(cov + 1e-18 * tf.eye(2 * n, dtype=DTYPE))
+            z = tf.matmul(z, mean, transpose_b=True) + tf.matmul(dw[:, k], chol, transpose_b=True)
+            xs.append(z[:, :n])
+            integrals.append(tf.reduce_sum(z[:, n:], axis=1))
+            t_prev = t
+        return tf.stack(xs, axis=1), tf.stack(integrals, axis=1)
+
+    def evolve(self, t_grid, dw, observation_times=None) -> tf.Tensor:
+        """Factors on *t_grid* (exact simulation; common :class:`StochasticProcess` interface).
+
+        Args:
+            t_grid: ``[n_steps]`` increasing times (> 0).
+            dw: ``[n_paths, n_steps, 2 n_factors]`` standard normals (shocks of the factors and their
+                integrals at each step).
+            observation_times: Optional subset of ``t_grid``.
+
+        Returns:
+            tf.Tensor: ``[n_paths, n_steps, n_factors]`` (or the observed columns).
+        """
+        times = np.asarray(tf.convert_to_tensor(t_grid), dtype=float)
+        xs, _ = self._path(times, dw)
+        if observation_times is not None:
+            from .brownian import observation_columns
+            xs = tf.gather(xs, observation_columns(times, observation_times), axis=1)
+        return xs
+
     def simulate(self, times: Sequence[float], n_paths: int, seed: int = 42):
-        """Exact joint simulation of the factors and their integrals on *times*.
+        """Draw (stateless seed) and simulate the factors and the bank-account discount on *times*.
 
         Args:
             times: Increasing year fractions (> 0) from the evaluation date.
@@ -174,19 +208,8 @@ class GaussianShortRateModel(StochasticProcess):
                 ``discount = D(0, t) = P(0, t) exp(-sum_i I_i(t) - V(0, t)/2)``.
         """
         times = np.asarray(times, dtype=float)
-        if np.any(np.diff(np.concatenate([[0.0], times])) <= 0):
-            raise ValueError("times must be increasing and > 0")
-        n = self.size()
-        z = tf.zeros([n_paths, 2 * n], DTYPE)
-        normals = tf.random.stateless_normal([len(times), n_paths, 2 * n], seed=[seed, 0], dtype=DTYPE)
-        xs, discounts = [], []
-        t_prev = 0.0
-        for k, t in enumerate(times):
-            mean, cov = self._transition(t - t_prev)
-            chol = tf.linalg.cholesky(cov + 1e-18 * tf.eye(2 * n, dtype=DTYPE))
-            z = tf.matmul(z, mean, transpose_b=True) + tf.matmul(normals[k], chol, transpose_b=True)
-            xs.append(z[:, :n])
-            p0t = tf.cast(self._curve.discount(float(t)), DTYPE)
-            discounts.append(p0t * tf.exp(-tf.reduce_sum(z[:, n:], axis=1) - 0.5 * self.variance(0.0, t)))
-            t_prev = t
-        return tf.stack(xs, axis=1), tf.stack(discounts, axis=1)
+        dw = tf.random.stateless_normal([n_paths, len(times), 2 * self.size()], seed=[seed, 0], dtype=DTYPE)
+        xs, integrals = self._path(times, dw)
+        p0 = tf.stack([tf.cast(self._curve.discount(float(t)), DTYPE) for t in times])
+        var = tf.stack([self.variance(0.0, t) for t in times])
+        return xs, p0[None, :] * tf.exp(-integrals - 0.5 * var[None, :])
