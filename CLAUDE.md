@@ -195,7 +195,7 @@ tests green.
       `phi = eta/sqrt(theta(1+theta))`, `eta(1+|rho|) <= 2`, increasing ATM total variance, forward moneyness with
       the dividend forward (= `Equity.forward` to 1e-16): free of static arbitrage (min g +0.24 over the 50
       tickers). Same random draws as before: spots, repos, dividends, curves, FX, correlations unchanged. The
-      previous surfaces (snapshot `20261105/1516`, still in the repo) had butterfly arbitrage from 1Y (g −0.36 at 5Y).
+      previous surfaces (snapshot `20261105/1516`, removed) had butterfly arbitrage from 1Y (g −0.36 at 5Y).
 - [ ] Local vol MC noise is large in the wings and at long maturities (OTM call at 170%, 3Y: ±1 vol point with
       100k paths): variance reduction (antithetics, control variate on the forward) not done.
 - [x] `examples/local_vol.py` / `local_vol_mdm.py`: one analysis (`analyse_local_vol` in `local_vol.py`, reused by
