@@ -11,7 +11,7 @@ setup(
         "tensorflow>=2.16",
         "numpy>=1.26",
         "scipy>=1.11",
-        "pandas>=2.2,<3",
+        "pandas>=2.2",
         "python-dateutil>=2.9",
     ],
     extras_require={

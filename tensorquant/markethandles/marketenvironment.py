@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 from enum import Enum
 import re
 
@@ -18,6 +18,7 @@ from .equity import Equity
 from .correlation import CorrelationMatrix
 from ..numericalhandles.dtypes import as_variable
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
+from ..timehandles.utils import Settings
 
 
 class RiskFactor(Enum):
@@ -245,8 +246,14 @@ class MarketMapValidator:
                             f"got {type(value).__name__}"
                         )
             elif risk_factor == RiskFactor.FX.value:
+                if data_type == MarketDataType.VOL.value:
+                    if not isinstance(value, VolatilitySurface):
+                        raise TypeError(
+                            f"Market key '{key}' expects a VolatilitySurface, got {type(value).__name__}"
+                        )
+                    continue
                 if data_type != MarketDataType.SPOT.value:
-                    raise ValueError(f"Market key '{key}': only FX SPOT is supported")
+                    raise ValueError(f"Market key '{key}': only FX SPOT and VOL are supported")
                 if not isinstance(value, (int, float, tf.Tensor, tf.Variable)):
                     raise TypeError(
                         f"Market key '{key}' expects a numeric value, got {type(value).__name__}"
@@ -429,7 +436,8 @@ class MarketEnvironment:
     # ------------------------------------------------------------------
 
     MARKET_DATA_FILES = (
-        "ir_curves.csv", "fx_spot.csv", "eq_spot.csv", "eq_vol.csv", "eq_dividends.csv", "correlations.csv",
+        "ir_curves.csv", "fx_spot.csv", "fx_vol.csv", "eq_spot.csv", "eq_vol.csv", "eq_dividends.csv",
+        "correlations.csv",
     )
 
     @classmethod
@@ -441,28 +449,13 @@ class MarketEnvironment:
     ) -> "MarketEnvironment":
         """Build a :class:`MarketEnvironment` from a ``marketdata/`` snapshot.
 
-        Layout: ``<root>/<yyyymmdd>/<calibration_set>/`` with long-format CSV files
-        (ISO dates, decimal units). Every file is optional; conventions come from
-        the data:
-
-        - ``ir_curves.csv``: ``ccy, curve, pillar, value, quote, daycount, interp``;
-          ``quote`` is ``df`` (discount factors) or ``zero`` (continuously
-          compounded zero rates) -> ``IR:<ccy>:<curve>:SPOT``.
-        - ``fx_spot.csv``: ``base, quote, spot`` (1 base = spot quote) ->
-          ``FX:<quote>:<base><quote>:SPOT``.
-        - ``eq_spot.csv``: ``ticker, ccy, spot, repo, div_yield`` (empty cell =
-          absent) -> ``EQ:<ccy>:<ticker>:SPOT|REPO|DIVYIELD``.
-        - ``eq_vol.csv``: ``ticker, ccy, expiry, strike, vol``, a full expiry x
-          strike grid per ticker -> ``EQ:<ccy>:<ticker>:VOL`` (Actual365 tenors).
-        - ``eq_dividends.csv``: ``ticker, ccy, ex_date, pay_date, amount`` ->
-          ``EQ:<ccy>:<ticker>:DIV``.
-        - ``correlations.csv``: ``factor_1, factor_2, corr`` (one row per pair) ->
-          ``CORR:ALL:GLOBAL:SPOT``.
+        Layout: ``<root>/<yyyymmdd>/<calibration_set>/`` with the CSV files of
+        :meth:`from_frames` (``MARKET_DATA_FILES``; every file optional).
 
         Args:
             root (str | os.PathLike): Base folder (e.g. ``"marketdata"``).
-            evaluation_date (date, optional): Snapshot date (folder ``yyyymmdd``)
-                and curve reference date; ``None`` takes the latest date folder.
+            evaluation_date (date, optional): Snapshot date (folder ``yyyymmdd``) and curve
+                reference date; ``None`` takes the latest date folder.
             calibration_set (str, optional): Snapshot folder inside the date
                 folder (e.g. ``"1516"``); ``None`` takes the latest one.
 
@@ -474,8 +467,7 @@ class MarketEnvironment:
         Raises:
             FileNotFoundError: If the snapshot folder does not exist or contains
                 none of the market data files.
-            ValueError: If the data are inconsistent (unknown quote type, an
-                incomplete vol grid, ...).
+            ValueError: If the data are inconsistent (see :meth:`from_frames`).
         """
         if evaluation_date is None:
             days = sorted(d.name for d in Path(root).iterdir()
@@ -492,15 +484,54 @@ class MarketEnvironment:
         folder = day_folder / calibration_set
         if not folder.is_dir():
             raise FileNotFoundError(f"Snapshot folder '{folder}' does not exist")
-        if not any((folder / name).is_file() for name in cls.MARKET_DATA_FILES):
+        frames = {name: pd.read_csv(folder / name) for name in cls.MARKET_DATA_FILES if (folder / name).is_file()}
+        if not frames:
             raise FileNotFoundError(f"No market data files in '{folder}'")
+        env = cls.from_frames(frames, evaluation_date)
+        env.calibration_set = calibration_set
+        return env
 
+    @classmethod
+    def from_frames(cls, frames: dict, evaluation_date: date) -> "MarketEnvironment":
+        """Build a :class:`MarketEnvironment` from market data tables (long format, decimal units).
+
+        ``frames`` maps file names to DataFrames (dates as ISO strings or ``date``); every table
+        is optional, conventions come from the data:
+
+        - ``ir_curves.csv``: ``ccy, curve, pillar, value, quote, daycount, interp``;
+          ``quote`` is ``df`` (discount factors) or ``zero`` (continuously
+          compounded zero rates) -> ``IR:<ccy>:<curve>:SPOT``.
+        - ``fx_spot.csv``: ``base, quote, spot`` (1 base = spot quote) ->
+          ``FX:<quote>:<base><quote>:SPOT``.
+        - ``fx_vol.csv``: ``base, quote, expiry, strike, vol`` (full grid) ->
+          ``FX:<quote>:<base><quote>:VOL``.
+        - ``eq_spot.csv``: ``ticker, ccy, spot, repo, div_yield`` (empty cell =
+          absent) -> ``EQ:<ccy>:<ticker>:SPOT|REPO|DIVYIELD``.
+        - ``eq_vol.csv``: ``ticker, ccy, expiry, strike, vol``, a full expiry x
+          strike grid per ticker -> ``EQ:<ccy>:<ticker>:VOL`` (Actual365 tenors).
+        - ``eq_dividends.csv``: ``ticker, ccy, ex_date, pay_date, amount`` ->
+          ``EQ:<ccy>:<ticker>:DIV``.
+        - ``correlations.csv``: ``factor_1, factor_2, corr`` (one row per pair) ->
+          ``CORR:ALL:GLOBAL:SPOT``.
+
+        Args:
+            frames (dict): ``{file name: pandas.DataFrame}``.
+            evaluation_date (date): Curve / surface reference date.
+
+        Returns:
+            MarketEnvironment: The populated environment (``evaluation_date`` set,
+                ``calibration_set`` None).
+
+        Raises:
+            ValueError: If the data are inconsistent (unknown quote type, an
+                incomplete vol grid, ...).
+        """
         def read(name: str) -> Optional[pd.DataFrame]:
-            path = folder / name
-            return pd.read_csv(path) if path.is_file() else None
+            frame = frames.get(name)
+            return None if frame is None else frame.copy()
 
         def to_dates(column: pd.Series) -> list[date]:
-            return [d.date() for d in pd.to_datetime(column, format="%Y-%m-%d")]
+            return [d.date() for d in pd.to_datetime(column.astype(str), format="%Y-%m-%d")]
 
         market: dict[str, Any] = {}
 
@@ -535,22 +566,33 @@ class MarketEnvironment:
                     if pd.notna(value):
                         market[f"{RiskFactor.EQ.value}:{row.ccy}:{row.ticker}:{data_type.value}"] = float(value)
 
+        dc = DayCounter(DayCounterConvention.Actual365)
+
+        def surface(grp: pd.DataFrame, label: str) -> VolatilitySurface:
+            grid = grp.pivot(index="expiry", columns="strike", values="vol").sort_index().sort_index(axis=1)
+            if grid.isna().to_numpy().any():
+                raise ValueError(f"Vol surface {label}: incomplete expiry x strike grid")
+            return VolatilitySurface(
+                reference_date=evaluation_date,
+                calendar=None,
+                daycounter=dc,
+                strike=[float(k) for k in grid.columns],
+                maturity=[dc.year_fraction(evaluation_date, d) for d in grid.index],
+                volatility_matrix=grid.to_numpy(dtype=float).tolist(),
+            )
+
         vols = read("eq_vol.csv")
         if vols is not None:
-            dc = DayCounter(DayCounterConvention.Actual365)
             vols = vols.assign(expiry=to_dates(vols["expiry"]))
             for (ticker, ccy), grp in vols.groupby(["ticker", "ccy"], sort=False):
-                grid = grp.pivot(index="expiry", columns="strike", values="vol").sort_index().sort_index(axis=1)
-                if grid.isna().to_numpy().any():
-                    raise ValueError(f"Vol surface {ticker}: incomplete expiry x strike grid")
-                market[f"{RiskFactor.EQ.value}:{ccy}:{ticker}:{MarketDataType.VOL.value}"] = VolatilitySurface(
-                    reference_date=evaluation_date,
-                    calendar=None,
-                    daycounter=dc,
-                    strike=[float(k) for k in grid.columns],
-                    maturity=[dc.year_fraction(evaluation_date, d) for d in grid.index],
-                    volatility_matrix=grid.to_numpy(dtype=float).tolist(),
-                )
+                market[f"{RiskFactor.EQ.value}:{ccy}:{ticker}:{MarketDataType.VOL.value}"] = surface(grp, ticker)
+
+        fx_vols = read("fx_vol.csv")
+        if fx_vols is not None:
+            fx_vols = fx_vols.assign(expiry=to_dates(fx_vols["expiry"]))
+            for (base, quote), grp in fx_vols.groupby(["base", "quote"], sort=False):
+                market[f"{RiskFactor.FX.value}:{quote}:{base}{quote}:{MarketDataType.VOL.value}"] = \
+                    surface(grp, base + quote)
 
         dividends = read("eq_dividends.csv")
         if dividends is not None:
@@ -576,8 +618,87 @@ class MarketEnvironment:
 
         env = cls(market)
         env.evaluation_date = evaluation_date
-        env.calibration_set = calibration_set
+        env.calibration_set = None
         return env
+
+    def to_frames(self) -> dict:
+        """Market data as tables in the :meth:`from_frames` layout (inverse of :meth:`from_frames`).
+
+        Curves are written as zero rates at their pillar dates; vol maturities as expiry dates
+        (Actual365 days from the evaluation date), so ``from_frames(to_frames())`` rebuilds the
+        same market.
+
+        Returns:
+            dict: ``{file name: pandas.DataFrame}`` (only the tables with data).
+
+        Raises:
+            TypeError: If a market object cannot be written (e.g. a flat vol without a grid).
+        """
+        eval_date = getattr(self, "evaluation_date", None) or Settings.evaluation_date
+        tables = {name: [] for name in self.MARKET_DATA_FILES}
+        spots: dict = {}
+
+        def surface_rows(surf, keys: dict) -> list:
+            if not hasattr(surf, "strike") or not hasattr(surf, "maturity"):
+                raise TypeError(f"Cannot write vol surface of type {type(surf).__name__}")
+            matrix = surf.volatility_matrix.numpy()
+            rows = []
+            for i, t in enumerate(surf.maturity):
+                expiry = eval_date + timedelta(days=int(round(float(t) * 365)))
+                for j, k in enumerate(surf.strike):
+                    rows.append({**keys, "expiry": expiry, "strike": float(k), "vol": float(matrix[i, j])})
+            return rows
+
+        for key, value in self._market.items():
+            rf, ccy, ticker, data_type = key.split(":")
+            if rf == RiskFactor.IR.value:
+                for d, r in value.nodes:
+                    tables["ir_curves.csv"].append({
+                        "ccy": ccy, "curve": ticker, "pillar": d, "value": r, "quote": "zero",
+                        "daycount": value.daycounter_convention.value, "interp": value.interpolation_type,
+                    })
+            elif rf == RiskFactor.FX.value and data_type == MarketDataType.SPOT.value:
+                tables["fx_spot.csv"].append({"base": ticker[:3], "quote": ccy, "spot": float(value)})
+            elif rf == RiskFactor.FX.value and data_type == MarketDataType.VOL.value:
+                tables["fx_vol.csv"] += surface_rows(value, {"base": ticker[:3], "quote": ccy})
+            elif rf == RiskFactor.EQ.value and data_type == MarketDataType.VOL.value:
+                tables["eq_vol.csv"] += surface_rows(value, {"ticker": ticker, "ccy": ccy})
+            elif rf == RiskFactor.EQ.value and data_type == MarketDataType.DIV.value:
+                pays = value.payment_dates or value.ex_dates
+                for ex, pay, amount in zip(value.ex_dates, pays, value.amounts):
+                    tables["eq_dividends.csv"].append(
+                        {"ticker": ticker, "ccy": ccy, "ex_date": ex, "pay_date": pay, "amount": amount})
+            elif rf == RiskFactor.EQ.value:
+                row = spots.setdefault((ticker, ccy), {"ticker": ticker, "ccy": ccy, "spot": None,
+                                                       "repo": None, "div_yield": None})
+                column = {"SPOT": "spot", "REPO": "repo", "DIVYIELD": "div_yield"}[data_type]
+                row[column] = float(value)
+            elif rf == RiskFactor.CORR.value:
+                names, matrix = value.names, value.matrix.numpy()
+                tables["correlations.csv"] += [
+                    {"factor_1": names[i], "factor_2": names[j], "corr": float(matrix[i, j])}
+                    for i in range(len(names)) for j in range(i + 1, len(names))
+                ]
+        tables["eq_spot.csv"] = list(spots.values())
+        return {name: pd.DataFrame(rows) for name, rows in tables.items() if rows}
+
+    def to_folder(self, root: str | os.PathLike, calibration_set: Optional[str] = None) -> Path:
+        """Write the market as a ``marketdata/`` snapshot ``<root>/<yyyymmdd>/<calibration_set>/``.
+
+        Args:
+            root (str | os.PathLike): Base folder.
+            calibration_set (str, optional): Snapshot name; default the current time ``HHMM``.
+
+        Returns:
+            Path: The snapshot folder written.
+        """
+        eval_date = getattr(self, "evaluation_date", None) or Settings.evaluation_date
+        name = calibration_set or datetime.now().strftime("%H%M")
+        folder = Path(root) / eval_date.strftime("%Y%m%d") / name
+        folder.mkdir(parents=True, exist_ok=True)
+        for file_name, frame in self.to_frames().items():
+            frame.to_csv(folder / file_name, index=False)
+        return folder
 
     # ------------------------------------------------------------------
     # Interest-rate curves
@@ -668,7 +789,7 @@ class MarketEnvironment:
         pairs = {}
         for key, value in self._market.items():
             parts = key.split(":")
-            if parts[0] == RiskFactor.FX.value:
+            if parts[0] == RiskFactor.FX.value and parts[3] == MarketDataType.SPOT.value:
                 quote, pair = parts[1], parts[2]
                 pairs[(pair[:3], quote)] = value
         return pairs
@@ -712,6 +833,43 @@ class MarketEnvironment:
             if leg_1 is not None and leg_2 is not None:
                 return leg_1 * leg_2
         raise ValueError(f"FX spot {base}{quote} cannot be resolved from the stored pairs {sorted(pairs)}")
+
+    def get_fx_forward(self, base: Currency | str, quote: Currency | str,
+                       maturity: Union[date, float]) -> tf.Tensor:
+        """FX forward ``F(T) = S * P_base(T) / P_quote(T)`` (covered interest parity).
+
+        Uses :meth:`get_fx_spot` (direct, inverse or cross) and the default discount curve of
+        each currency (:meth:`get_ir_curve`); differentiable w.r.t. the FX spots and both curves.
+
+        Args:
+            base (Currency | str): Base currency.
+            quote (Currency | str): Quote currency.
+            maturity (Union[date, float]): Forward date (or year fraction of each curve).
+
+        Returns:
+            tf.Tensor: float64 forward (units of quote per unit of base).
+        """
+        base = base if isinstance(base, Currency) else Currency[str(base)]
+        quote = quote if isinstance(quote, Currency) else Currency[str(quote)]
+        spot = self.get_fx_spot(base, quote)
+        if base == quote:
+            return spot
+        p_base = tf.cast(self.get_ir_curve(base).discount(maturity), tf.float64)
+        p_quote = tf.cast(self.get_ir_curve(quote).discount(maturity), tf.float64)
+        return spot * p_base / p_quote
+
+    def get_fx_vol_surface(self, base: Currency | str, quote: Currency | str) -> VolatilitySurface:
+        """Vol surface of a stored FX pair (``FX:<quote>:<base><quote>:VOL``; strikes in quote units).
+
+        Raises:
+            ValueError: If the pair has no stored surface (inverse / cross surfaces are not derived).
+        """
+        base = base.name if isinstance(base, Currency) else str(base)
+        quote = quote.name if isinstance(quote, Currency) else str(quote)
+        key = f"{RiskFactor.FX.value}:{quote}:{base}{quote}:{MarketDataType.VOL.value}"
+        if key not in self._market:
+            raise ValueError(f"No FX vol surface for {base}{quote} ('{key}')")
+        return self._market[key]
 
     # ------------------------------------------------------------------
     # Correlations

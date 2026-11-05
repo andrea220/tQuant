@@ -121,8 +121,9 @@ class CorrelationMatrix:
         Raises:
             KeyError: If a name is unknown.
         """
-        idx = self._indices(names)
-        return tf.gather(tf.gather(self.matrix, idx, axis=0), idx, axis=1)
+        # selection matrix E [k, n]: E M E^T has a dense gradient (tf.gather on the variable gives IndexedSlices)
+        E = tf.one_hot(self._indices(names), len(self.names), dtype=DTYPE)
+        return tf.matmul(tf.matmul(E, self.matrix), E, transpose_b=True)
 
     def cholesky(self, names: Sequence[str]) -> tf.Tensor:
         """Lower Cholesky factor ``L`` of ``submatrix(names)`` (``L @ L.T`` = submatrix)."""

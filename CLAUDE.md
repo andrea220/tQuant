@@ -30,7 +30,7 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 |---|---|
 | `timehandles/` | `Settings` (global `evaluation_date`), `DayCounter` + `DayCounterConvention`, `Calendar`, `TARGET`, `ScheduleGenerator`, `DateGrid`, enums `TimeUnit`, `BusinessDayConvention`, `CompoundingType`, `Frequency` |
 | `numericalhandles/` | `LinearInterp`, `natural_cubic_spline` (TF, value/d1/d2, linear wings, differentiable in knots and values), `newton`, `newton_1d`, `DTYPE` + `as_variable` (dtype of market data, risk-factor variables) |
-| `markethandles/` | `MarketEnvironment`, `RiskFactor`, `MarketDataType`, `MarketMapValidator`, `RateCurve` / `FlatCurve` / `DefaultCurve`, `VolatilitySurface` / `BlackConstantVolatility`, `DividendCurve`, `Equity` (underlying view), `CorrelationMatrix`, `InterestRate`, `CurveBootstrap`; `utils.py`: `Currency`, `OptionType`, `ExerciseType`, `PayoffType`, `SwapType`, `Position` |
+| `markethandles/` | `MarketEnvironment`, `RiskFactor`, `MarketDataType`, `MarketMapValidator`, `RateCurve` / `FlatCurve` / `DefaultCurve`, `VolatilitySurface` / `BlackConstantVolatility`, `DividendCurve`, `Equity` (underlying view), `CorrelationMatrix`, `InterestRate`, `CurveBootstrap`, `generate_market_data` / `generate_market` (`synthetic.py`); `utils.py`: `Currency`, `OptionType`, `ExerciseType`, `PayoffType`, `SwapType`, `Position` |
 | `index/` | `Index` (ABC), `OvernightIndex`, `IborIndex`, `InflationIndex` |
 | `flows/` | `CashFlow`, `Coupon` (ABC), `FixedCoupon`/`FixedRateLeg`, `FloatingCoupon`/`FloatingRateLeg` |
 | `instruments/` | `Product` (ABC), `Deposit`, `Fra`, `Swap`, `Ois`, `Option`/`VanillaOption`, `AutocallableOption`, `Cap`/`Floor`/`Collar`, generators in `helpers.py` |
@@ -54,13 +54,16 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 - **MarketEnvironment** is the only access point to market data. Flat dict with keys
   `RISKFACTOR:CCY:TICKER:TYPE`, e.g. `IR:EUR:ESTR:SPOT` → `RateCurve`, `EQ:EUR:SX5E:VOL` → `VolatilitySurface`,
   `EQ:EUR:X:SPOT|REPO|DIVYIELD` → float64 `tf.Variable` (a float is accepted as input and wrapped), `EQ:EUR:X:DIV` → `DividendCurve`,
-  `FX:USD:EURUSD:SPOT` → float64 `tf.Variable` (1 EUR = x USD), `CORR:ALL:GLOBAL:SPOT` → `CorrelationMatrix`
+  `FX:USD:EURUSD:SPOT` → float64 `tf.Variable` (1 EUR = x USD), `FX:USD:EURUSD:VOL` → `VolatilitySurface`,
+  `CORR:ALL:GLOBAL:SPOT` → `CorrelationMatrix`
   (factor names = market-map key prefix, e.g. `EQ:EUR:TICKER1`; one float64 `[n, n]` variable).
   Typed accessors: `get_ir_curve`, `get_eq_spot`, `get_eq_vol_surface`, `get_eq_repo`, `get_eq_div_yield`,
   `get_eq_dividends`, `get_currency`, `get_fx_spot(base, quote)` (direct, inverse or cross via a common
-  currency; only stored pairs are risk factors), `get_correlation_matrix`, `get_correlation(names)`. Build from a snapshot with
-  `MarketEnvironment.from_folder("marketdata", evaluation_date, calibration_set=None)` (latest snapshot of the day
-  when `None`).
+  currency; only stored pairs are risk factors), `get_fx_forward(base, quote, T)` (covered interest parity on the
+  default curves), `get_fx_vol_surface(base, quote)` (stored pairs), `get_correlation_matrix`, `get_correlation(names)`.
+  I/O: `from_folder("marketdata", evaluation_date=None, calibration_set=None)` (latest snapshot when `None`) =
+  CSV → `from_frames(frames, evaluation_date)`; inverse `to_frames()` / `to_folder(root, calibration_set)` (exact round
+  trip). Synthetic data: `tq.generate_market(evaluation_date, seed)` (in memory) / `generate_market_data` (tables).
 - **Equity underlying**: `market_env.get_equity(ticker)` returns an `Equity` **view** (references, no copies) with
   spot, repo, dividends, vol surface and the currency discount curve; `forward(T)`, `pv_dividends(T)`,
   `implied_div_yield(T)`, `risk_factors()`, `summary(T)`. Dividend model from the data: `DIV` present → discrete
@@ -111,7 +114,7 @@ Run examples/notebooks only when changing them or when asked.
 | `RateCurve` / `FlatCurve` / `DividendCurve` | `tests/test_rate_curve.py` | discount/zero/forward/inst_fwd vs numpy reference, `from_zcb` round trip, PV dividends, amounts as float64 variable (PV gradient = discount factor, `assign`), float64 tensor outputs, inst_fwd gradient vs finite differences, Hull-White values that use inst_fwd (pinned) |
 | `Equity` view | `tests/test_equity.py` | references to market objects, dividend model selection, PV/forward vs closed form, forward vs `BlackScholesPricer`, implied yield, gradients (spot, repo, pillars vs FD, dividend amounts vs closed form), summary |
 | `BlackScholesPricer` | `tests/test_black_scholes.py` | EU/AM prices and greeks pinned from the float32 version, EU vs closed form, put–call parity, forward = `Equity.forward`, delta/rho per pillar/vega per node vs bumps, dividend models (discrete, continuous sticky yield, DIVYIELD-only), dPrice/dD_i vs bumps (both models) and = -delta·P(0,ex_i) (discrete), float64 |
-| FX / `CorrelationMatrix` | — | postponed (see roadmap step 5) |
+| FX, `CorrelationMatrix`, market data I/O, synthetic generator | `tests/test_market_data.py` | FX spot direct/inverse/cross + gradients, FX forward = covered interest parity + gradients on both curves, FX vol surface; correlation from_pairs/submatrix/cholesky/validation, pair gradient on both entries; `from_frames`/`to_frames` and `to_folder`/`from_folder` exact round trip (risk factors, dividend and vol dates, BS price), latest snapshot; generator deterministic/seeded, layout, correlation range, SSVI arbitrage-free, smooth curves |
 | `timehandles/` | — | — |
 | `numericalhandles/dtypes.py` | `tests/test_dtypes.py` | `DTYPE`, `as_variable` (reuse, casts, no float32 round trip) |
 | `numericalhandles/` (interpolation, newton) | — | — |
@@ -132,7 +135,9 @@ tests green.
 - [x] Risk factors in market objects: float64 `variables`, `MarketEnvironment.risk_factors()`.
 - [x] dtype policy for market objects: float64 variables and float64 tensor outputs (`discount(0)` no longer returns `int`).
 - [x] `RateCurve.inst_fwd` returns a differentiable float64 tensor (was `math.log` → float, no gradient).
-- [x] `pandas` stays capped `<3` (only used for CSV loading and display tables; revisit in step 5).
+- [x] `pandas` (CSV loading and display tables): cap `<3` removed in `setup.py` after the full test suite and examples
+      1-4, `swap_pricing`, `autocallable`, `local_vol_mdm` passed with pandas 3.1.1 (`FutureWarning` as error);
+      `requirements.txt` still pins the installed 2.2.2.
 
 ### 2. Equity (analytic pricers)
 
@@ -252,16 +257,18 @@ tests green.
       (TICKER1-30 EUR, 31-40 GBP, 41-50 USD), curves ESTR/SONIA/SOFR, EURUSD/GBPUSD, correlations 0.30-0.80
       (one-factor model, PSD by construction).
       Conventions come from the data (no hardcoded ESTR/EUR6M, day count, interp); market keys derived from the
-      columns. Reader `MarketEnvironment.from_folder` done (default overnight curve per ccy: ESTR, SOFR, SONIA);
-      writer `to_folder` not yet. Recheck pandas 3 here.
+      columns. Reader `from_folder` / `from_frames`, writer `to_frames` / `to_folder` (default overnight curve per ccy:
+      ESTR, SOFR, SONIA). Also `fx_vol.csv  base, quote, expiry, strike, vol`.
 - [x] Examples (`1_market_handles`, `2_forwards`, `3_options`, `4_montecarlo`, `local_vol_mdm`) and `study/`
       notebooks 01-04 load `marketdata/` via `from_folder` (no date: latest snapshot; `env.evaluation_date`).
 - [x] Removed `examples/market_data.py` and `MarketEnvironment.from_data_path` (old MDM layout).
 - [x] FX spots and `CorrelationMatrix` in `MarketEnvironment` (keys, validation, risk factors, accessors).
-- [ ] Unit tests for FX (`get_fx_spot` inverse/cross and gradients) and `CorrelationMatrix` (validation,
-      `submatrix`, `cholesky`): postponed, only checked by a script so far.
-- [ ] FX forward from the curves (`S * DF_base / DF_quote`); FX vol surfaces.
-- [ ] Synthetic curves: the 5bp random noise on pillar zero rates gives jagged instantaneous forwards (e.g. SONIA
-      4.0% -> 4.8% between 2Y and 3Y) with linear interpolation on zero rates. To review.
-- [ ] Synthetic market data generation modules in the library (today `marketdata/generate_synthetic.py`), usable by
-      tests, examples and `study/` notebooks.
+- [x] Unit tests for FX and `CorrelationMatrix` (`tests/test_market_data.py`); `submatrix` now has a dense gradient
+      (was `tf.gather` on the variable → `IndexedSlices`).
+- [x] FX forward (`get_fx_forward`, covered interest parity) and FX vol surfaces (`FX:<quote>:<pair>:VOL`, `fx_vol.csv`).
+- [x] Synthetic curves: Nelson-Siegel per currency (was 5bp random noise per pillar: inst forward jumps up to 80bp;
+      now ≤ 18bp, from the linear interpolation of zero rates).
+- [x] Synthetic generator in the library (`tensorquant/markethandles/synthetic.py`): `generate_market_data` (tables) /
+      `generate_market` (`MarketEnvironment`); independent random stream per block (curves, equities, FX,
+      correlations); SSVI on the library forwards (`Equity.forward`, `get_fx_forward`). `marketdata/generate_synthetic.py`
+      is a thin wrapper; snapshot `20261105/2240` (the previous `20261105/2130` removed).

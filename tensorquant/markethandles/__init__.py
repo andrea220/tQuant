@@ -7,3 +7,4 @@ from .dividendcurve import *
 from .equity import *
 from .correlation import *
 from .marketenvironment import *
+from .synthetic import generate_market_data, generate_market
