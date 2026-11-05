@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from ..markethandles.utils import Currency, OptionType, ExerciseType
 from .product import Product
+from ..numericalhandles.dtypes import as_variable
 
 from datetime import date
 import tensorflow as tf
@@ -20,7 +21,7 @@ class Option(Product, ABC):
     ):
         super().__init__(ccy, start_date, end_date)
         self._option_type = option_type
-        self._strike = tf.Variable(strike, dtype=tf.float32)
+        self._strike = as_variable(strike)   # float64 (product input, not a market risk factor)
         self._underlying = underlying
         self._exercise_type = exercise_type
         self._implied_volatility = None

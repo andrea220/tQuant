@@ -249,6 +249,20 @@ class TestIndependentChecks(BSTestCase):
                 self.assertAlmostEqual(float(call.price) - float(put.price),
                                        DF * (float(eq.forward(expiry)) - 105.0), places=10)
 
+    def test_strike_is_float64(self):
+        """103.37 is not representable in float32: parity holds to 1e-10 only with a float64 strike."""
+        eq = self.mkt.get_equity("DISC")
+        expiry = EXPIRIES["1Y"]
+        K = 103.37
+        call, put = make_option(expiry, "Call", K), make_option(expiry, "Put", K)
+        self.assertEqual(call.strike.dtype, tf.float64)
+        self.assertEqual(float(call.strike), K)
+        self.price(call)
+        self.price(put)
+        DF = float(eq.discount_curve.discount(expiry))
+        self.assertAlmostEqual(float(call.price) - float(put.price),
+                               DF * (float(eq.forward(expiry)) - K), places=10)
+
     def test_forward_is_the_equity_forward(self):
         for ticker in ("DISC", "CONT"):
             opt = make_option(EXPIRIES["1Y"], "Call", 100.0, underlying=ticker)

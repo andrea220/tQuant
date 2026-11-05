@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import date
+from pathlib import Path
 from typing import Any, Optional
 from enum import Enum
 import re
@@ -14,6 +15,7 @@ from .ircurve import RateCurve
 from .volatilitysurface import VolatilitySurface
 from .dividendcurve import DividendCurve
 from .equity import Equity
+from .correlation import CorrelationMatrix
 from ..numericalhandles.dtypes import as_variable
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
 
@@ -24,9 +26,13 @@ class RiskFactor(Enum):
     Attributes:
         IR (str): Interest Rate risk factor.
         EQ (str): Equity risk factor.
+        FX (str): FX spot, key ``FX:<QUOTE>:<BASEQUOTE>:SPOT`` (1 BASE = value QUOTE).
+        CORR (str): Correlation matrix, key ``CORR:ALL:GLOBAL:SPOT``.
     """
     IR = "IR"
     EQ = "EQ"
+    FX = "FX"
+    CORR = "CORR"
 
 
 class MarketDataType(Enum):
@@ -64,8 +70,8 @@ class MarketMapValidator:
         - "EQ:EUR:SX5E" -> {"SPOT": "EQ:EUR:SX5E:SPOT", "VOL": "EQ:EUR:SX5E:VOL"}
     """
 
-    KEY_PATTERN = re.compile(r"^(IR|EQ):([A-Z]{3}):([A-Z0-9_]+)$")
-    VALUE_PATTERN = re.compile(r"^(IR|EQ):([A-Z]{3}):([A-Z0-9_]+):(SPOT|VOL|REPO|DIVYIELD|DIV)$")
+    KEY_PATTERN = re.compile(r"^(IR|EQ|FX|CORR):([A-Z]{3}):([A-Z0-9_]+)$")
+    VALUE_PATTERN = re.compile(r"^(IR|EQ|FX|CORR):([A-Z]{3}):([A-Z0-9_]+):(SPOT|VOL|REPO|DIVYIELD|DIV)$")
 
     @classmethod
     def validate_key(cls, key: str) -> tuple[str, str, str]:
@@ -182,6 +188,8 @@ class MarketMapValidator:
         - ``EQ:*:*:SPOT``  → numeric scalar (``int``, ``float``,
           ``tf.Tensor``, ``tf.Variable``)
         - ``EQ:*:*:VOL``   → :class:`VolatilitySurface`
+        - ``FX:*:*:SPOT``  → numeric scalar
+        - ``CORR:*:*:SPOT`` → :class:`CorrelationMatrix`
 
         Args:
             market (dict): The market dict to validate.
@@ -236,6 +244,21 @@ class MarketMapValidator:
                             f"Market key '{key}' expects a DividendCurve, "
                             f"got {type(value).__name__}"
                         )
+            elif risk_factor == RiskFactor.FX.value:
+                if data_type != MarketDataType.SPOT.value:
+                    raise ValueError(f"Market key '{key}': only FX SPOT is supported")
+                if not isinstance(value, (int, float, tf.Tensor, tf.Variable)):
+                    raise TypeError(
+                        f"Market key '{key}' expects a numeric value, got {type(value).__name__}"
+                    )
+            elif risk_factor == RiskFactor.CORR.value:
+                if data_type != MarketDataType.SPOT.value:
+                    raise ValueError(f"Market key '{key}': only CORR SPOT is supported")
+                if not isinstance(value, CorrelationMatrix):
+                    raise TypeError(
+                        f"Market key '{key}' expects a CorrelationMatrix, "
+                        f"got {type(value).__name__}"
+                    )
 
     @classmethod
     def validate_market_against_map(
@@ -265,9 +288,9 @@ class MarketMapValidator:
             for market_key in data_types.values()
         }
 
-        # EQ keys are open-ended (any ticker is valid); they have already been
-        # format-validated by validate_market so no whitelist check is needed.
-        eq_pattern = re.compile(r"^EQ:[A-Z]{3}:[A-Z0-9_]+:(SPOT|VOL|REPO|DIVYIELD|DIV)$")
+        # EQ, FX and CORR keys are open-ended (any ticker/pair is valid); they have
+        # already been format-validated by validate_market so no whitelist check is needed.
+        eq_pattern = re.compile(r"^(EQ|FX|CORR):[A-Z]{3}:[A-Z0-9_]+:(SPOT|VOL|REPO|DIVYIELD|DIV)$")
 
         orphans = [
             key for key in market
@@ -345,11 +368,11 @@ class MarketEnvironment:
         # 3. Cross-validate: all keys referenced in market_map must exist in market
         MarketMapValidator.validate_market_against_map(market, self._market_map)
 
-        # 4. Own copy of the dict; scalar equity data become float64 tf.Variables
+        # 4. Own copy of the dict; scalar equity/FX data become float64 tf.Variables
         #    (one per key, shared by every pricer that reads it).
         self._market = dict(market)
         for key, value in self._market.items():
-            if self._is_eq_scalar_key(key):
+            if self._is_scalar_key(key):
                 self._market[key] = as_variable(
                     float(value) if isinstance(value, (int, float)) else value,
                     name=key.replace(":", "_"),
@@ -366,14 +389,14 @@ class MarketEnvironment:
     )
 
     @classmethod
-    def _is_eq_scalar_key(cls, key: str) -> bool:
-        """True for ``EQ:<CCY>:<TICKER>:SPOT|REPO|DIVYIELD`` keys."""
+    def _is_scalar_key(cls, key: str) -> bool:
+        """True for ``EQ:<CCY>:<TICKER>:SPOT|REPO|DIVYIELD`` and ``FX:<CCY>:<PAIR>:SPOT`` keys."""
         parts = key.split(":")
-        return (
-            len(parts) == 4
-            and parts[0] == RiskFactor.EQ.value
-            and parts[3] in cls._EQ_SCALAR_TYPES
-        )
+        if len(parts) != 4:
+            return False
+        if parts[0] == RiskFactor.EQ.value:
+            return parts[3] in cls._EQ_SCALAR_TYPES
+        return parts[0] == RiskFactor.FX.value and parts[3] == MarketDataType.SPOT.value
 
     def risk_factors(self) -> dict[str, list[tf.Variable]]:
         """Return the differentiable market inputs, keyed by market key.
@@ -384,6 +407,8 @@ class MarketEnvironment:
         - ``IR:<CCY>:<TICKER>:SPOT`` -> one variable per pillar rate (``RateCurve.variables``)
         - ``EQ:<CCY>:<TICKER>:VOL``  -> the volatility matrix ``[n_maturities, n_strikes]``
         - ``EQ:<CCY>:<TICKER>:SPOT|REPO|DIVYIELD`` -> one scalar variable
+        - ``FX:<QUOTE>:<PAIR>:SPOT`` -> one scalar variable (stored pairs only)
+        - ``CORR:ALL:GLOBAL:SPOT``   -> the correlation matrix ``[n, n]``
 
         Discrete dividends (``DIV``) are not risk factors yet.
 
@@ -393,9 +418,9 @@ class MarketEnvironment:
         factors: dict[str, list[tf.Variable]] = {}
         for key in sorted(self._market):
             value = self._market[key]
-            if isinstance(value, (RateCurve, VolatilitySurface)):
+            if isinstance(value, (RateCurve, VolatilitySurface, CorrelationMatrix)):
                 factors[key] = value.variables
-            elif self._is_eq_scalar_key(key):
+            elif self._is_scalar_key(key):
                 factors[key] = [value]
         return factors
 
@@ -532,6 +557,146 @@ class MarketEnvironment:
 
         return cls(market)
 
+    MARKET_DATA_FILES = (
+        "ir_curves.csv", "fx_spot.csv", "eq_spot.csv", "eq_vol.csv", "eq_dividends.csv", "correlations.csv",
+    )
+
+    @classmethod
+    def from_folder(
+        cls,
+        root: str | os.PathLike,
+        evaluation_date: date,
+        calibration_set: Optional[str] = None,
+    ) -> "MarketEnvironment":
+        """Build a :class:`MarketEnvironment` from a ``marketdata/`` snapshot.
+
+        Layout: ``<root>/<yyyymmdd>/<calibration_set>/`` with long-format CSV files
+        (ISO dates, decimal units). Every file is optional; conventions come from
+        the data:
+
+        - ``ir_curves.csv``: ``ccy, curve, pillar, value, quote, daycount, interp``;
+          ``quote`` is ``df`` (discount factors) or ``zero`` (continuously
+          compounded zero rates) -> ``IR:<ccy>:<curve>:SPOT``.
+        - ``fx_spot.csv``: ``base, quote, spot`` (1 base = spot quote) ->
+          ``FX:<quote>:<base><quote>:SPOT``.
+        - ``eq_spot.csv``: ``ticker, ccy, spot, repo, div_yield`` (empty cell =
+          absent) -> ``EQ:<ccy>:<ticker>:SPOT|REPO|DIVYIELD``.
+        - ``eq_vol.csv``: ``ticker, ccy, expiry, strike, vol``, a full expiry x
+          strike grid per ticker -> ``EQ:<ccy>:<ticker>:VOL`` (Actual365 tenors).
+        - ``eq_dividends.csv``: ``ticker, ccy, ex_date, pay_date, amount`` ->
+          ``EQ:<ccy>:<ticker>:DIV``.
+        - ``correlations.csv``: ``factor_1, factor_2, corr`` (one row per pair) ->
+          ``CORR:ALL:GLOBAL:SPOT``.
+
+        Args:
+            root (str | os.PathLike): Base folder (e.g. ``"marketdata"``).
+            evaluation_date (date): Snapshot date (folder ``yyyymmdd``) and curve
+                reference date.
+            calibration_set (str, optional): Snapshot folder inside the date
+                folder (e.g. ``"1516"``); ``None`` takes the latest one.
+
+        Returns:
+            MarketEnvironment: The populated environment.
+
+        Raises:
+            FileNotFoundError: If the snapshot folder does not exist or contains
+                none of the market data files.
+            ValueError: If the data are inconsistent (unknown quote type, an
+                incomplete vol grid, ...).
+        """
+        day_folder = Path(root) / evaluation_date.strftime("%Y%m%d")
+        if calibration_set is None:
+            sets = sorted(d.name for d in day_folder.iterdir() if d.is_dir()) if day_folder.is_dir() else []
+            if not sets:
+                raise FileNotFoundError(f"No snapshot found in '{day_folder}'")
+            calibration_set = sets[-1]
+        folder = day_folder / calibration_set
+        if not folder.is_dir():
+            raise FileNotFoundError(f"Snapshot folder '{folder}' does not exist")
+        if not any((folder / name).is_file() for name in cls.MARKET_DATA_FILES):
+            raise FileNotFoundError(f"No market data files in '{folder}'")
+
+        def read(name: str) -> Optional[pd.DataFrame]:
+            path = folder / name
+            return pd.read_csv(path) if path.is_file() else None
+
+        def to_dates(column: pd.Series) -> list[date]:
+            return [d.date() for d in pd.to_datetime(column, format="%Y-%m-%d")]
+
+        market: dict[str, Any] = {}
+
+        curves = read("ir_curves.csv")
+        if curves is not None:
+            for (ccy, name), grp in curves.groupby(["ccy", "curve"], sort=False):
+                quote, daycount, interp = (grp[c].unique() for c in ("quote", "daycount", "interp"))
+                if len(quote) != 1 or len(daycount) != 1 or len(interp) != 1:
+                    raise ValueError(f"Curve {ccy} {name}: quote/daycount/interp must be unique")
+                grp = grp.sort_values("pillar")
+                pillars, values = to_dates(grp["pillar"]), grp["value"].astype(float).tolist()
+                convention = DayCounterConvention(daycount[0])
+                if quote[0] == "df":
+                    curve = RateCurve.from_zcb(evaluation_date, pillars, values, interp[0], convention)
+                elif quote[0] == "zero":
+                    curve = RateCurve(evaluation_date, pillars, values, interp[0], convention)
+                else:
+                    raise ValueError(f"Curve {ccy} {name}: unknown quote '{quote[0]}' (expected 'df' or 'zero')")
+                market[f"{RiskFactor.IR.value}:{ccy}:{name}:{MarketDataType.SPOT.value}"] = curve
+
+        fx = read("fx_spot.csv")
+        if fx is not None:
+            for row in fx.itertuples(index=False):
+                market[f"{RiskFactor.FX.value}:{row.quote}:{row.base}{row.quote}:SPOT"] = float(row.spot)
+
+        spots = read("eq_spot.csv")
+        if spots is not None:
+            for row in spots.itertuples(index=False):
+                for column, data_type in (("spot", MarketDataType.SPOT), ("repo", MarketDataType.REPO),
+                                          ("div_yield", MarketDataType.DIVYIELD)):
+                    value = getattr(row, column)
+                    if pd.notna(value):
+                        market[f"{RiskFactor.EQ.value}:{row.ccy}:{row.ticker}:{data_type.value}"] = float(value)
+
+        vols = read("eq_vol.csv")
+        if vols is not None:
+            dc = DayCounter(DayCounterConvention.Actual365)
+            vols = vols.assign(expiry=to_dates(vols["expiry"]))
+            for (ticker, ccy), grp in vols.groupby(["ticker", "ccy"], sort=False):
+                grid = grp.pivot(index="expiry", columns="strike", values="vol").sort_index().sort_index(axis=1)
+                if grid.isna().to_numpy().any():
+                    raise ValueError(f"Vol surface {ticker}: incomplete expiry x strike grid")
+                market[f"{RiskFactor.EQ.value}:{ccy}:{ticker}:{MarketDataType.VOL.value}"] = VolatilitySurface(
+                    reference_date=evaluation_date,
+                    calendar=None,
+                    daycounter=dc,
+                    strike=[float(k) for k in grid.columns],
+                    maturity=[dc.year_fraction(evaluation_date, d) for d in grid.index],
+                    volatility_matrix=grid.to_numpy(dtype=float).tolist(),
+                )
+
+        dividends = read("eq_dividends.csv")
+        if dividends is not None:
+            for (ticker, ccy), grp in dividends.groupby(["ticker", "ccy"], sort=False):
+                market[f"{RiskFactor.EQ.value}:{ccy}:{ticker}:{MarketDataType.DIV.value}"] = (
+                    DividendCurve.from_dataframe(
+                        reference_date=evaluation_date,
+                        df=grp.sort_values("ex_date"),
+                        ex_date_col="ex_date",
+                        amount_col="amount",
+                        declared_date_col=None,
+                        payment_date_col="pay_date",
+                        currency=Currency(ccy),
+                        daycounter_convention=DayCounterConvention.Actual365,
+                    )
+                )
+
+        correlations = read("correlations.csv")
+        if correlations is not None:
+            market[cls.CORRELATION_KEY] = CorrelationMatrix.from_pairs(
+                correlations[["factor_1", "factor_2", "corr"]].itertuples(index=False, name=None)
+            )
+
+        return cls(market)
+
     # ------------------------------------------------------------------
     # Interest-rate curves
     # ------------------------------------------------------------------
@@ -545,6 +710,7 @@ class MarketEnvironment:
                 If None, defaults to the overnight rate ticker for the currency:
                 - EUR -> "ESTR"
                 - USD -> "SOFR"
+                - GBP -> "SONIA"
                 - Other -> raises ValueError
 
         Returns:
@@ -558,6 +724,7 @@ class MarketEnvironment:
             ticker_map = {
                 Currency.EUR: "ESTR",
                 Currency.USD: "SOFR",
+                Currency.GBP: "SONIA",
             }
             if ccy not in ticker_map:
                 raise ValueError(
@@ -571,6 +738,7 @@ class MarketEnvironment:
             ticker_map = {
                 Currency.EUR: "ESTR",
                 Currency.USD: "SOFR",
+                Currency.GBP: "SONIA",
             }
             ticker = ticker_map.get(ccy, "ESTR")
         
@@ -590,6 +758,91 @@ class MarketEnvironment:
     # ------------------------------------------------------------------
     # Equity currency
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # FX
+    # ------------------------------------------------------------------
+
+    def _fx_pairs(self) -> dict[tuple[str, str], tf.Variable]:
+        """Stored FX spots as ``{(base, quote): variable}``."""
+        pairs = {}
+        for key, value in self._market.items():
+            parts = key.split(":")
+            if parts[0] == RiskFactor.FX.value:
+                quote, pair = parts[1], parts[2]
+                pairs[(pair[:3], quote)] = value
+        return pairs
+
+    def get_fx_spot(self, base: Currency | str, quote: Currency | str) -> tf.Tensor:
+        """FX spot: units of ``quote`` for 1 unit of ``base``.
+
+        Resolved from the stored pairs only: direct, inverse (``1/x``) or cross
+        through a common currency (e.g. EURGBP = EURUSD / GBPUSD). Crosses are not
+        stored, so the result is differentiable w.r.t. the stored pairs.
+
+        Args:
+            base (Currency | str): Base currency.
+            quote (Currency | str): Quote currency.
+
+        Returns:
+            tf.Tensor: float64 scalar (1.0 if ``base == quote``).
+
+        Raises:
+            ValueError: If the pair cannot be resolved from the stored pairs.
+        """
+        base = base.name if isinstance(base, Currency) else str(base)
+        quote = quote.name if isinstance(quote, Currency) else str(quote)
+        if base == quote:
+            return tf.constant(1.0, dtype=tf.float64)
+        pairs = self._fx_pairs()
+
+        def direct(b: str, q: str):
+            if (b, q) in pairs:
+                return tf.convert_to_tensor(pairs[(b, q)])
+            if (q, b) in pairs:
+                return 1.0 / pairs[(q, b)]
+            return None
+
+        spot = direct(base, quote)
+        if spot is not None:
+            return spot
+        pivots = sorted({c for pair in pairs for c in pair} - {base, quote})
+        for pivot in pivots:
+            leg_1, leg_2 = direct(base, pivot), direct(pivot, quote)
+            if leg_1 is not None and leg_2 is not None:
+                return leg_1 * leg_2
+        raise ValueError(f"FX spot {base}{quote} cannot be resolved from the stored pairs {sorted(pairs)}")
+
+    # ------------------------------------------------------------------
+    # Correlations
+    # ------------------------------------------------------------------
+
+    CORRELATION_KEY = "CORR:ALL:GLOBAL:SPOT"
+
+    def get_correlation_matrix(self) -> CorrelationMatrix:
+        """The market correlation matrix (``CORR:ALL:GLOBAL:SPOT``).
+
+        Raises:
+            ValueError: If the market has no correlation matrix.
+        """
+        if self.CORRELATION_KEY not in self._market:
+            raise ValueError(f"No correlation matrix in market ('{self.CORRELATION_KEY}')")
+        return self._market[self.CORRELATION_KEY]
+
+    def get_correlation(self, names: list[str]) -> tf.Tensor:
+        """Correlation submatrix of the given factors (e.g. ``["EQ:EUR:TICKER1", "EQ:USD:TICKER41"]``).
+
+        Args:
+            names (list[str]): Factor names, in the order wanted.
+
+        Returns:
+            tf.Tensor: float64 ``[n, n]``, differentiable w.r.t. the market matrix.
+
+        Raises:
+            ValueError: If the market has no correlation matrix.
+            KeyError: If a name is unknown.
+        """
+        return self.get_correlation_matrix().submatrix(names)
 
     def get_currency(self, ticker: str) -> Currency:
         """Return the :class:`Currency` associated with *ticker*.

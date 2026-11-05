@@ -20,7 +20,7 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 - Venv: `C:\dev\virtual_envs\tqenv` (Python 3.12), set up with `pip install -r requirements.txt -e .`.
 - Tests: `python -m unittest discover -s tests -v`
 - Examples: `python examples/<script>.py` — most read `SOURCE_MKT_DATA`: `'Generated'` uses the synthetic
-  market in `examples/market_data.py`; `'Real'` needs the MDM datastore on `W:/` (not always available).
+  market in `examples/market_data.py`; `'Real'` needs the MDM datastore on `W:/`, which **no longer exists** (do not look for it; see roadmap step 5).
 - Set `TF_ENABLE_ONEDNN_OPTS=0` for reproducible numbers.
 
 ## Module map
@@ -29,7 +29,7 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 |---|---|
 | `timehandles/` | `Settings` (global `evaluation_date`), `DayCounter` + `DayCounterConvention`, `Calendar`, `TARGET`, `ScheduleGenerator`, `DateGrid`, enums `TimeUnit`, `BusinessDayConvention`, `CompoundingType`, `Frequency` |
 | `numericalhandles/` | `LinearInterp`, `newton`, `newton_1d`, `DTYPE` + `as_variable` (dtype of market data, risk-factor variables) |
-| `markethandles/` | `MarketEnvironment`, `RiskFactor`, `MarketDataType`, `MarketMapValidator`, `RateCurve` / `FlatCurve` / `DefaultCurve`, `VolatilitySurface` / `BlackConstantVolatility`, `DividendCurve`, `Equity` (underlying view), `InterestRate`, `CurveBootstrap`; `utils.py`: `Currency`, `OptionType`, `ExerciseType`, `PayoffType`, `SwapType`, `Position` |
+| `markethandles/` | `MarketEnvironment`, `RiskFactor`, `MarketDataType`, `MarketMapValidator`, `RateCurve` / `FlatCurve` / `DefaultCurve`, `VolatilitySurface` / `BlackConstantVolatility`, `DividendCurve`, `Equity` (underlying view), `CorrelationMatrix`, `InterestRate`, `CurveBootstrap`; `utils.py`: `Currency`, `OptionType`, `ExerciseType`, `PayoffType`, `SwapType`, `Position` |
 | `index/` | `Index` (ABC), `OvernightIndex`, `IborIndex`, `InflationIndex` |
 | `flows/` | `CashFlow`, `Coupon` (ABC), `FixedCoupon`/`FixedRateLeg`, `FloatingCoupon`/`FloatingRateLeg` |
 | `instruments/` | `Product` (ABC), `Deposit`, `Fra`, `Swap`, `Ois`, `Option`/`VanillaOption`, `AutocallableOption`, `Cap`/`Floor`/`Collar`, generators in `helpers.py` |
@@ -52,9 +52,14 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
   pricer-local variable allowed is time to maturity (theta), exposed on the product (`product.time_to_maturity`).
 - **MarketEnvironment** is the only access point to market data. Flat dict with keys
   `RISKFACTOR:CCY:TICKER:TYPE`, e.g. `IR:EUR:ESTR:SPOT` → `RateCurve`, `EQ:EUR:SX5E:VOL` → `VolatilitySurface`,
-  `EQ:EUR:X:SPOT|REPO|DIVYIELD` → float64 `tf.Variable` (a float is accepted as input and wrapped), `EQ:EUR:X:DIV` → `DividendCurve`.
+  `EQ:EUR:X:SPOT|REPO|DIVYIELD` → float64 `tf.Variable` (a float is accepted as input and wrapped), `EQ:EUR:X:DIV` → `DividendCurve`,
+  `FX:USD:EURUSD:SPOT` → float64 `tf.Variable` (1 EUR = x USD), `CORR:ALL:GLOBAL:SPOT` → `CorrelationMatrix`
+  (factor names = market-map key prefix, e.g. `EQ:EUR:TICKER1`; one float64 `[n, n]` variable).
   Typed accessors: `get_ir_curve`, `get_eq_spot`, `get_eq_vol_surface`, `get_eq_repo`, `get_eq_div_yield`,
-  `get_eq_dividends`, `get_currency`. Build from CSV with `MarketEnvironment.from_data_path(...)`.
+  `get_eq_dividends`, `get_currency`, `get_fx_spot(base, quote)` (direct, inverse or cross via a common
+  currency; only stored pairs are risk factors), `get_correlation_matrix`, `get_correlation(names)`. Build from a snapshot with
+  `MarketEnvironment.from_folder("marketdata", evaluation_date, calibration_set=None)` (latest snapshot of the day
+  when `None`); `from_data_path(...)` reads the old MDM layout (deprecated, `W:/` gone).
 - **Equity underlying**: `market_env.get_equity(ticker)` returns an `Equity` **view** (references, no copies) with
   spot, repo, dividends, vol surface and the currency discount curve; `forward(T)`, `pv_dividends(T)`,
   `implied_div_yield(T)`, `risk_factors()`, `summary(T)`. Dividend model from the data: `DIV` present → discrete
@@ -104,6 +109,7 @@ Run examples/notebooks only when changing them or when asked.
 | `RateCurve` / `FlatCurve` / `DividendCurve` | `tests/test_rate_curve.py` | discount/zero/forward/inst_fwd vs numpy reference, `from_zcb` round trip, PV dividends, float64 tensor outputs, inst_fwd gradient vs finite differences, Hull-White values that use inst_fwd (pinned) |
 | `Equity` view | `tests/test_equity.py` | references to market objects, dividend model selection, PV/forward vs closed form, forward vs `BlackScholesPricer`, implied yield, gradients (spot, repo, pillars vs FD), summary |
 | `BlackScholesPricer` | `tests/test_black_scholes.py` | EU/AM prices and greeks pinned from the float32 version, EU vs closed form, put–call parity, forward = `Equity.forward`, delta/rho per pillar/vega per node vs bumps, dividend models (discrete, continuous sticky yield, DIVYIELD-only), float64 |
+| FX / `CorrelationMatrix` | — | postponed (see roadmap step 5) |
 | `timehandles/` | — | — |
 | `numericalhandles/dtypes.py` | `tests/test_dtypes.py` | `DTYPE`, `as_variable` (reuse, casts, no float32 round trip) |
 | `numericalhandles/` (interpolation, newton) | — | — |
@@ -132,6 +138,7 @@ tests green.
       example `study/notebooks/04_black_scholes.ipynb`.
 - [ ] `DividendCurve` amounts as risk factors.
 - [ ] Examples 2-4 default to real tickers (ISP/SX5E): use `TICKER1` with `'Generated'`.
+- [x] `Option.strike` is a float64 `tf.Variable` (was float32: strikes like 389.24 lost ~1e-5, parity error ~1e-5).
 
 ### 3. Interest rates (analytic pricers)
 
@@ -157,8 +164,30 @@ tests green.
 
 ### 5. Market data I/O
 
-- [ ] Review market data formats: replace the current MDM CSV layout read by `MarketEnvironment.from_data_path`
-      (`curve.csv`, `spot.csv`, `vol.csv`, `dividends.csv`) with better-defined formats; recheck pandas 3 here
-      (`spot_df.fillna(0)` on string columns is the known risk).
+- [x] New market data layout, replacing the MDM CSV layout read by `MarketEnvironment.from_data_path`
+      (`curve.csv`, `spot.csv`, `vol.csv`, `dividends.csv`). Long-format CSV, ISO dates, decimal units, snake_case:
+      ```
+      marketdata/                 (repo root; synthetic data, committed)
+        <yyyymmdd>/<calibration_set>/   (several snapshots per day, e.g. morning/evening)
+          ir_curves.csv     ccy, curve, pillar, value, quote (df|zero), daycount, interp
+          eq_spot.csv       ticker, ccy, spot, repo, div_yield   (empty cell = absent)
+          eq_vol.csv        ticker, ccy, expiry, strike, vol
+          eq_dividends.csv  ticker, ccy, ex_date, pay_date, amount
+          correlations.csv  factor_1, factor_2, corr   (upper triangle, names like EQ:EUR:TICKER1)
+          fx_spot.csv       base, quote, spot   (1 base = spot quote)
+      ```
+      Synthetic snapshots from `marketdata/generate_synthetic.py` (seed 42), written to `<yyyymmdd>/<HHMM>/` of the
+      generation time (evaluation date = generation date, all dates relative to it): 50 tickers
+      (TICKER1-30 EUR, 31-40 GBP, 41-50 USD), curves ESTR/SONIA/SOFR, EURUSD/GBPUSD, correlations 0.30-0.80
+      (one-factor model, PSD by construction).
+      Conventions come from the data (no hardcoded ESTR/EUR6M, day count, interp); market keys derived from the
+      columns. Reader `MarketEnvironment.from_folder` done (default overnight curve per ccy: ESTR, SOFR, SONIA);
+      writer `to_folder` not yet. Recheck pandas 3 here.
+- [ ] The `W:/` MDM datastore no longer exists: `from_data_path` and the `'Real'` branch of the examples
+      (`1_market_handles`, `2_forwards`, `3_options`, `4_montecarlo`, `local_vol_mdm`) to be replaced by `marketdata/`.
+- [x] FX spots and `CorrelationMatrix` in `MarketEnvironment` (keys, validation, risk factors, accessors).
+- [ ] Unit tests for FX (`get_fx_spot` inverse/cross and gradients) and `CorrelationMatrix` (validation,
+      `submatrix`, `cholesky`): postponed, only checked by a script so far.
+- [ ] FX forward from the curves (`S * DF_base / DF_quote`); FX vol surfaces.
 - [ ] Synthetic market data generation modules in the library (today only `examples/market_data.py`), usable by
       tests, examples and `study/` notebooks.

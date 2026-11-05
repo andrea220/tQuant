@@ -118,6 +118,9 @@ market_map = {
     "IR:USD:SOFR": {
         "SPOT": "IR:USD:SOFR:SPOT",
     },
+    "IR:GBP:SONIA": {
+        "SPOT": "IR:GBP:SONIA:SPOT",
+    },
     "IR:USD:3M": {
         "SPOT": "IR:USD:3M:SPOT",
     },
