@@ -90,19 +90,19 @@ def main() -> None:
     ticker = "TESTCTP"
     ccy = tq.Currency.EUR
 
-    spot = tf.constant(market_env.get_eq_spot(ticker, ccy=ccy), dtype=tf.float32)
+    spot = tf.cast(market_env.get_eq_spot(ticker, ccy=ccy), tf.float32)
     vol_surface = market_env.get_eq_vol_surface(ticker, ccy=ccy)
     disc_curve = market_env.get_ir_curve(ccy)
 
     T_grid = tf.constant(vol_surface.maturity, dtype=tf.float32)
     K_grid = tf.constant(vol_surface.strike, dtype=tf.float32)
-    iv_matrix = tf.Variable(vol_surface.volatility_matrix, dtype=tf.float32)
+    iv_matrix = tf.Variable(tf.cast(vol_surface.volatility_matrix, tf.float32))
 
     # Flat-rate approximation: extract r from the ESTR curve at the longest
     # grid maturity. For Dupire on sparse grids this is a standard convention.
     T_max = float(T_grid[-1].numpy())
     r = tf.cast(disc_curve.zero_rate(T_max), tf.float32)
-    q = tf.constant(market_env.get_eq_div_yield(ticker, ccy=ccy), dtype=tf.float32)
+    q = tf.cast(market_env.get_eq_div_yield(ticker, ccy=ccy), tf.float32)
 
     local_vol_model = LocalVolatilityModel.from_implied_vol(
         iv_matrix=iv_matrix,

@@ -155,7 +155,7 @@ def build_local_vol(market_env: tq.MarketEnvironment) -> LocalVolatilityModel:
 
     T_grid    = tf.constant(vol_surface.maturity,          dtype=tf.float32)
     K_grid    = tf.constant(vol_surface.strike,            dtype=tf.float32)
-    iv_matrix = tf.constant(vol_surface.volatility_matrix, dtype=tf.float32)
+    iv_matrix = tf.cast(vol_surface.volatility_matrix, tf.float32)
 
     T_max = float(T_grid[-1].numpy())
     df    = float(disc_curve.discount(END_DATE))

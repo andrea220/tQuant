@@ -66,7 +66,7 @@ class TestMarketEnvironmentStatic(unittest.TestCase):
     def test_get_eq_vol_surface(self):
         vol_surface = self.market_env.get_eq_vol_surface("SX5E", Currency.EUR)
         self.assertIsNotNone(vol_surface)
-        self.assertAlmostEqual(vol_surface.volatility(100.0, 1.0), 0.21)
+        self.assertAlmostEqual(float(vol_surface.volatility(100.0, 1.0)), 0.21)
 
     def test_get_repo_dividend_yield_and_dividends(self):
         repo = self.market_env.get_eq_repo("SX5E", Currency.EUR)

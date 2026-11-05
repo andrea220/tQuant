@@ -43,8 +43,14 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
   Pricers subclass `Pricer` and implement `calculate_price(product, market_env)`.
   `Pricer.price(product, market_env, autodiff=True)` runs it under a `GradientTape`, stores the price on
   `product.price` and the tape on `pricer.tape`; greeks via `pricer.tape.gradient(product.price, <tf.Variable>)`.
-  Pricers create market inputs as `tf.Variable`s inside `calculate_price` and expose them
-  (e.g. `pricer._sigma`, `product.spot`) so they can be differentiated.
+- **Risk factors live in market objects** as float64 `tf.Variable`s with stable identity (update with `assign`):
+  `RateCurve.variables` (one per pillar; `FlatCurve` has one), `VolatilitySurface.volatility_matrix`
+  (`[n_maturities, n_strikes]`), and EQ `SPOT|REPO|DIVYIELD` (wrapped by `MarketEnvironment`, one shared
+  variable per key). `market_env.risk_factors()` returns `{market_key: [variables]}`, so one
+  `tape.gradient(price, market_env.risk_factors())` gives bucketed rho, vega per node and delta.
+  Pricers must not create their own variables from market data nor detach with `.numpy()`/`float()`.
+  Migration in progress: `BlackScholesPricer` still creates local variables (`pricer._sigma`, `_r`, ...)
+  — refactor phase 2.
 - **MarketEnvironment** is the only access point to market data. Flat dict with keys
   `RISKFACTOR:CCY:TICKER:TYPE`, e.g. `IR:EUR:ESTR:SPOT` → `RateCurve`, `EQ:EUR:SX5E:VOL` → `VolatilitySurface`,
   `EQ:EUR:X:SPOT|REPO|DIVYIELD` → float, `EQ:EUR:X:DIV` → `DividendCurve`.
@@ -81,7 +87,12 @@ If a needed piece is missing, **propose first** (which class/ABC/enum, where it 
 - `pandas` capped `<3` in `setup.py` until the CSV loading in `MarketEnvironment.from_data_path` is checked on pandas 3.
 - `examples/swap_pricing.py` never sets `tq.Settings.evaluation_date` (defaults to `date.today()`), so it fails once
   past fixings are needed. Examples 2-4 default to real tickers (ISP/SX5E): use `TICKER1` with `'Generated'`.
-- dtypes are mixed: mostly `tf.float32`, `float64` in `DividendCurve` and a few places (explicit casts needed).
+- dtypes are mixed: market objects are float64, most pricers/models still `tf.float32` (explicit casts needed).
+  Target: float64 for market data and analytic pricers; MC may stay float32 via `tf.cast`.
+- `RateCurve.inst_fwd` uses `math.log`, which converts to float and breaks the gradient.
+- `SwapExposureGenerator` passes a plain `dict` to `SwapPricer.price` (expects a `MarketEnvironment`): likely broken.
+- `examples/local_vol.py` draws `tf.random.normal` before `tf.random.set_seed`, so its path stats are not reproducible.
+- `DividendCurve` amounts are not risk factors yet (planned).
 - `StochasticProcess.evolve(t0, x0, dt, dw)` vs subclasses `evolve(t_grid, dw)`; GBM `drift(dt)` signature differs too.
 - `PricerAssignment` uses `type(...) ==` and covers only Deposit/Ois/Fra/Swap.
 - Not exported / unused: `instruments/capfloor.py`, `pricers/localvolmc.py`, `models/localvol.py`

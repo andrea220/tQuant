@@ -243,11 +243,13 @@ class BlackScholesPricer(Pricer):
             Settings.evaluation_date, product.end_date
         )
 
+        # NOTE (refactor phase 1): market data are now float64 tf.Variables;
+        # cast to float32 here. Phase 2 removes these local Variables entirely.
         sigma = tf.Variable(
-            vol_surface.volatility(strike=product.strike.numpy(), tenor=tenor),
+            tf.cast(vol_surface.volatility(strike=product.strike.numpy(), tenor=tenor), tf.float32),
             dtype=tf.float32,
         )
-        s = tf.Variable(spot_value, dtype=tf.float32)
+        s = tf.Variable(tf.cast(spot_value, tf.float32), dtype=tf.float32)
         k = product.strike
         t = tf.Variable(tenor, dtype=tf.float32)
 
@@ -257,7 +259,7 @@ class BlackScholesPricer(Pricer):
         # --- repo margin (independent Variable → rho w.r.t. repo) -----------
         if self._use_implied_repo:
             repo_margin = tf.Variable(
-                market_env.get_eq_repo(product.underlying, ccy=product.ccy),
+                tf.cast(market_env.get_eq_repo(product.underlying, ccy=product.ccy), tf.float32),
                 dtype=tf.float32,
             )
         else:

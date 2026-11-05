@@ -77,14 +77,14 @@ def main() -> None:
     )
 
     # ---- Extract market data ----
-    spot       = tf.constant(market_env.get_eq_spot(TICKER, ccy=CCY), dtype=tf.float32)
+    spot       = tf.cast(market_env.get_eq_spot(TICKER, ccy=CCY), tf.float32)
     vol_surface = market_env.get_eq_vol_surface(TICKER, ccy=CCY)
     disc_curve  = market_env.get_ir_curve(CCY)
     q_raw       = market_env.get_eq_div_yield(TICKER, ccy=CCY)
 
     T_grid    = tf.constant(vol_surface.maturity,          dtype=tf.float32)
     K_grid    = tf.constant(vol_surface.strike,            dtype=tf.float32)
-    iv_matrix = tf.Variable(vol_surface.volatility_matrix, dtype=tf.float32)
+    iv_matrix = tf.Variable(tf.cast(vol_surface.volatility_matrix, tf.float32))
 
     T_max = float(T_grid[-1].numpy())
     r     = tf.cast(disc_curve.zero_rate(T_max), tf.float32)

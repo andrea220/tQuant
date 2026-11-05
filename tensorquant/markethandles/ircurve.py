@@ -19,8 +19,8 @@ class RateCurve:
         _dates (list[date]): Dates that represent the curve's pillars.
         _pillars (list[float]): Year fractions corresponding to the pillar dates.
         _pillar_days (list[int]): Day counts between the reference date and the pillars.
-        __rates (list[float]): Interest rates associated with the pillars.
-        _rates (list[Tensor]): Interest rates stored as TensorFlow variables.
+        _rates (list[tf.Variable]): Pillar zero rates (float64). They are the curve's
+            risk factors: their identity is stable, updates go through ``assign``.
         interpolation_type (str): Type of interpolation used (e.g., 'LINEAR').
         interp (LinearInterp): Interpolation object used for rate calculations.
         _jacobian (numpy.ndarray): Jacobian matrix of the curve, if applicable.
@@ -66,8 +66,7 @@ class RateCurve:
             ]
         else:
             raise TypeError("Pillars must be a list of either date or float types")
-        self.__rates = rates  # float
-        self._rates = [Variable(r, dtype=dtypes.float64) for r in rates]  # tensor
+        self._rates = [Variable(float(r), dtype=dtypes.float64) for r in rates]
         self.interpolation_type = interp
         if self.interpolation_type == "LINEAR":
             self.interp = LinearInterp(self._pillars, self._rates)
@@ -120,7 +119,7 @@ class RateCurve:
         Returns:
             list[tuple]: A list of tuples, where each tuple contains a date and the corresponding rate.
         """
-        return [(t, r) for t, r in zip(self._dates, self.__rates)]
+        return [(t, r) for t, r in zip(self._dates, self.rates)]
 
     @property
     def reference_date(self):
@@ -181,9 +180,22 @@ class RateCurve:
         """Returns the list of interest rates for the curve.
 
         Returns:
-            list[float]: The rates corresponding to the pillars.
+            list[float]: The rates corresponding to the pillars (current values
+                of :attr:`variables`).
         """
-        return self.__rates
+        return [float(r.numpy()) for r in self._rates]
+
+    @property
+    def variables(self) -> list[Variable]:
+        """Risk factors of the curve: one float64 ``tf.Variable`` per pillar rate.
+
+        Differentiate a price with respect to these to get the per-pillar
+        (bucketed) rate sensitivities.
+
+        Returns:
+            list[tf.Variable]: The pillar rate variables.
+        """
+        return list(self._rates)
 
     @property
     def jacobian(self) -> numpy.ndarray:
@@ -323,14 +335,23 @@ class RateCurve:
         return expr
 
     def _set_rates(self, rates: list[float]) -> None:
-        """Sets the rates for the curve and updates the interpolation.
+        """Sets the pillar rates in place.
+
+        The existing variables are updated with ``assign`` so that references
+        held elsewhere (tapes, risk-factor lists) stay valid.
 
         Args:
-            rates (list[float]): The new rates to set.
+            rates (list[float]): The new rates, one per pillar.
+
+        Raises:
+            ValueError: If the number of rates differs from the number of pillars.
         """
-        self.__rates = rates
-        self._rates = [Variable(r, dtype=dtypes.float64) for r in rates]
-        self.interp.y = self._rates
+        if len(rates) != len(self._rates):
+            raise ValueError(
+                f"Expected {len(self._rates)} rates, got {len(rates)}"
+            )
+        for var, r in zip(self._rates, rates):
+            var.assign(float(r))
 
 
 class DefaultCurve:
@@ -541,17 +562,21 @@ class FlatCurve(RateCurve):
             interp="LINEAR",
             daycounter_convention=daycounter_convention,
         )
+        # Both pillars share one variable: the flat rate is a single risk factor.
+        self._rates = [self._rates[0], self._rates[0]]
+        self.interp.y = self._rates
+
+    @property
+    def variables(self) -> list[Variable]:
+        """The single flat-rate variable."""
+        return [self._rates[0]]
 
     @property
     def rate(self) -> float:
         """Returns the flat rate of the curve."""
-        # All rates are identical by construction; return the first one.
-        return self._RateCurve__rates[0]
+        return float(self._rates[0].numpy())
 
     @rate.setter
     def rate(self, value: float) -> None:
-        """Sets the flat rate and updates the underlying curve representation."""
-        # Keep both internal representations (float list and Tensor list) consistent.
-        self._RateCurve__rates = [value, value]
-        self._rates = [Variable(value, dtype=dtypes.float64) for _ in range(2)]
-        self.interp.y = self._rates
+        """Sets the flat rate in place (the variable is updated with ``assign``)."""
+        self._rates[0].assign(float(value))

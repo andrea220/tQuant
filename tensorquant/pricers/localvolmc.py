@@ -93,7 +93,7 @@ class LocalVolMCPricer(Pricer):
         # ---- implied-vol surface → LocalVolatilityModel (Dupire) ------------
         T_grid = tf.constant(vol_surface.maturity, dtype=tf.float32)
         K_grid = tf.constant(vol_surface.strike,   dtype=tf.float32)
-        iv_matrix = tf.constant(vol_surface.volatility_matrix, dtype=tf.float32)
+        iv_matrix = tf.cast(vol_surface.volatility_matrix, tf.float32)
 
         lv_model = LocalVolatilityModel.from_implied_vol(
             iv_matrix=iv_matrix,

@@ -7,6 +7,7 @@ from enum import Enum
 import re
 
 import pandas as pd
+import tensorflow as tf
 
 from .utils import Currency, market_map as default_market_map
 from .ircurve import RateCurve
@@ -342,7 +343,65 @@ class MarketEnvironment:
         # 3. Cross-validate: all keys referenced in market_map must exist in market
         MarketMapValidator.validate_market_against_map(market, self._market_map)
 
-        self._market = market
+        # 4. Own copy of the dict; scalar equity data become float64 tf.Variables
+        #    (one per key, shared by every pricer that reads it).
+        self._market = dict(market)
+        for key, value in self._market.items():
+            if self._is_eq_scalar_key(key):
+                self._market[key] = self._as_float64_variable(value, key)
+
+    # ------------------------------------------------------------------
+    # Risk factors
+    # ------------------------------------------------------------------
+
+    _EQ_SCALAR_TYPES = (
+        MarketDataType.SPOT.value,
+        MarketDataType.REPO.value,
+        MarketDataType.DIVYIELD.value,
+    )
+
+    @classmethod
+    def _is_eq_scalar_key(cls, key: str) -> bool:
+        """True for ``EQ:<CCY>:<TICKER>:SPOT|REPO|DIVYIELD`` keys."""
+        parts = key.split(":")
+        return (
+            len(parts) == 4
+            and parts[0] == RiskFactor.EQ.value
+            and parts[3] in cls._EQ_SCALAR_TYPES
+        )
+
+    @staticmethod
+    def _as_float64_variable(value: Any, key: str) -> tf.Variable:
+        """Return *value* as a float64 ``tf.Variable`` (reused if it already is one)."""
+        if isinstance(value, tf.Variable) and value.dtype == tf.float64:
+            return value
+        if isinstance(value, (tf.Tensor, tf.Variable)):
+            return tf.Variable(tf.cast(value, tf.float64), name=key.replace(":", "_"))
+        return tf.Variable(float(value), dtype=tf.float64, name=key.replace(":", "_"))
+
+    def risk_factors(self) -> dict[str, list[tf.Variable]]:
+        """Return the differentiable market inputs, keyed by market key.
+
+        Use them as sources in ``tape.gradient`` to get sensitivities of a price
+        (or of a whole portfolio priced under the same tape):
+
+        - ``IR:<CCY>:<TICKER>:SPOT`` -> one variable per pillar rate (``RateCurve.variables``)
+        - ``EQ:<CCY>:<TICKER>:VOL``  -> the volatility matrix ``[n_maturities, n_strikes]``
+        - ``EQ:<CCY>:<TICKER>:SPOT|REPO|DIVYIELD`` -> one scalar variable
+
+        Discrete dividends (``DIV``) are not risk factors yet.
+
+        Returns:
+            dict[str, list[tf.Variable]]: Market key -> list of variables.
+        """
+        factors: dict[str, list[tf.Variable]] = {}
+        for key in sorted(self._market):
+            value = self._market[key]
+            if isinstance(value, (RateCurve, VolatilitySurface)):
+                factors[key] = value.variables
+            elif self._is_eq_scalar_key(key):
+                factors[key] = [value]
+        return factors
 
     # ------------------------------------------------------------------
     # Alternative constructors

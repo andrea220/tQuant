@@ -232,7 +232,7 @@ def main() -> None:
         print(f"  {sep}")
         for T in vs.maturity:
             row = f"  {T:>7.2f}  "
-            row += "  ".join(f"{vs.volatility(strike=K, tenor=T)*100:>8.2f}%" for K in qs)
+            row += "  ".join(f"{float(vs.volatility(strike=K, tenor=T))*100:>8.2f}%" for K in qs)
             print(row)
 
     # =========================================================================
@@ -256,7 +256,7 @@ def main() -> None:
         cmap = plt.cm.plasma(np.linspace(0.1, 0.9, len(vs.maturity)))
 
         for i, T in enumerate(vs.maturity):
-            iv = [vs.volatility(strike=K, tenor=T) * 100 for K in K_np]
+            iv = [float(vs.volatility(strike=K, tenor=T)) * 100 for K in K_np]
             ax.plot(K_np / spot, iv, "o-", color=cmap[i], lw=1.3, ms=3,
                     label=f"T={T:.2f}Y")
 

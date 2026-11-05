@@ -6,6 +6,12 @@ import tensorflow as tf
 
 
 class VolatilitySurface:
+    """Implied volatility surface on a (maturity, strike) grid, bilinearly interpolated.
+
+    The grid volatilities are stored in a single float64 ``tf.Variable`` of shape
+    ``[n_maturities, n_strikes]``: it is the surface's risk factor, so differentiating
+    a price with respect to :attr:`volatility_matrix` gives the vega per node.
+    """
 
     def __init__(
         self,
@@ -16,12 +22,24 @@ class VolatilitySurface:
         maturity: list[float],
         volatility_matrix,
     ) -> None:
+        """Initialise the surface.
+
+        Args:
+            reference_date (date): Reference date of the surface.
+            calendar (Calendar): Calendar (may be ``None``).
+            daycounter (DayCounter): Day counter for year fractions.
+            strike (list[float]): Strike grid, ascending.
+            maturity (list[float]): Maturity grid in years, ascending.
+            volatility_matrix: Volatilities, shape ``[len(maturity), len(strike)]``
+                (nested lists, array, tensor or ``tf.Variable``). A float64
+                ``tf.Variable`` is used as is; anything else is copied into a new one.
+        """
         self._reference_date = reference_date
         self._calendar = calendar
         self._daycounter = daycounter
         self._strike = strike
         self._maturity = maturity
-        self._volatility_matrix = volatility_matrix
+        self._volatility_matrix = _as_float64_variable(volatility_matrix)
 
     @property
     def reference_date(self):
@@ -44,8 +62,14 @@ class VolatilitySurface:
         return self._maturity
 
     @property
-    def volatility_matrix(self):
+    def volatility_matrix(self) -> tf.Variable:
+        """Risk factor of the surface: float64 ``tf.Variable`` ``[n_maturities, n_strikes]``."""
         return self._volatility_matrix
+
+    @property
+    def variables(self) -> list[tf.Variable]:
+        """Risk factors of the surface (the volatility matrix)."""
+        return [self._volatility_matrix]
 
     def _find_bounds(self, array, value):
         """Find the two closest indices in `array` that bound `value`."""
@@ -65,8 +89,24 @@ class VolatilitySurface:
 
         return lower, upper  # should not reach here if value is within bounds
 
-    def volatility(self, strike: float, tenor: float):
-        """bi-linear interpolation"""
+    def volatility(self, strike: float, tenor: float) -> tf.Tensor:
+        """Bilinear interpolation of the volatility at (strike, tenor).
+
+        Flat extrapolation outside the grid.
+
+        Args:
+            strike (float): Strike.
+            tenor (float): Time to maturity in years.
+
+        Returns:
+            tf.Tensor: Scalar float64 volatility, differentiable with respect to
+                :attr:`volatility_matrix`.
+        """
+        # strike/tenor are coordinates, not risk factors: plain Python floats
+        # (also avoids float32/float64 mixing with the float64 grid).
+        strike = float(strike)
+        tenor = float(tenor)
+
         # Find the indices of surrounding strike and maturity values
         x1_idx, x2_idx = self._find_bounds(self._strike, strike)
         y1_idx, y2_idx = self._find_bounds(self._maturity, tenor)
@@ -75,11 +115,11 @@ class VolatilitySurface:
         x1, x2 = self._strike[x1_idx], self._strike[x2_idx]
         y1, y2 = self._maturity[y1_idx], self._maturity[y2_idx]
 
-        # Get the volatilities at the four corner points
-        V11 = self._volatility_matrix[y1_idx][x1_idx]
-        V21 = self._volatility_matrix[y1_idx][x2_idx]
-        V12 = self._volatility_matrix[y2_idx][x1_idx]
-        V22 = self._volatility_matrix[y2_idx][x2_idx]
+        # Get the volatilities at the four corner points (differentiable slices)
+        V11 = self._volatility_matrix[y1_idx, x1_idx]
+        V21 = self._volatility_matrix[y1_idx, x2_idx]
+        V12 = self._volatility_matrix[y2_idx, x1_idx]
+        V22 = self._volatility_matrix[y2_idx, x2_idx]
 
         # If the point matches an existing grid point exactly
         if x1 == x2 and y1 == y2:
@@ -122,6 +162,7 @@ class BlackConstantVolatility(VolatilitySurface):
         calendar: Calendar = None,
         daycounter: DayCounter = None,
     ) -> None:
+        # The flat volatility is a scalar float64 tf.Variable (the single risk factor).
         """Initialize a constant volatility surface.
 
         Args:
@@ -138,8 +179,12 @@ class BlackConstantVolatility(VolatilitySurface):
         # but we need to provide them for the parent class
         strike = [0.0]  # Dummy value, not used
         maturity = [0.0]  # Dummy value, not used
-        self.flat_vol = volatility
         super().__init__(reference_date, calendar, daycounter, strike, maturity, volatility)
+
+    @property
+    def flat_vol(self) -> tf.Variable:
+        """The flat volatility variable (same object as :attr:`volatility_matrix`)."""
+        return self._volatility_matrix
 
     def volatility(self, strike: float = None, tenor: float = None):
         """Return the constant volatility value, ignoring strike and tenor.
@@ -153,8 +198,16 @@ class BlackConstantVolatility(VolatilitySurface):
             tenor (float, optional): Time to maturity in years (ignored for constant volatility).
 
         Returns:
-            tf.Variable: The constant volatility value as a TensorFlow variable.
+            tf.Variable: The flat float64 volatility variable.
         """
-        
-        # Otherwise, convert to tf.Variable
-        return tf.Variable(self.flat_vol, dtype=tf.float32)
+        return self._volatility_matrix
+
+
+def _as_float64_variable(value) -> tf.Variable:
+    """Return *value* as a float64 ``tf.Variable`` (reused if it already is one)."""
+    if isinstance(value, tf.Variable) and value.dtype == tf.float64:
+        return value
+    if isinstance(value, (tf.Tensor, tf.Variable)):
+        return tf.Variable(tf.cast(value, tf.float64))
+    # Python / numpy data: convert directly to float64 (no float32 round trip).
+    return tf.Variable(tf.convert_to_tensor(value, dtype=tf.float64))
