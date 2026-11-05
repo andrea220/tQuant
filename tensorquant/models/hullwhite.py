@@ -80,7 +80,7 @@ class HullWhiteProcess(StochasticProcess):
         Returns:
             float: The initial short rate (x0).
         """
-        return self._process.x0.numpy()
+        return self._process.x0
 
     def drift(self, t: float, x: float) -> float:
         """
