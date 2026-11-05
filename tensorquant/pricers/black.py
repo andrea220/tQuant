@@ -3,13 +3,17 @@ from ..instruments.option import VanillaOption
 from ..markethandles.utils import ExerciseType, OptionType
 from ..markethandles.marketenvironment import MarketEnvironment
 from ..timehandles.utils import Settings
+from ..numericalhandles.dtypes import DTYPE
+
+import math
 
 import tensorflow as tf
 
 
 def _norm_cdf(x: tf.Tensor) -> tf.Tensor:
     """Standard normal CDF computed via tf.math.erf (no tensorflow_probability)."""
-    return 0.5 * (1.0 + tf.math.erf(x / tf.cast(tf.sqrt(2.0), x.dtype)))
+    # sqrt(2) as a Python float: tf.sqrt(2.0) would be computed in float32.
+    return 0.5 * (1.0 + tf.math.erf(x / tf.constant(math.sqrt(2.0), dtype=x.dtype)))
 
 
 def blackscholes_calc(
@@ -42,7 +46,7 @@ def blackscholes_calc(
     Returns:
         tf.Tensor: Option price.
     """
-    phi = tf.constant(float(option_type.value), dtype=tf.float32)
+    phi = tf.constant(float(option_type.value), dtype=spot_price.dtype)
     sqrt_t = tf.sqrt(time_to_maturity)
     d1 = (
         tf.math.log(spot_price / strike)
@@ -107,7 +111,7 @@ def _bs1993_call(
     )
     B_inf = beta / (beta - 1.0) * K
     # Guard against b ~ r to avoid division by zero
-    r_minus_b = tf.maximum(r - b, tf.constant(1e-7, dtype=tf.float32))
+    r_minus_b = tf.maximum(r - b, tf.constant(1e-7, dtype=r.dtype))
     B_0 = tf.maximum(K, r * K / r_minus_b)
 
     ht = -(b * T + 2.0 * sigma * tf.sqrt(T)) * B_0 * B_inf / ((B_inf - B_0) * K)
@@ -166,23 +170,44 @@ def bjerksund_stensland_calc(
 
 
 class BlackScholesPricer(Pricer):
+    """European Black-Scholes and American Bjerksund-Stensland (1993) pricer for vanilla options.
+
+    All market inputs come from the underlying's :class:`Equity` view
+    (``market_env.get_equity``), i.e. from the market risk factors: the price
+    (float64) is differentiable with respect to spot, repo, dividend yield, the
+    vol surface nodes and the discount-curve pillars. Get greeks with one
+    ``pricer.tape.gradient(product.price, market_env.risk_factors())``.
+
+    Only the time to maturity is a pricer-local variable
+    (``product.time_to_maturity``), for theta.
+
+    Dividends:
+
+    - Underlying with discrete dividends (``DIV``): ``dividend_model`` selects
+      ``"discrete"`` (``S* = S - PV(div)``, carry = repo) or ``"continuous"``
+      (``q_eff = -ln(1 - PV(div)/S) / T`` + repo). In the continuous model
+      ``q_eff`` is held fixed when ``S`` moves (sticky yield): the AAD delta is
+      ``e^{-qT}N(d1)``, while a bump-and-reprice recomputes ``q_eff`` and gives
+      the discrete-model delta.
+    - Underlying with only ``DIVYIELD``: carry = div yield + repo, whatever
+      ``dividend_model``.
+    """
+
     def __init__(
         self,
         dividend_model: str = "continuous",
         use_implied_repo: bool = True,
     ):
-        """Initialize the Black-Scholes / Bjerksund-Stensland pricer.
-
-        Prices European options with the Black-Scholes formula and American
-        options with the Bjerksund-Stensland (1993) approximation.
+        """Initialize the pricer.
 
         Args:
-            dividend_model (str): ``'discrete'`` uses ``S* = S - PV(div)``
-                (QuantLib / BBG standard); ``'continuous'`` derives an
-                equivalent yield ``q_eff = -ln(1 - PV_div/S) / T``.  Both
-                models read from the :class:`DividendCurve` in the market.
-            use_implied_repo (bool): When ``True``, reads the repo margin from
-                the market environment and includes it in the carry.
+            dividend_model (str): ``"discrete"`` or ``"continuous"`` (used when the
+                underlying has a discrete dividend schedule, see class docstring).
+            use_implied_repo (bool): When ``True``, the market repo is part of the
+                carry; when ``False`` the repo is ignored.
+
+        Raises:
+            ValueError: If ``dividend_model`` is not supported.
         """
         super().__init__()
         allowed_dividend_models = {"continuous", "discrete"}
@@ -193,146 +218,88 @@ class BlackScholesPricer(Pricer):
             )
         self._dividend_model = dividend_model
         self._use_implied_repo = use_implied_repo
-        self._s = None
-        self._k = None
-        self._t = None
-        self._r = None
-        self._q = None
-        self._sigma = None
-        self._f = None
 
     def _build_inputs(
         self, product: VanillaOption, market_env: MarketEnvironment
     ) -> tuple:
-        """Extract and validate all market inputs needed for pricing.
-
-        Performs product / exercise-type validation, market-data lookup and
-        converts all inputs to ``tf.Variable`` so the gradient tape can watch
-        them.
+        """Black-Scholes inputs from the underlying's market data.
 
         Args:
             product (VanillaOption): The option to be priced.
-            market_env (MarketEnvironment): Typed accessor for market data.
+            market_env (MarketEnvironment): Market data.
 
         Returns:
-            tuple: ``(s_net, k, r, q, sigma, t, f)`` as TensorFlow
-                variables/tensors.
-
-                Both dividend models read from the ``DividendCurve``:
-
-                - ``'discrete'``: ``s_net = S - PV_div``, ``q = repo`` only.
-                - ``'continuous'``: ``s_net = S``,
-                  ``q_eff = -ln(1 - PV_div/S) / T`` (+ repo).
+            tuple: ``(s_net, k, r, q, sigma, t)`` float64 tensors, where ``s_net``
+                is the spot (net of PV of dividends in the discrete model) and
+                ``q`` the continuous carry deduction.
 
         Raises:
             ValueError: If the product is not a VanillaOption, if Bermudan
-                exercise is requested, or if any required market datum is
-                missing.
+                exercise is requested, or if the underlying has no vol surface.
         """
         if not isinstance(product, VanillaOption):
             raise ValueError("product must be a VanillaOption")
         if product.exercise_type == ExerciseType.Bermudan:
             raise ValueError("Bermudan exercise is not supported")
 
-        vol_surface = market_env.get_eq_vol_surface(product.underlying, ccy=product.ccy)
-        disc_curve = market_env.get_ir_curve(product.ccy)
-        spot_value = market_env.get_eq_spot(product.underlying, ccy=product.ccy)
+        eq = market_env.get_equity(product.underlying, ccy=product.ccy)
+        if eq.vol_surface is None:
+            raise ValueError(f"No volatility surface for underlying '{product.underlying}'")
 
-        # Compute tenor once and reuse for both sigma lookup and t Variable
-        tenor = vol_surface.daycounter.year_fraction(
-            Settings.evaluation_date, product.end_date
-        )
+        # Time to maturity: the only pricer-local variable (theta).
+        # r and q_eff use its float value, so theta keeps r and q fixed.
+        tenor = eq.vol_surface.daycounter.year_fraction(Settings.evaluation_date, product.end_date)
+        t = tf.Variable(tenor, dtype=DTYPE)
 
-        # NOTE (refactor phase 1): market data are now float64 tf.Variables;
-        # cast to float32 here. Phase 2 removes these local Variables entirely.
-        sigma = tf.Variable(
-            tf.cast(vol_surface.volatility(strike=product.strike.numpy(), tenor=tenor), tf.float32),
-            dtype=tf.float32,
-        )
-        s = tf.Variable(tf.cast(spot_value, tf.float32), dtype=tf.float32)
-        k = product.strike
-        t = tf.Variable(tenor, dtype=tf.float32)
+        k = tf.cast(product.strike, DTYPE)
+        sigma = eq.vol_surface.volatility(strike=float(product.strike), tenor=tenor)
+        discount_factor = tf.cast(eq.discount_curve.discount(product.end_date), DTYPE)
+        r = -tf.math.log(discount_factor) / tenor
 
-        discount_factor = tf.cast(disc_curve.discount(product.end_date), tf.float32)
-        r = tf.Variable(-tf.math.log(discount_factor).numpy() / t.numpy(), dtype=tf.float32)
+        repo = eq.repo if self._use_implied_repo else tf.constant(0.0, dtype=DTYPE)
+        s = eq.spot
+        pv_div = tf.constant(0.0, dtype=DTYPE)
 
-        # --- repo margin (independent Variable → rho w.r.t. repo) -----------
-        if self._use_implied_repo:
-            repo_margin = tf.Variable(
-                tf.cast(market_env.get_eq_repo(product.underlying, ccy=product.ccy), tf.float32),
-                dtype=tf.float32,
-            )
-        else:
-            repo_margin = tf.Variable(0.0, dtype=tf.float32)
-
-        # --- dividend model -------------------------------------------------
-        # PV of discrete dividends always comes from the DividendCurve.
-        div_curve = market_env.get_eq_dividends(product.underlying, ccy=product.ccy)
-        pv_div = tf.cast(
-            div_curve.pv_dividends(product.end_date, disc_curve), tf.float32
-        )
-        if self._dividend_model == "discrete":
-            # QuantLib / BBG standard: S* = S - PV(div), q = repo only.
-            # s_net is a plain tensor (not a new Variable) so the GradientTape
-            # correctly propagates ∂P/∂S through s_net = S - PV_div.
-            pv_discrete_dividends = pv_div
+        if eq.dividend_model == "discrete" and self._dividend_model == "discrete":
+            pv_div = eq.pv_dividends(product.end_date)
             s_net = s - pv_div
-            q = repo_margin
-        else:
-            # Equivalent continuous yield derived from the discrete schedule:
-            #   q_eff = -ln(1 - PV_div / S) / T
-            # Detached via .numpy() → independent Variable, same convention
-            # as r and sigma.
-            pv_discrete_dividends = tf.constant(0.0, dtype=tf.float32)
-            q_eff = tf.Variable(
-                (-tf.math.log(1.0 - pv_div / s) / t).numpy(), dtype=tf.float32
-            )
+            q = repo
+        elif eq.dividend_model == "discrete":
+            # Equivalent continuous yield; S held fixed in q_eff (sticky yield).
+            q_eff = -tf.math.log(1.0 - eq.pv_dividends(product.end_date) / tf.stop_gradient(s)) / tenor
             s_net = s
-            q = q_eff + repo_margin
+            q = q_eff + repo
+        elif eq.dividend_model == "continuous":
+            s_net = s
+            q = eq.div_yield + repo
+        else:
+            s_net = s
+            q = repo
 
-        f = s_net * tf.exp((r - q) * t)
-
-        # --- store diagnostics on product -----------------------------------
+        # --- diagnostics on the product (tensors; spot is the market variable) ---
         product.spot = s
         product.spot_net = s_net
-        product.pv_discrete_dividends = pv_discrete_dividends
-        product.repo_margin = repo_margin
+        product.pv_discrete_dividends = pv_div
+        product.repo_margin = repo
         product.risk_free_rate = r
         product.discount_factor = discount_factor
         product.volatility = sigma
         product.time_to_maturity = t
+        product.forward = s_net * tf.exp((r - q) * t)
 
-        return s_net, k, r, q, sigma, t, f
+        return s_net, k, r, q, sigma, t
 
     def calculate_price(self, product: VanillaOption, market_env: MarketEnvironment) -> tf.Tensor:
-        """Price a VanillaOption using Black-Scholes (European) or
-        Bjerksund-Stensland 1993 (American).
-
-        Delegates market-data extraction to :meth:`_build_inputs`.
-        Intermediate ``tf.Variable`` inputs are stored on ``self`` so that an
-        external ``GradientTape`` (managed by :meth:`Pricer.price`) can
-        compute greeks.
+        """Price a VanillaOption: Black-Scholes (European) or Bjerksund-Stensland 1993 (American).
 
         Args:
             product (VanillaOption): The option to be priced.
-            market_env (MarketEnvironment): The market environment providing
-                access to market data (curves, spots, volatilities).
+            market_env (MarketEnvironment): Market data.
 
         Returns:
-            tf.Tensor: The NPV of the option.
+            tf.Tensor: Scalar float64 NPV.
         """
-        self._s, self._k, self._r, self._q, self._sigma, self._t, self._f = (
-            self._build_inputs(product, market_env)
-        )
-        product.forward = self._f
-
+        s_net, k, r, q, sigma, t = self._build_inputs(product, market_env)
         if product.exercise_type == ExerciseType.European:
-            return blackscholes_calc(
-                self._s, self._k, self._r, self._sigma, self._t, self._q,
-                product.option_type,
-            )
-        else:
-            return bjerksund_stensland_calc(
-                self._s, self._k, self._r, self._sigma, self._t, self._q,
-                product.option_type,
-            )
+            return blackscholes_calc(s_net, k, r, sigma, t, q, product.option_type)
+        return bjerksund_stensland_calc(s_net, k, r, sigma, t, q, product.option_type)

@@ -13,6 +13,7 @@ from .utils import Currency, market_map as default_market_map
 from .ircurve import RateCurve
 from .volatilitysurface import VolatilitySurface
 from .dividendcurve import DividendCurve
+from .equity import Equity
 from ..numericalhandles.dtypes import as_variable
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
 
@@ -816,4 +817,48 @@ class MarketEnvironment:
         raise ValueError(
             f"No VolatilitySurface found for equity ticker '{ticker}'. "
             f"Expected a key of the form 'EQ:<CCY>:{ticker}:VOL' in market."
+        )
+
+    # ------------------------------------------------------------------
+    # Equity underlying (view)
+    # ------------------------------------------------------------------
+
+    def get_equity(self, ticker: str, ccy: Optional[Currency] = None) -> Equity:
+        """Return an :class:`Equity` view of *ticker*'s pricing data.
+
+        The view references the market objects (no copies): spot, repo,
+        discrete dividends or continuous yield, vol surface and the discount
+        curve of the currency (``get_ir_curve(ccy)``). Optional data that are
+        missing are left as ``None`` (repo defaults to zero). ``DIVYIELD`` is
+        used only when there is no ``DIV`` schedule.
+
+        Args:
+            ticker (str): Equity ticker.
+            ccy (Currency, optional): Currency; resolved from the market if ``None``.
+
+        Returns:
+            Equity: The underlying view.
+
+        Raises:
+            ValueError: If the ticker has no market data or no spot.
+        """
+        if ccy is None:
+            ccy = self.get_currency(ticker)
+
+        def optional(getter):
+            try:
+                return getter(ticker, ccy=ccy)
+            except ValueError:
+                return None
+
+        dividends = optional(self.get_eq_dividends)
+        return Equity(
+            ticker=ticker,
+            currency=ccy,
+            spot=self.get_eq_spot(ticker, ccy=ccy),
+            discount_curve=self.get_ir_curve(ccy),
+            repo=optional(self.get_eq_repo),
+            dividends=dividends,
+            div_yield=optional(self.get_eq_div_yield) if dividends is None else None,
+            vol_surface=optional(self.get_eq_vol_surface),
         )

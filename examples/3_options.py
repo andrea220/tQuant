@@ -97,38 +97,37 @@ def main() -> None:
             exercise_type=exercise,
         )
 
-    # chiave spot nel market dict
-    spot_key = f"EQ:{ccy.name}:{TICKER}:SPOT"
+    equity = market_env.get_equity(TICKER, ccy=ccy)
 
     def get_greeks(opt) -> dict:
-        """Vega / Rho / Theta: autodiff dal tape (pricer._sigma, _r, _t sono tf.Variable).
-           Delta / Gamma: bump ±0.1% sullo spot nel market dict (pricer._s per il
-           modello discreto è s_net = s - PV_div, un Tensor senza .assign)."""
+        """Delta / Vega / Rho / Theta: AAD on the market risk factors (one tape).
+           Gamma: bump ±0.1% of the market spot variable (assign), central difference."""
         pricer.price(opt, market_env, autodiff=True)
-        tape = pricer.tape
+        g_spot, g_vol, g_t, g_curve = pricer.tape.gradient(
+            opt.price,
+            [equity.spot, equity.vol_surface.volatility_matrix, opt.time_to_maturity,
+             equity.discount_curve.variables],
+        )
+        delta = float(g_spot)
+        vega  = float(tf.reduce_sum(g_vol)) * 0.01                               # +1% on every vol node
+        rho   = sum(float(g) for g in g_curve if g is not None) * 0.0001         # +1bp parallel on zero rates
+        theta = float(g_t) / 365.0                                               # per day
 
-        # Vega, Rho, Theta dal tape in una sola chiamata
-        grads = tape.gradient(opt.price, [pricer._sigma, pricer._r, pricer._t])
-        vega  = float(grads[0].numpy()) * 0.01   # per +1% vol
-        rho   = float(grads[1].numpy()) * 0.0001  # per +1bp rate
-        theta = float(grads[2].numpy()) / 365.0  # per-day
-
-        # Delta e Gamma: bump spot nel market
-        s0 = float(market_env._market[spot_key])
-        dS = s0 * 0.001   # 0.1% bump
+        # Gamma: bump the market spot variable
+        s0 = float(equity.spot)
+        dS = s0 * 0.001
 
         def _reprice(s_val):
-            market_env._market[spot_key] = s_val
+            equity.spot.assign(s_val)
             o = make_option(opt.option_type, opt.exercise_type)
             pricer.price(o, market_env)
-            return float(o.price.numpy())
+            return float(o.price)
 
-        px_mid = float(opt.price.numpy())
+        px_mid = float(opt.price)
         px_up  = _reprice(s0 + dS)
         px_dn  = _reprice(s0 - dS)
-        market_env._market[spot_key] = s0   # ripristina
+        equity.spot.assign(s0)   # restore
 
-        delta = (px_up - px_dn) / (2.0 * dS)
         gamma = (px_up - 2.0 * px_mid + px_dn) / dS ** 2
 
         return {
