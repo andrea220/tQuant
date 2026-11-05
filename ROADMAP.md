@@ -4,7 +4,9 @@ Open and future developments (moved from `CLAUDE.md`). Completed work: `DEVELOPM
 
 ## 3. Interest rates (analytic pricers)
 
-- [ ] `instruments/capfloor.py` is not exported and has no pricer (Black/Bachelier cap/floor: later).
+- [ ] Caplet vol stripping from market cap quotes (flat cap vols by maturity × strike): today the caplet vols are
+      stored directly (`IR:EUR:6M:VOL`).
+- [ ] Caps on overnight rates (compounded SOFR / SONIA / €STR caplets) and other Ibor indices: only EUR 6M now.
 
 ## 4. Stochastic processes & Monte Carlo (`models/`, MC pricers, `analytics/`)
 

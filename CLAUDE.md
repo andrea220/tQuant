@@ -33,9 +33,9 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 | `markethandles/` | `MarketEnvironment`, `RiskFactor`, `MarketDataType`, `MarketMapValidator`, `RateCurve` / `FlatCurve` / `DefaultCurve`, `VolatilitySurface` / `BlackConstantVolatility`, `DividendCurve`, `Equity` (underlying view), `CorrelationMatrix`, `InterestRate`, `CurveBootstrap`, `generate_market_data` / `generate_market` (`synthetic.py`); `utils.py`: `Currency`, `OptionType`, `ExerciseType`, `PayoffType`, `SwapType`, `Position` |
 | `index/` | `Index` (ABC), `OvernightIndex`, `IborIndex`, `InflationIndex` |
 | `flows/` | `CashFlow`, `Coupon` (ABC), `FixedCoupon`/`FixedRateLeg`, `FloatingCoupon`/`FloatingRateLeg` |
-| `instruments/` | `Product` (ABC), `Deposit`, `Fra`, `Swap`, `Ois`, `Option`/`VanillaOption`, `AutocallableOption`, `Cap`/`Floor`/`Collar`, generators in `helpers.py` |
+| `instruments/` | `Product` (ABC), `Deposit`, `Fra`, `Swap`, `Ois`, `Option`/`VanillaOption`, `AutocallableOption`, `CapFloor` (cap = `OptionType.Call`, floor = `Put`) / `Collar`, generators in `helpers.py` (incl. `CapFloorGenerator`) |
 | `models/` | `StochasticProcess` (ABC: `size`, `initial_values`, `evolve(t_grid, dw, observation_times=None)`), `GeometricBrownianMotion`, `ArithmeticBrownianMotion`, `GaussianShortRateModel` (n-factor G1++/G2++ on the market curve: exact simulation of factors + integrals, closed-form bonds, AAD to the pillars), `LocalVolatilityModel` (Gatheral on the market forward, `from_equity`), `DisplacedDiffusionModel` |
-| `pricers/` | `Pricer` (ABC), `BlackScholesPricer` (EU BS + American Bjerksund–Stensland; `dividend_model` discrete/continuous), `VanillaMCPricer` (model class with `from_equity`: GBM / local vol built from the market), `AutocallableMCPricer` (investor's side, local vol default, digitals smoothed: `barrier_smoothing`), `SwapPricer`, `OisPricer`, `FraPricer`, `DepositPricer`, coupon/leg discounting, `PricerAssignment` (factory, `isinstance`: Deposit/Ois/Fra/Swap/VanillaOption) |
+| `pricers/` | `Pricer` (ABC), `BlackScholesPricer` (EU BS + American Bjerksund–Stensland; `dividend_model` discrete/continuous), `VanillaMCPricer` (model class with `from_equity`: GBM / local vol built from the market), `AutocallableMCPricer` (investor's side, local vol default, digitals smoothed: `barrier_smoothing`), `SwapPricer`, `OisPricer`, `FraPricer`, `DepositPricer`, `CapFloorPricer` (Bachelier on normal caplet vols, Black on lognormal), coupon/leg discounting, `PricerAssignment` (factory, `isinstance`: Deposit/Ois/Fra/Swap/VanillaOption/CapFloor/Collar) |
 | `analytics/` | `SwapExposureGenerator` (swap MtM/EE/ENE/PFE under `GaussianShortRateModel`) |
 
 ## Key patterns
@@ -54,12 +54,13 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 - **MarketEnvironment** is the only access point to market data. Flat dict with keys
   `RISKFACTOR:CCY:TICKER:TYPE`, e.g. `IR:EUR:ESTR:SPOT` → `RateCurve`, `EQ:EUR:SX5E:VOL` → `VolatilitySurface`,
   `EQ:EUR:X:SPOT|REPO|DIVYIELD` → float64 `tf.Variable` (a float is accepted as input and wrapped), `EQ:EUR:X:DIV` → `DividendCurve`,
+  `IR:EUR:6M:VOL` → `VolatilitySurface` of caplet vols (`vol_type` `normal` | `lognormal`),
   `FX:USD:EURUSD:SPOT` → float64 `tf.Variable` (1 EUR = x USD), `FX:USD:EURUSD:VOL` → `VolatilitySurface`,
   `CORR:ALL:GLOBAL:SPOT` → `CorrelationMatrix`
   (factor names = market-map key prefix, e.g. `EQ:EUR:TICKER1`; one float64 `[n, n]` variable).
   Typed accessors: `get_ir_curve`, `get_eq_spot`, `get_eq_vol_surface`, `get_eq_repo`, `get_eq_div_yield`,
   `get_eq_dividends`, `get_currency`, `get_fx_spot(base, quote)` (direct, inverse or cross via a common
-  currency; only stored pairs are risk factors), `get_fx_forward(base, quote, T)` (covered interest parity on the
+  currency; only stored pairs are risk factors), `get_ir_vol_surface(ccy, ticker)`, `get_fx_forward(base, quote, T)` (covered interest parity on the
   default curves), `get_fx_vol_surface(base, quote)` (stored pairs), `get_correlation_matrix`, `get_correlation(names)`.
   I/O: `from_folder("marketdata", evaluation_date=None, calibration_set=None)` (latest snapshot when `None`) =
   CSV → `from_frames(frames, evaluation_date)`; inverse `to_frames()` / `to_folder(root, calibration_set)` (exact round
@@ -121,6 +122,7 @@ Run examples/notebooks only when changing them or when asked.
 | `VanillaMCPricer` (GBM, local vol) | `tests/test_vanilla_mc.py` | GBM vs BS within 3 SE (discrete/continuous, call/put), float64, exact maturity, stateless seed, n_steps-invariance, AAD greeks reach market factors, delta/vega vs BS, delta vs common-random-numbers bump, dV/dD_i = −delta·P(ex_i); LV: flat surface = BS within 3 SE, vega reaches nodes, node vega vs CRN bump; forward mode (`from_equity`): MC mean = `Equity.forward` at every step (discrete dividends), arbitrage-free SSVI on a narrow grid repriced at the 1Y/3Y nodes (OTM implied vols within 0.6/1.0 vol points), arbitrage warning, delta and node vega vs CRN bumps; `natural_cubic_spline` vs scipy and gradients vs FD |
 | `AutocallableMCPricer` | `tests/test_autocallable_mc.py` | hard payoff = numpy replica on the same paths (memory on/off), consistent with the old pricer (coupons, put within 4 SE), closed-form limits (never called, called at the first date), smoothing → hard payoff, digitals invisible to AAD when hard, delta/vega vs CRN bumps (GBM, local vol), LV flat = GBM |
 | Rates MC: `GaussianShortRateModel`, `SwapExposureGenerator` | `tests/test_rates_mc.py` | bonds at 0 = curve, G1++/G2++ = legacy `HullWhiteProcess`/`G2PlusPlusProcess` closed forms (and `HullWhiteProcess.x0`), martingales E[D]=P(0,t) and E[D P(t,T)]=P(0,T), factor variances and G2++ correlation, seed, rho by AAD = dP(0,T); exposure: today = `SwapPricer`, E[D V(t)] = PV(0) of the remaining flows (HW, G2++), EE/ENE/PFE identities, zero after maturity, discounted EPE gradient vs CRN bump |
+| Caps / floors, rate vols | `tests/test_capfloor.py` | Bachelier closed form per caplet (cap, floor), cap − floor = Σ N τ P (F − K), zero vol = intrinsic, lognormal vols → Black, collar = cap − floor, first period excluded, fixed caplet = intrinsic, vega per node and rho per pillar (both curves) vs bumps; generated EUR 6M curve (spread over ESTR) and normal SABR caplet vols (decreasing, convex caplet prices), `ir_vol.csv` round trip, `vol_type` validation |
 | Rate pricers / flows | `tests/test_rate_pricers.py` | Deposit/FRA/Swap/OIS prices pinned, float64 tensors, gradients per pillar of both curves vs bumps, deposit closed form (ACT/365 and ACT/360 curves), FRA standard formula, fixed leg = sum amount·P(pay), single-curve floating legs telescope to N(P(s)−P(e)), NPV = 0 at the fair rate |
 | `CurveBootstrap`, `PricerAssignment` | `tests/test_bootstrap.py` | ESTR (deposit + OIS) and 6M (FRA + swaps) stripped, instruments reprice to 0, curves registered via `set_ir_curve`, float64 variables; factory incl. `VanillaOption` |
 

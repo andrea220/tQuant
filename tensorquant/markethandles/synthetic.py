@@ -5,7 +5,8 @@ with ``MarketEnvironment.to_folder`` or ``DataFrame.to_csv``); ``generate_market
 :class:`MarketEnvironment` directly. Fixed seed, independent random stream per block (curves,
 equities, FX, correlations), all dates relative to the evaluation date.
 
-- Curves: Nelson-Siegel zero rates per currency (smooth forwards).
+- Curves: Nelson-Siegel zero rates per currency (smooth forwards); EUR 6M Euribor = ESTR + a Nelson-Siegel spread.
+- Rate vols: EUR 6M caplet normal (Bachelier) vols from a normal SABR (beta = 0, Hagan) smile per expiry.
 - Equities: spot, repo, discrete dividends, SSVI vol surface in forward moneyness
   (``Equity.forward``, dividends included).
 - FX: spots and SSVI vol surfaces on the FX forward (covered interest parity).
@@ -28,6 +29,9 @@ import pandas as pd
 CURVES = {"EUR": ("ESTR", 0.028, 0.020), "GBP": ("SONIA", 0.042, 0.040), "USD": ("SOFR", 0.039, 0.042)}
 CURVE_TENORS_M = [1, 3, 6, 12, 24, 36, 60, 84, 120, 180, 240, 360]
 FX_SPOTS = [("EUR", "USD", 1.0850), ("GBP", "USD", 1.2700)]   # 1 base = spot quote
+EUR6M_SPREAD = ((0.0020, 0.0030), (0.0030, 0.0045))          # short, long spread ranges over ESTR
+CAPLET_EXPIRIES_M = [6, 12, 18, 24, 36, 48, 60, 84, 120]
+CAPLET_STRIKES = [round(k, 4) for k in np.arange(-0.005, 0.0601, 0.005)]
 VOL_TENORS_M = [1, 3, 6, 12, 18, 24, 36, 60]
 EQ_MONEYNESS = np.round(np.arange(0.6, 1.401, 0.1), 2)
 FX_MONEYNESS = np.round(np.arange(0.8, 1.201, 0.05), 2)
@@ -42,7 +46,7 @@ def add_months(d: date, months: int) -> date:
 
 
 def _streams(seed: int) -> dict:
-    names = ("curves", "equities", "fx", "correlations")
+    names = ("curves", "equities", "fx", "correlations", "rate_vols")   # child i does not depend on the count
     return dict(zip(names, (np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(len(names)))))
 
 
@@ -73,6 +77,46 @@ def curve_table(evaluation_date: date, rng) -> pd.DataFrame:
             rows.append({"ccy": ccy, "curve": name, "pillar": add_months(evaluation_date, m),
                          "value": round(float(rate), 8), "quote": "zero", "daycount": "Actual365",
                          "interp": "LINEAR"})
+    # EUR 6M Euribor: ESTR + spread(T), spread Nelson-Siegel from a short to a long level (drawn after the OIS curves)
+    s_short, s_long = rng.uniform(*EUR6M_SPREAD[0]), rng.uniform(*EUR6M_SPREAD[1])
+    estr = {r["pillar"]: r["value"] for r in rows if r["curve"] == "ESTR"}
+    for m in CURVE_TENORS_M:
+        t, d = m / 12.0, add_months(evaluation_date, m)
+        l1 = (1.0 - np.exp(-t / 2.0)) / (t / 2.0)
+        rows.append({"ccy": "EUR", "curve": "6M", "pillar": d, "value": round(estr[d] + s_long + (s_short - s_long) * l1, 8),
+                     "quote": "zero", "daycount": "Actual365", "interp": "LINEAR"})
+    return pd.DataFrame(rows)
+
+
+def sabr_normal_vol(F: float, K: np.ndarray, T: float, alpha: float, rho: float, nu: float) -> np.ndarray:
+    """Normal (Bachelier) implied vol of the normal SABR model (beta = 0), Hagan et al. (2002)."""
+    K = np.asarray(K, dtype=float)
+    zeta = nu / alpha * (F - K)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        x = np.log((np.sqrt(1.0 - 2.0 * rho * zeta + zeta ** 2) + zeta - rho) / (1.0 - rho))
+        ratio = np.where(np.abs(zeta) < 1e-10, 1.0, zeta / x)
+    return alpha * ratio * (1.0 + (2.0 - 3.0 * rho ** 2) / 24.0 * nu ** 2 * T)
+
+
+def caplet_vol_table(evaluation_date: date, curves: pd.DataFrame, rng) -> pd.DataFrame:
+    """EUR 6M caplet normal vols on (fixing expiry x absolute strike), normal SABR around the 6M forward."""
+    from .ircurve import RateCurve
+    from ..timehandles.daycounter import DayCounter, DayCounterConvention
+
+    grp = curves[(curves.ccy == "EUR") & (curves.curve == "6M")]
+    curve = RateCurve(evaluation_date, list(grp["pillar"]), list(grp["value"]), "LINEAR", DayCounterConvention.Actual365)
+    a360 = DayCounter(DayCounterConvention.Actual360)
+    a_short, a_long = rng.uniform(0.0070, 0.0095), rng.uniform(0.0055, 0.0075)   # ATM normal vol, short / long
+    rho, nu = rng.uniform(-0.20, 0.20), rng.uniform(0.25, 0.45)
+    rows = []
+    for m in CAPLET_EXPIRIES_M:
+        expiry, end = add_months(evaluation_date, m), add_months(evaluation_date, m + 6)
+        t = (expiry - evaluation_date).days / 365.0
+        F = (float(curve.discount(expiry)) / float(curve.discount(end)) - 1.0) / a360.year_fraction(expiry, end)
+        alpha = a_long + (a_short - a_long) * np.exp(-t / 3.0)
+        vols = sabr_normal_vol(F, CAPLET_STRIKES, t, alpha, rho, nu)
+        rows += [{"ccy": "EUR", "curve": "6M", "expiry": expiry, "strike": k, "vol": round(float(v), 8),
+                  "vol_type": "normal"} for k, v in zip(CAPLET_STRIKES, vols)]
     return pd.DataFrame(rows)
 
 
@@ -89,7 +133,7 @@ def generate_market_data(
         tickers_per_currency: ``(currency, count)``; tickers are numbered ``TICKER1, TICKER2, ...`` in order.
 
     Returns:
-        dict: ``ir_curves.csv``, ``fx_spot.csv``, ``fx_vol.csv``, ``eq_spot.csv``, ``eq_vol.csv``,
+        dict: ``ir_curves.csv``, ``ir_vol.csv``, ``fx_spot.csv``, ``fx_vol.csv``, ``eq_spot.csv``, ``eq_vol.csv``,
             ``eq_dividends.csv``, ``correlations.csv``.
     """
     from .marketenvironment import MarketEnvironment
@@ -99,6 +143,7 @@ def generate_market_data(
     currencies = [ccy for ccy, n in tickers_per_currency for _ in range(n)]
     tickers = [f"TICKER{i}" for i in range(1, len(currencies) + 1)]
     curves = curve_table(evaluation_date, rng["curves"])
+    ir_vol = caplet_vol_table(evaluation_date, curves, rng["rate_vols"])
     fx_spot = pd.DataFrame(FX_SPOTS, columns=["base", "quote", "spot"])
 
     # equities: spots, repos, dividends, SSVI parameters
@@ -156,7 +201,7 @@ def generate_market_data(
                  for i in range(len(names)) for j in range(i + 1, len(names))]
 
     tables = {
-        "ir_curves.csv": curves, "fx_spot.csv": fx_spot, "fx_vol.csv": pd.DataFrame(fx_rows),
+        "ir_curves.csv": curves, "ir_vol.csv": ir_vol, "fx_spot.csv": fx_spot, "fx_vol.csv": pd.DataFrame(fx_rows),
         "eq_spot.csv": eq_spot, "eq_vol.csv": pd.DataFrame(vol_rows), "eq_dividends.csv": eq_div,
         "correlations.csv": pd.DataFrame(corr_rows),
     }

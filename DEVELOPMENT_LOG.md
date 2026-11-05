@@ -37,6 +37,15 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
 - [x] `examples/swap_pricing.py` sets `tq.Settings.evaluation_date`, uses `curve.variables`.
 - [x] `PricerAssignment` with `isinstance`, adds `VanillaOption` → `BlackScholesPricer`.
 
+- [x] Caps / floors / collars (`instruments/capfloor.py`, was a deprecated stub): `CapFloor` (strip of caplets on a
+      `FloatingRateLeg`, cap = `OptionType.Call`, floor = `Put`), `Collar` (long cap, short floor), `CapFloorGenerator`
+      (spot-start, first period excluded). `CapFloorPricer`: caplet by caplet, forward on the index curve (as
+      `SwapPricer`), discounting on the default curve, Bachelier on normal caplet vols / Black on lognormal; fixed
+      caplets at intrinsic; registered in `PricerAssignment`. Rate vols: `IR:<ccy>:<index>:VOL` caplet vol surfaces
+      (`VolatilitySurface.vol_type`), `ir_vol.csv`, `get_ir_vol_surface`. Synthetic data: EUR 6M Euribor curve (ESTR +
+      Nelson-Siegel spread, 30-40bp) and EUR 6M normal caplet vols from a normal SABR (beta = 0) smile (70-110bp); added
+      to snapshot `20261105/2240` (other files unchanged). 5Y cap on 1M: K=2% 50,748, K=3% 21,455.
+
 ## 4. Stochastic processes & Monte Carlo (`models/`, MC pricers, `analytics/`)
 
 - [x] dtype policy: **float64 everywhere** (decided; no float32 casts): GBM/ABM, `LocalVolatilityModel`,

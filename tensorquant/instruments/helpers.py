@@ -492,3 +492,63 @@ class SwapGenerator(ProductGenerator):
             day_count_flt,
             self.index,
         )
+
+
+class CapFloorGenerator:
+    """Spot-starting caps / floors / collars on an Ibor index (periods of the index tenor).
+
+    The first period (fixing at trade date) is excluded, as for market cap quotes.
+
+    Args:
+        ccy (Currency): Currency.
+        start_delay (int): Business days from trade date to start.
+        period (str): Caplet period, e.g. ``"6M"`` (the index tenor).
+        roll_convention (BusinessDayConvention): Date rolling.
+        notional (float): Notional.
+        day_count_convention (DayCounterConvention): Caplet accrual day count.
+        calendar (Calendar): Calendar.
+        index (IborIndex): Underlying index.
+        exclude_first (bool): Drop the first period (default True).
+    """
+
+    def __init__(self, ccy: Currency, start_delay: int, period: str, roll_convention: BusinessDayConvention,
+                 notional: float, day_count_convention: DayCounterConvention, calendar: Calendar,
+                 index: IborIndex, exclude_first: bool = True) -> None:
+        self.ccy = ccy
+        self.start_delay = start_delay
+        self.period = period
+        self.roll_convention = roll_convention
+        self.notional = notional
+        self.day_count_convention = day_count_convention
+        self.calendar = calendar
+        self.index = index
+        self.exclude_first = exclude_first
+
+    def _periods(self, trade_date: datetime.date, term: str):
+        start = self.calendar.advance(trade_date, self.start_delay, TimeUnit.Days, self.roll_convention)
+        n, unit = decode_term(term)
+        maturity = self.calendar.advance(start, n, unit, self.roll_convention)
+        p, p_unit = decode_term(self.period)
+        schedule = ScheduleGenerator(self.calendar, self.roll_convention).generate(start, maturity, p, p_unit)
+        starts, ends = schedule[:-1], schedule[1:]
+        pays = [self.calendar.adjust(d, self.roll_convention) for d in ends]
+        if self.exclude_first:
+            starts, ends, pays = starts[1:], ends[1:], pays[1:]
+        return starts, ends, pays
+
+    def build(self, trade_date: datetime.date, strike: float, term: str, option_type=None):
+        """Cap (default) or floor with maturity *term* (e.g. ``"5Y"``) and *strike*."""
+        from .capfloor import CapFloor
+        from ..markethandles.utils import OptionType
+
+        starts, ends, pays = self._periods(trade_date, term)
+        return CapFloor(self.ccy, starts, ends, pays, strike, self.notional, DayCounter(self.day_count_convention),
+                        self.index, option_type or OptionType.Call)
+
+    def build_collar(self, trade_date: datetime.date, cap_strike: float, floor_strike: float, term: str):
+        """Collar: long cap at *cap_strike*, short floor at *floor_strike*."""
+        from .capfloor import Collar
+        from ..markethandles.utils import OptionType
+
+        return Collar(self.build(trade_date, cap_strike, term, OptionType.Call),
+                      self.build(trade_date, floor_strike, term, OptionType.Put))

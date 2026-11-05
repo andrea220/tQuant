@@ -23,6 +23,7 @@ class VolatilitySurface:
         strike: list[float],
         maturity: list[float],
         volatility_matrix,
+        vol_type: str = "lognormal",
     ) -> None:
         """Initialise the surface.
 
@@ -35,7 +36,15 @@ class VolatilitySurface:
             volatility_matrix: Volatilities, shape ``[len(maturity), len(strike)]``
                 (nested lists, array, tensor or ``tf.Variable``). A float64
                 ``tf.Variable`` is used as is; anything else is copied into a new one.
+            vol_type (str): ``"lognormal"`` (Black, equity / FX) or ``"normal"`` (Bachelier, absolute rate
+                vols such as caplet vols).
+
+        Raises:
+            ValueError: If ``vol_type`` is not supported.
         """
+        if vol_type not in ("lognormal", "normal"):
+            raise ValueError(f"vol_type must be 'lognormal' or 'normal', got '{vol_type}'")
+        self.vol_type = vol_type
         self._reference_date = reference_date
         self._calendar = calendar
         self._daycounter = daycounter

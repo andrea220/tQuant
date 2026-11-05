@@ -5,3 +5,4 @@ from .deposit import *
 from .ois import *
 from .option import *
 from .autocallable import *
+from .capfloor import *

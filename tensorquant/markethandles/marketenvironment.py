@@ -215,7 +215,12 @@ class MarketMapValidator:
             risk_factor, _ccy, _ticker, data_type = match.groups()
 
             if risk_factor == RiskFactor.IR.value:
-                if data_type == MarketDataType.SPOT.value:
+                if data_type == MarketDataType.VOL.value:
+                    if not isinstance(value, VolatilitySurface):
+                        raise TypeError(
+                            f"Market key '{key}' expects a VolatilitySurface, got {type(value).__name__}"
+                        )
+                elif data_type == MarketDataType.SPOT.value:
                     if not isinstance(value, RateCurve):
                         raise TypeError(
                             f"Market key '{key}' expects a RateCurve, "
@@ -436,8 +441,8 @@ class MarketEnvironment:
     # ------------------------------------------------------------------
 
     MARKET_DATA_FILES = (
-        "ir_curves.csv", "fx_spot.csv", "fx_vol.csv", "eq_spot.csv", "eq_vol.csv", "eq_dividends.csv",
-        "correlations.csv",
+        "ir_curves.csv", "ir_vol.csv", "fx_spot.csv", "fx_vol.csv", "eq_spot.csv", "eq_vol.csv",
+        "eq_dividends.csv", "correlations.csv",
     )
 
     @classmethod
@@ -501,6 +506,9 @@ class MarketEnvironment:
         - ``ir_curves.csv``: ``ccy, curve, pillar, value, quote, daycount, interp``;
           ``quote`` is ``df`` (discount factors) or ``zero`` (continuously
           compounded zero rates) -> ``IR:<ccy>:<curve>:SPOT``.
+        - ``ir_vol.csv``: ``ccy, curve, expiry, strike, vol, vol_type`` (``normal`` absolute or
+          ``lognormal``; caplet vols of the index ``curve`` by fixing date and strike) ->
+          ``IR:<ccy>:<curve>:VOL``.
         - ``fx_spot.csv``: ``base, quote, spot`` (1 base = spot quote) ->
           ``FX:<quote>:<base><quote>:SPOT``.
         - ``fx_vol.csv``: ``base, quote, expiry, strike, vol`` (full grid) ->
@@ -568,7 +576,7 @@ class MarketEnvironment:
 
         dc = DayCounter(DayCounterConvention.Actual365)
 
-        def surface(grp: pd.DataFrame, label: str) -> VolatilitySurface:
+        def surface(grp: pd.DataFrame, label: str, vol_type: str = "lognormal") -> VolatilitySurface:
             grid = grp.pivot(index="expiry", columns="strike", values="vol").sort_index().sort_index(axis=1)
             if grid.isna().to_numpy().any():
                 raise ValueError(f"Vol surface {label}: incomplete expiry x strike grid")
@@ -579,7 +587,18 @@ class MarketEnvironment:
                 strike=[float(k) for k in grid.columns],
                 maturity=[dc.year_fraction(evaluation_date, d) for d in grid.index],
                 volatility_matrix=grid.to_numpy(dtype=float).tolist(),
+                vol_type=vol_type,
             )
+
+        ir_vols = read("ir_vol.csv")
+        if ir_vols is not None:
+            ir_vols = ir_vols.assign(expiry=to_dates(ir_vols["expiry"]))
+            for (ccy, name), grp in ir_vols.groupby(["ccy", "curve"], sort=False):
+                vol_types = grp["vol_type"].unique()
+                if len(vol_types) != 1:
+                    raise ValueError(f"IR vol {ccy} {name}: vol_type must be unique")
+                market[f"{RiskFactor.IR.value}:{ccy}:{name}:{MarketDataType.VOL.value}"] = \
+                    surface(grp, f"{ccy} {name}", str(vol_types[0]))
 
         vols = read("eq_vol.csv")
         if vols is not None:
@@ -651,7 +670,9 @@ class MarketEnvironment:
 
         for key, value in self._market.items():
             rf, ccy, ticker, data_type = key.split(":")
-            if rf == RiskFactor.IR.value:
+            if rf == RiskFactor.IR.value and data_type == MarketDataType.VOL.value:
+                tables["ir_vol.csv"] += surface_rows(value, {"ccy": ccy, "curve": ticker, "vol_type": value.vol_type})
+            elif rf == RiskFactor.IR.value:
                 for d, r in value.nodes:
                     tables["ir_curves.csv"].append({
                         "ccy": ccy, "curve": ticker, "pillar": d, "value": r, "quote": "zero",
@@ -833,6 +854,22 @@ class MarketEnvironment:
             if leg_1 is not None and leg_2 is not None:
                 return leg_1 * leg_2
         raise ValueError(f"FX spot {base}{quote} cannot be resolved from the stored pairs {sorted(pairs)}")
+
+    def get_ir_vol_surface(self, ccy: Currency, ticker: str) -> VolatilitySurface:
+        """Caplet vol surface of a rate index (``IR:<ccy>:<ticker>:VOL``; ``vol_type`` normal or lognormal).
+
+        Args:
+            ccy (Currency): Currency.
+            ticker (str): Index tenor / curve name (e.g. ``"6M"``).
+
+        Raises:
+            ValueError: If there is no vol surface for the index.
+        """
+        map_key = f"{RiskFactor.IR.value}:{ccy.name}:{ticker}"
+        market_key = self._market_map.get(map_key, {}).get(MarketDataType.VOL.value)
+        if market_key is None or market_key not in self._market:
+            raise ValueError(f"No IR vol surface for {ccy.name} {ticker} ('{map_key}:VOL')")
+        return self._market[market_key]
 
     def get_fx_forward(self, base: Currency | str, quote: Currency | str,
                        maturity: Union[date, float]) -> tf.Tensor:

@@ -7,3 +7,4 @@ from .black import *
 from .factory import *
 from .montecarlo import *
 from .vanillamc import *
+from .capfloor import *

@@ -111,9 +111,11 @@ market_map = {
     },
     "IR:EUR:3M": {
         "SPOT": "IR:EUR:3M:SPOT",
+        "VOL": "IR:EUR:3M:VOL",
     },
     "IR:EUR:6M": {
         "SPOT": "IR:EUR:6M:SPOT",
+        "VOL": "IR:EUR:6M:VOL",
     },
     "IR:USD:SOFR": {
         "SPOT": "IR:USD:SOFR:SPOT",
