@@ -1,4 +1,9 @@
+from datetime import date
+from typing import Union
+
 from .stochasticprocess import StochasticProcess
+from .brownian import _equity_carry_inputs
+from ..numericalhandles.dtypes import DTYPE
 import tensorflow as tf
 
 
@@ -27,7 +32,7 @@ def _bs_call(S0, K, T, vol, r=0.0, q=0.0):
     Returns:
         discounted call price C = S·e^{-qT}·N(d1) - K·e^{-rT}·N(d2)
     """
-    dtype = tf.float32
+    dtype = DTYPE
     T   = tf.maximum(tf.cast(T,   dtype), tf.constant(1e-12, dtype))
     vol = tf.maximum(tf.cast(vol, dtype), tf.constant(1e-12, dtype))
     S0  = tf.cast(S0, dtype)
@@ -144,8 +149,8 @@ def _dupire_local_vol(C, T, K, r=0.0, q=0.0, eps=1e-10, sig_cap=4.0):
     Returns:
         sigma_loc [nT, nK]
     """
-    r = tf.cast(r, tf.float32)
-    q = tf.cast(q, tf.float32)
+    r = tf.cast(r, DTYPE)
+    q = tf.cast(q, DTYPE)
 
     dT  = _dC_dT(C, T)   # [nT, nK]
     dK  = _dC_dK(C, K)   # [nT, nK]
@@ -267,11 +272,11 @@ class LocalVolatilityModel(StochasticProcess):
             sigma_cap:  Upper cap on σ_loc (for numerical robustness).
         """
         self._C      = C_surface
-        self._T_grid = tf.cast(tf.convert_to_tensor(T_grid), tf.float32)
-        self._K_grid = tf.cast(tf.convert_to_tensor(K_grid), tf.float32)
-        self._S0     = tf.cast(tf.convert_to_tensor(S0),     tf.float32)
-        self._r      = tf.cast(tf.convert_to_tensor(r),      tf.float32)
-        self._q      = tf.cast(tf.convert_to_tensor(q),      tf.float32)
+        self._T_grid = tf.cast(tf.convert_to_tensor(T_grid), DTYPE)
+        self._K_grid = tf.cast(tf.convert_to_tensor(K_grid), DTYPE)
+        self._S0     = tf.cast(tf.convert_to_tensor(S0),     DTYPE)
+        self._r      = tf.cast(tf.convert_to_tensor(r),      DTYPE)
+        self._q      = tf.cast(tf.convert_to_tensor(q),      DTYPE)
         self._eps    = dupire_eps
         self._cap    = sigma_cap
 
@@ -319,17 +324,56 @@ class LocalVolatilityModel(StochasticProcess):
                 iv_matrix, T_grid, K_grid, S0=100.0
             )
         """
-        T_tf = tf.cast(tf.convert_to_tensor(T_grid), tf.float32)
-        K_tf = tf.cast(tf.convert_to_tensor(K_grid), tf.float32)
+        T_tf = tf.cast(tf.convert_to_tensor(T_grid), DTYPE)
+        K_tf = tf.cast(tf.convert_to_tensor(K_grid), DTYPE)
         TT, KK = tf.meshgrid(T_tf, K_tf, indexing="ij")   # [nT, nK]
 
         C_surface = _bs_call(
-            tf.cast(S0, tf.float32), KK, TT,
-            tf.cast(iv_matrix, tf.float32),
-            r=tf.cast(r, tf.float32),
-            q=tf.cast(q, tf.float32),
+            tf.cast(S0, DTYPE), KK, TT,
+            tf.cast(iv_matrix, DTYPE),
+            r=tf.cast(r, DTYPE),
+            q=tf.cast(q, DTYPE),
         )
         return cls(C_surface, T_grid, K_grid, S0, r, q, dupire_eps, sigma_cap)
+
+    @classmethod
+    def from_equity(
+        cls,
+        equity,
+        maturity: Union[date, float],
+        strike: float = None,
+        dupire_eps: float = 1e-10,
+        sigma_cap: float = 4.0,
+    ) -> "LocalVolatilityModel":
+        """Dupire model for one option on *equity*, from the market risk factors (differentiable).
+
+        Implied vols are the surface nodes (``volatility_matrix``, a market variable), so
+        gradients reach every node. Spot and carry are flat up to *maturity*, as in
+        :meth:`GeometricBrownianMotion.from_equity`: escrowed ``S* = S - PV(div)`` with
+        ``q = repo`` (discrete dividends), or ``S`` with ``q = div_yield + repo``;
+        ``r = -ln P(0,T)/T``. The forward is exact at *maturity* only (flat r, q).
+
+        Args:
+            equity (Equity): The underlying (``market_env.get_equity``).
+            maturity (Union[date, float]): Option maturity.
+            strike (float, optional): Unused (same signature as the GBM factory).
+            dupire_eps (float): Numerical floor in the Dupire denominator.
+            sigma_cap (float): Upper cap on the local vol.
+
+        Returns:
+            LocalVolatilityModel: Model whose inputs are market tensors.
+
+        Raises:
+            ValueError: If the underlying has no vol surface.
+        """
+        if equity.vol_surface is None:
+            raise ValueError(f"No volatility surface for underlying '{equity.ticker}'")
+        x0, r, q, _ = _equity_carry_inputs(equity, maturity)
+        surface = equity.vol_surface
+        return cls.from_implied_vol(
+            surface.volatility_matrix, surface.maturity, surface.strike, S0=x0, r=r, q=q,
+            dupire_eps=dupire_eps, sigma_cap=sigma_cap,
+        )
 
     # ------------------------------------------------------------------
     # StochasticProcess interface
@@ -378,9 +422,9 @@ class LocalVolatilityModel(StochasticProcess):
                 "diffusion() requires the precomputed local-vol surface. "
                 "Call evolve() to simulate paths — it manages the surface internally."
             )
-        t_v = tf.fill([tf.shape(x0)[0]], tf.cast(t0, tf.float32))
+        t_v = tf.fill([tf.shape(x0)[0]], tf.cast(t0, DTYPE))
         sig = _bilinear_interp(self._sigma_TK, self._T_grid, self._K_grid, t_v, x0)
-        return sig * x0 * tf.sqrt(tf.cast(dt, tf.float32))
+        return sig * x0 * tf.sqrt(tf.cast(dt, DTYPE))
 
     def sigma_loc(self, t, S):
         """
@@ -398,13 +442,13 @@ class LocalVolatilityModel(StochasticProcess):
             σ_loc(t, S): [n_paths]
         """
         sigma_TK = _dupire_local_vol(
-            tf.cast(self._C, tf.float32),
+            tf.cast(self._C, DTYPE),
             self._T_grid, self._K_grid,
             r=self._r, q=self._q,
             eps=self._eps, sig_cap=self._cap,
         )
-        t_v = tf.cast(tf.broadcast_to(t, [tf.shape(tf.cast(S, tf.float32))[0]]), tf.float32)
-        return _bilinear_interp(sigma_TK, self._T_grid, self._K_grid, t_v, tf.cast(S, tf.float32))
+        t_v = tf.cast(tf.broadcast_to(t, [tf.shape(tf.cast(S, DTYPE))[0]]), DTYPE)
+        return _bilinear_interp(sigma_TK, self._T_grid, self._K_grid, t_v, tf.cast(S, DTYPE))
 
     # ------------------------------------------------------------------
     # Main simulation
@@ -435,25 +479,25 @@ class LocalVolatilityModel(StochasticProcess):
             dw     = tf.random.normal([n_paths, n_steps])
             paths  = model.evolve(t_grid, dw)
         """
-        dw     = tf.cast(tf.convert_to_tensor(dw),     tf.float32)
-        t_grid = tf.cast(tf.convert_to_tensor(t_grid), tf.float32)
+        dw     = tf.cast(tf.convert_to_tensor(dw),     DTYPE)
+        t_grid = tf.cast(tf.convert_to_tensor(t_grid), DTYPE)
 
         n_paths = tf.shape(dw)[0]
         n_steps = tf.shape(dw)[1]
 
         # Prepend t=0 so we can compute dt for the first step
-        t_full = tf.concat([tf.zeros([1], tf.float32), t_grid], axis=0)  # [n_steps+1]
+        t_full = tf.concat([tf.zeros([1], DTYPE), t_grid], axis=0)  # [n_steps+1]
 
         # Precompute σ_loc surface once (differentiable w.r.t. self._C)
         sigma_TK = _dupire_local_vol(
-            tf.cast(self._C, tf.float32),
+            tf.cast(self._C, DTYPE),
             self._T_grid, self._K_grid,
             r=self._r, q=self._q,
             eps=self._eps, sig_cap=self._cap,
         )
 
         S     = tf.fill([n_paths], self._S0)
-        paths = tf.TensorArray(dtype=tf.float32, size=n_steps)
+        paths = tf.TensorArray(dtype=DTYPE, size=n_steps)
 
         for k in tf.range(n_steps):
             t0 = t_full[k]

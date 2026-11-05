@@ -22,15 +22,15 @@ def bs_call_price(
     dividend_yield: tf.Tensor,
     volatility: tf.Tensor,
 ) -> tf.Tensor:
-    maturity = tf.maximum(tf.cast(maturity, tf.float32), tf.constant(1e-10))
-    volatility = tf.maximum(tf.cast(volatility, tf.float32), tf.constant(1e-10))
+    maturity = tf.maximum(tf.cast(maturity, tf.float64), tf.constant(1e-10, tf.float64))
+    volatility = tf.maximum(tf.cast(volatility, tf.float64), tf.constant(1e-10, tf.float64))
     sqrt_t = tf.sqrt(maturity)
     d1 = (
         tf.math.log(spot / strike)
         + (rate - dividend_yield + 0.5 * tf.square(volatility)) * maturity
     ) / (volatility * sqrt_t)
     d2 = d1 - volatility * sqrt_t
-    normal_cdf = lambda x: 0.5 * (1.0 + tf.math.erf(x / tf.sqrt(tf.constant(2.0))))
+    normal_cdf = lambda x: 0.5 * (1.0 + tf.math.erf(x / tf.sqrt(tf.constant(2.0, tf.float64))))
     return (
         spot * tf.exp(-dividend_yield * maturity) * normal_cdf(d1)
         - strike * tf.exp(-rate * maturity) * normal_cdf(d2)
@@ -90,19 +90,19 @@ def main() -> None:
     ticker = "TESTCTP"
     ccy = tq.Currency.EUR
 
-    spot = tf.cast(market_env.get_eq_spot(ticker, ccy=ccy), tf.float32)
+    spot = tf.cast(market_env.get_eq_spot(ticker, ccy=ccy), tf.float64)
     vol_surface = market_env.get_eq_vol_surface(ticker, ccy=ccy)
     disc_curve = market_env.get_ir_curve(ccy)
 
-    T_grid = tf.constant(vol_surface.maturity, dtype=tf.float32)
-    K_grid = tf.constant(vol_surface.strike, dtype=tf.float32)
-    iv_matrix = tf.Variable(tf.cast(vol_surface.volatility_matrix, tf.float32))
+    T_grid = tf.constant(vol_surface.maturity, dtype=tf.float64)
+    K_grid = tf.constant(vol_surface.strike, dtype=tf.float64)
+    iv_matrix = tf.Variable(tf.cast(vol_surface.volatility_matrix, tf.float64))
 
     # Flat-rate approximation: extract r from the ESTR curve at the longest
     # grid maturity. For Dupire on sparse grids this is a standard convention.
     T_max = float(T_grid[-1].numpy())
-    r = tf.cast(disc_curve.zero_rate(T_max), tf.float32)
-    q = tf.cast(market_env.get_eq_div_yield(ticker, ccy=ccy), tf.float32)
+    r = tf.cast(disc_curve.zero_rate(T_max), tf.float64)
+    q = tf.cast(market_env.get_eq_div_yield(ticker, ccy=ccy), tf.float64)
 
     local_vol_model = LocalVolatilityModel.from_implied_vol(
         iv_matrix=iv_matrix,
@@ -159,7 +159,7 @@ def main() -> None:
     n_paths    = 2000
     n_steps    = 60
     t_grid_sim = tf.linspace(tf.constant(0.0), tf.constant(T_max), n_steps + 1)[1:]
-    dw         = tf.random.normal([n_paths, n_steps], dtype=tf.float32)
+    dw         = tf.random.normal([n_paths, n_steps], dtype=tf.float64)
     paths      = local_vol_model.evolve(t_grid_sim, dw)
 
     # --- Output ---
@@ -218,12 +218,12 @@ def main() -> None:
 
     # evolve() returns [n_paths, n_steps] at each t in t_grid.
     # We pass T_grid directly so that step i ends exactly at T_grid[i].
-    dw_mc   = tf.random.normal([n_mc, T_grid.shape[0]], dtype=tf.float32)
+    dw_mc   = tf.random.normal([n_mc, T_grid.shape[0]], dtype=tf.float64)
     # One step per maturity: evolve with t_grid = T_grid (single-step per maturity).
     # For smoother paths use sub-steps and pick the last of each segment.
     # Here we use a fine grid and sub-sample at the maturity indices.
     t_fine      = tf.linspace(0.0, T_max, n_steps + 1)[1:]               # [n_steps]
-    dw_fine     = tf.random.normal([n_mc, n_steps], dtype=tf.float32)
+    dw_fine     = tf.random.normal([n_mc, n_steps], dtype=tf.float64)
     paths_mc    = local_vol_model.evolve(t_fine, dw_fine)                 # [n_mc, n_steps]
 
     # Indices of t_fine closest to each T_grid[i]

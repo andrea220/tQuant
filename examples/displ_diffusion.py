@@ -151,8 +151,8 @@ def main():
     T_max    = float(T_grid[-1])
     tf.random.set_seed(42)
 
-    t_fine   = tf.cast(tf.linspace(0.0, T_max, n_steps + 1), tf.float32)[1:]
-    dw_mc    = tf.random.normal([n_mc, n_steps], dtype=tf.float32)
+    t_fine   = tf.cast(tf.linspace(0.0, T_max, n_steps + 1), tf.float64)[1:]
+    dw_mc    = tf.random.normal([n_mc, n_steps], dtype=tf.float64)
     paths_mc = model.evolve(t_fine, dw_mc)                     # [n_mc, n_steps]
 
     t_fine_np    = t_fine.numpy()
@@ -168,7 +168,7 @@ def main():
     print("=" * 60)
     for i, T in enumerate(T_grid):
         S_T     = terminal[i]
-        log_ret = tf.math.log(S_T / tf.constant(S0, tf.float32))
+        log_ret = tf.math.log(S_T / tf.constant(S0, tf.float64))
 
         mc_fwd   = float(tf.reduce_mean(S_T).numpy())
         theo_fwd = S0 * np.exp((r_mc - q_mc) * T)
@@ -176,11 +176,11 @@ def main():
 
         df_T     = np.exp(-r_mc * T)
         mc_calls = df_T * tf.reduce_mean(
-            tf.maximum(S_T[:, None] - tf.constant(K_grid, tf.float32)[None, :], 0.0),
+            tf.maximum(S_T[:, None] - tf.constant(K_grid, tf.float64)[None, :], 0.0),
             axis=0,
         ).numpy()
         mc_puts  = df_T * tf.reduce_mean(
-            tf.maximum(tf.constant(K_grid, tf.float32)[None, :] - S_T[:, None], 0.0),
+            tf.maximum(tf.constant(K_grid, tf.float64)[None, :] - S_T[:, None], 0.0),
             axis=0,
         ).numpy()
 

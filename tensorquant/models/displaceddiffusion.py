@@ -158,7 +158,7 @@ def _dd_call_tf(S0, K, T, beta, sigma, r, q):
 
     All arguments broadcastable; dtype follows S0.
     """
-    dtype = tf.float32
+    dtype = tf.float64
     S0    = tf.cast(S0,    dtype)
     K     = tf.cast(K,     dtype)
     T     = tf.maximum(tf.cast(T,     dtype), tf.constant(1e-12, dtype))
@@ -252,21 +252,21 @@ class DisplacedDiffusionModel(StochasticProcess):
             K_grid:           [nK] strike grid (stored for implied_vol_surface).
             r_vec:            [nT] per-maturity zero rates (stored for pricing).
         """
-        self._S0    = tf.constant(float(S0),  dtype=tf.float32)
-        self._r     = tf.constant(float(r),   dtype=tf.float32)
-        self._q     = tf.constant(float(q),   dtype=tf.float32)
+        self._S0    = tf.constant(float(S0),  dtype=tf.float64)
+        self._r     = tf.constant(float(r),   dtype=tf.float64)
+        self._q     = tf.constant(float(q),   dtype=tf.float64)
 
-        T_np   = np.asarray(T_grid,          dtype=np.float32)
-        fb_np  = np.asarray(fwd_beta_curve,  dtype=np.float32)
-        fs_np  = np.asarray(fwd_sigma_curve, dtype=np.float32)
+        T_np   = np.asarray(T_grid,          dtype=np.float64)
+        fb_np  = np.asarray(fwd_beta_curve,  dtype=np.float64)
+        fs_np  = np.asarray(fwd_sigma_curve, dtype=np.float64)
 
         self._T_grid    = tf.constant(T_np)
         self._fwd_beta  = tf.constant(fb_np)
         self._fwd_sigma = tf.constant(fs_np)
 
-        self._spot_beta  = (tf.constant(np.asarray(spot_beta_curve,  np.float32))
+        self._spot_beta  = (tf.constant(np.asarray(spot_beta_curve,  np.float64))
                             if spot_beta_curve  is not None else self._fwd_beta)
-        self._spot_sigma = (tf.constant(np.asarray(spot_sigma_curve, np.float32))
+        self._spot_sigma = (tf.constant(np.asarray(spot_sigma_curve, np.float64))
                             if spot_sigma_curve is not None else self._fwd_sigma)
 
         self._K_grid = (np.asarray(K_grid, dtype=np.float64)
@@ -423,12 +423,12 @@ class DisplacedDiffusionModel(StochasticProcess):
             T_idx: Maturity index into T_grid.
 
         Returns:
-            Call price as tf.Tensor (float32).
+            Call price as tf.Tensor (float64).
         """
         beta  = self._spot_beta[T_idx]
         sigma = self._spot_sigma[T_idx]
         T     = self._T_grid[T_idx]
-        r_val = (tf.constant(float(self._r_vec[T_idx]), tf.float32)
+        r_val = (tf.constant(float(self._r_vec[T_idx]), tf.float64)
                  if self._r_vec is not None else self._r)
         return _dd_call_tf(self._S0, K, T, beta, sigma, r_val, self._q)
 
@@ -517,15 +517,15 @@ class DisplacedDiffusionModel(StochasticProcess):
         Returns:
             paths: [n_paths, n_steps]  spot at each observation time.
         """
-        dw     = tf.cast(tf.convert_to_tensor(dw),     tf.float32)
-        t_grid = tf.cast(tf.convert_to_tensor(t_grid), tf.float32)
+        dw     = tf.cast(tf.convert_to_tensor(dw),     tf.float64)
+        t_grid = tf.cast(tf.convert_to_tensor(t_grid), tf.float64)
 
         n_paths = tf.shape(dw)[0]
         n_steps = tf.shape(dw)[1]
-        t_full  = tf.concat([tf.zeros([1], tf.float32), t_grid], axis=0)
+        t_full  = tf.concat([tf.zeros([1], tf.float64), t_grid], axis=0)
 
         S     = tf.fill([n_paths], self._S0)
-        paths = tf.TensorArray(dtype=tf.float32, size=n_steps)
+        paths = tf.TensorArray(dtype=tf.float64, size=n_steps)
 
         carry = self._r - self._q
 
@@ -552,7 +552,7 @@ class DisplacedDiffusionModel(StochasticProcess):
             S = (S + a) * tf.exp(drift + diff) - a * exp_carry
 
             # Absorbing barrier at zero to avoid negative spots
-            S = tf.maximum(S, tf.constant(1e-8, tf.float32))
+            S = tf.maximum(S, tf.constant(1e-8, tf.float64))
 
             paths = paths.write(k, S)
 

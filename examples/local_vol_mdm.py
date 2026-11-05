@@ -50,15 +50,15 @@ def bs_call_price(
     dividend_yield: tf.Tensor,
     volatility: tf.Tensor,
 ) -> tf.Tensor:
-    maturity   = tf.maximum(tf.cast(maturity,   tf.float32), tf.constant(1e-10))
-    volatility = tf.maximum(tf.cast(volatility, tf.float32), tf.constant(1e-10))
+    maturity   = tf.maximum(tf.cast(maturity,   tf.float64), tf.constant(1e-10, tf.float64))
+    volatility = tf.maximum(tf.cast(volatility, tf.float64), tf.constant(1e-10, tf.float64))
     sqrt_t = tf.sqrt(maturity)
     d1 = (
         tf.math.log(spot / strike)
         + (rate - dividend_yield + 0.5 * tf.square(volatility)) * maturity
     ) / (volatility * sqrt_t)
     d2 = d1 - volatility * sqrt_t
-    N  = lambda x: 0.5 * (1.0 + tf.math.erf(x / tf.sqrt(tf.constant(2.0))))
+    N  = lambda x: 0.5 * (1.0 + tf.math.erf(x / tf.sqrt(tf.constant(2.0, tf.float64))))
     return (
         spot   * tf.exp(-dividend_yield * maturity) * N(d1)
         - strike * tf.exp(-rate          * maturity) * N(d2)
@@ -76,22 +76,22 @@ def main() -> None:
     equity = market_env.get_equity(TICKER, ccy=CCY)
 
     # ---- Extract market data ----
-    spot       = tf.cast(market_env.get_eq_spot(TICKER, ccy=CCY), tf.float32)
+    spot       = tf.cast(market_env.get_eq_spot(TICKER, ccy=CCY), tf.float64)
     vol_surface = market_env.get_eq_vol_surface(TICKER, ccy=CCY)
     disc_curve  = market_env.get_ir_curve(CCY)
 
-    T_grid    = tf.constant(vol_surface.maturity,          dtype=tf.float32)
-    K_grid    = tf.constant(vol_surface.strike,            dtype=tf.float32)
-    iv_matrix = tf.Variable(tf.cast(vol_surface.volatility_matrix, tf.float32))
+    T_grid    = tf.constant(vol_surface.maturity,          dtype=tf.float64)
+    K_grid    = tf.constant(vol_surface.strike,            dtype=tf.float64)
+    iv_matrix = tf.Variable(tf.cast(vol_surface.volatility_matrix, tf.float64))
 
     T_max = float(T_grid[-1].numpy())
-    r     = tf.cast(disc_curve.zero_rate(T_max), tf.float32)
+    r     = tf.cast(disc_curve.zero_rate(T_max), tf.float64)
     if equity.dividend_model == "discrete":
         T_max_date = EVALUATION_DATE + timedelta(days=int(round(T_max * 365)))
         q_value = float(equity.implied_div_yield(T_max_date))
     else:
         q_value = float(equity.div_yield) if equity.div_yield is not None else 0.0
-    q     = tf.constant(q_value,                             dtype=tf.float32)
+    q     = tf.constant(q_value,                             dtype=tf.float64)
     S0    = float(spot.numpy())
 
     nT, nK = T_grid.shape[0], K_grid.shape[0]
@@ -166,7 +166,7 @@ def main() -> None:
     tf.random.set_seed(42)
 
     t_fine   = tf.linspace(0.0, T_max, n_steps + 1)[1:]
-    dw_fine  = tf.random.normal([n_mc, n_steps], dtype=tf.float32)
+    dw_fine  = tf.random.normal([n_mc, n_steps], dtype=tf.float64)
     paths_mc = local_vol_model.evolve(t_fine, dw_fine)           # [n_mc, n_steps]
 
     t_fine_np    = t_fine.numpy()

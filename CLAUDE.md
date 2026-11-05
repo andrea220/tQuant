@@ -35,7 +35,7 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 | `flows/` | `CashFlow`, `Coupon` (ABC), `FixedCoupon`/`FixedRateLeg`, `FloatingCoupon`/`FloatingRateLeg` |
 | `instruments/` | `Product` (ABC), `Deposit`, `Fra`, `Swap`, `Ois`, `Option`/`VanillaOption`, `AutocallableOption`, `Cap`/`Floor`/`Collar`, generators in `helpers.py` |
 | `models/` | `StochasticProcess` (ABC), `GeometricBrownianMotion`, `ArithmeticBrownianMotion`, `OrnsteinUhlenbeckProcess`, `HullWhiteProcess`, `G2PlusPlusProcess`, `LocalVolatilityModel` (Dupire), `DisplacedDiffusionModel` |
-| `pricers/` | `Pricer` (ABC), `BlackScholesPricer` (EU BS + American Bjerksund–Stensland; `dividend_model` discrete/continuous), `VanillaMCPricer`, `AutocallableMCPricer`, `SwapPricer`, `OisPricer`, `FraPricer`, `DepositPricer`, coupon/leg discounting, `PricerAssignment` (factory, `isinstance`: Deposit/Ois/Fra/Swap/VanillaOption) |
+| `pricers/` | `Pricer` (ABC), `BlackScholesPricer` (EU BS + American Bjerksund–Stensland; `dividend_model` discrete/continuous), `VanillaMCPricer` (model class with `from_equity`: GBM / local vol built from the market), `AutocallableMCPricer`, `SwapPricer`, `OisPricer`, `FraPricer`, `DepositPricer`, coupon/leg discounting, `PricerAssignment` (factory, `isinstance`: Deposit/Ois/Fra/Swap/VanillaOption) |
 | `analytics/` | `GaussianPathGenerator`, `HullWhiteShortRateGenerator`, `SwapExposureGenerator` |
 
 ## Key patterns
@@ -114,7 +114,7 @@ Run examples/notebooks only when changing them or when asked.
 | `timehandles/` | — | — |
 | `numericalhandles/dtypes.py` | `tests/test_dtypes.py` | `DTYPE`, `as_variable` (reuse, casts, no float32 round trip) |
 | `numericalhandles/` (interpolation, newton) | — | — |
-| Equity pricers/models | — | — |
+| `VanillaMCPricer` (GBM, local vol) | `tests/test_vanilla_mc.py` | GBM vs BS within 3 SE (discrete/continuous, call/put), float64, exact maturity, stateless seed, n_steps-invariance, AAD greeks reach market factors, delta/vega vs BS, delta vs common-random-numbers bump, dV/dD_i = −delta·P(ex_i); LV: flat surface = BS within 3 SE, vega reaches nodes, node vega vs CRN bump |
 | Rate pricers / flows | `tests/test_rate_pricers.py` | Deposit/FRA/Swap/OIS prices pinned, float64 tensors, gradients per pillar of both curves vs bumps, deposit closed form (ACT/365 and ACT/360 curves), FRA standard formula, fixed leg = sum amount·P(pay), single-curve floating legs telescope to N(P(s)−P(e)), NPV = 0 at the fair rate |
 | `CurveBootstrap`, `PricerAssignment` | `tests/test_bootstrap.py` | ESTR (deposit + OIS) and 6M (FRA + swaps) stripped, instruments reprice to 0, curves registered via `set_ir_curve`, float64 variables; factory incl. `VanillaOption` |
 
@@ -158,17 +158,29 @@ tests green.
 
 ### 4. Stochastic processes & Monte Carlo (`models/`, MC pricers, `analytics/`)
 
-- [ ] dtype policy: MC may stay float32 via `tf.cast`, analytic parts float64.
+- [ ] dtype policy: **float64 everywhere** (decided; no float32 casts). Done for GBM/ABM, `LocalVolatilityModel`,
+      `DisplacedDiffusionModel`, `VanillaMCPricer` and the local vol / DD examples; rate models (4c) still to check.
+- [x] 4a `VanillaMCPricer(model=<class>)` builds the model from the market at each price via
+      `model.from_equity(equity, maturity, strike)` (`GeometricBrownianMotion`, `LocalVolatilityModel`): one
+      `tape.gradient` gives pathwise delta, vega per node, rho, dividend sensitivities. Grid ends exactly at maturity
+      (was the nearest point of a grid up to the last vol maturity), stateless Gaussian draws (CRN bumps),
+      `product.standard_error`. Discrete dividends: escrowed `S − PV`, carry repo (as BS discrete).
+- [ ] `DisplacedDiffusionModel`: float64 now, but calibrated in numpy from `float()` market data (no AAD to market);
+      add `from_equity` and a TF calibration.
+- [ ] `LocalVolatilityModel.evolve` is a `tf.function` on a bound method: retraced for every new model (one per
+      price), TF prints retracing warnings.
 - [ ] `StochasticProcess.evolve(t0, x0, dt, dw)` vs subclasses `evolve(t_grid, dw)`; GBM `drift(dt)` differs too.
 - [ ] `HullWhiteProcess.x0` calls `.numpy()` on the numpy value returned by `OrnsteinUhlenbeckProcess.x0`: `AttributeError`.
-- [ ] `VanillaMCPricer` + `LocalVolatilityModel`: check the gradient reaches `VolatilitySurface.volatility_matrix`.
+- [x] `VanillaMCPricer` + `LocalVolatilityModel`: the gradient reaches `VolatilitySurface.volatility_matrix` (tested).
 - [ ] `AutocallableMCPricer` returns floats: no AAD greeks.
 - [ ] `SwapExposureGenerator` passes a plain `dict` to `SwapPricer.price` (expects a `MarketEnvironment`): likely broken.
 - [ ] Unused, not exported: `pricers/localvolmc.py`, `models/localvol.py` (superseded by `models/localvolatility.py`).
 - [ ] `examples/local_vol.py` draws `tf.random.normal` before `tf.random.set_seed` (path stats not reproducible).
 - [ ] `LocalVolatilityModel` on the marketdata/ snapshot (`local_vol_mdm`, TICKER1): Dupire reprice errors grow
-      with T (up to ~30 at 5Y) and MC ATM vol is ~+4 vol points off at 5Y. Suspects: flat r and q (discrete
-      dividends as one equivalent yield), strong short-dated skew in the synthetic surface. Review in this step.
+      with T (up to ~30 at 5Y) and MC ATM vol is ~+4-5 vol points off at 5Y (unchanged in float64). Suspects: the
+      strike grid is only 60%-140% of spot while at 5Y (vol ~37%) roughly 60% of the paths are outside it, where
+      the local vol is clamped to the edge nodes (noisy Dupire wings, e.g. 1.2 at 1M/60%); flat r and q; strong
+      short-dated skew in the synthetic surface. The flat-surface test reproduces BS, so the simulation is sound.
 
 ### 5. Market data I/O
 

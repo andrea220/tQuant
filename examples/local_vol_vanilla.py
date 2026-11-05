@@ -36,7 +36,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import tensorquant as tq
-from tensorquant.markethandles.dividendcurve import DividendCurve
 from tensorquant.models.brownian import GeometricBrownianMotion
 from tensorquant.models.localvolatility import LocalVolatilityModel
 from tensorquant.pricers.vanillamc import VanillaMCPricer
@@ -96,21 +95,12 @@ def build_market(evaluation_date: date) -> tq.MarketEnvironment:
         volatility_matrix=vol_matrix,
     )
 
-    dividend_curve = DividendCurve(
-        reference_date=evaluation_date,
-        ex_dates=[],
-        amounts=[],
-        currency=CCY,
-        daycounter_convention=tq.DayCounterConvention.Actual365,
-    )
-
     market = {
         f"IR:{CCY.value}:ESTR:SPOT":             rate_curve,
         f"EQ:{CCY.value}:{UNDERLYING}:SPOT":     S0_ref,
         f"EQ:{CCY.value}:{UNDERLYING}:VOL":      vol_surface,
         f"EQ:{CCY.value}:{UNDERLYING}:REPO":     0.0,
         f"EQ:{CCY.value}:{UNDERLYING}:DIVYIELD": 0.01,
-        f"EQ:{CCY.value}:{UNDERLYING}:DIV":      dividend_curve,
     }
     return tq.MarketEnvironment(market=market)
 
@@ -128,50 +118,14 @@ def make_option(option_type: tq.OptionType) -> tq.VanillaOption:
     )
 
 
-def build_gbm(market_env: tq.MarketEnvironment, T: float) -> GeometricBrownianMotion:
-    """Calibra un GBM con la vol ATM@STRIKE e il drift r-q dal mercato."""
-    vol_surface = market_env.get_eq_vol_surface(UNDERLYING, ccy=CCY)
-    disc_curve  = market_env.get_ir_curve(CCY)
-    S0          = float(market_env.get_eq_spot(UNDERLYING, ccy=CCY))
-    q           = float(market_env.get_eq_div_yield(UNDERLYING, ccy=CCY) or 0.0)
-
-    # zero rate per la scadenza (approssimazione lineare sulla curva)
-    end_date_obj = END_DATE
-    df  = float(disc_curve.discount(end_date_obj))
-    r   = -np.log(df) / T
-
-    # vol implicita interpolata alla scadenza e allo strike
-    sigma = float(vol_surface.volatility(strike=STRIKE, tenor=T))
-
-    return GeometricBrownianMotion(mu=r - q, sigma=sigma, x0=S0)
+def build_gbm(market_env: tq.MarketEnvironment) -> GeometricBrownianMotion:
+    """GBM from the market: surface vol at (STRIKE, T), drift r - q - repo (market tensors)."""
+    return GeometricBrownianMotion.from_equity(market_env.get_equity(UNDERLYING, ccy=CCY), END_DATE, STRIKE)
 
 
 def build_local_vol(market_env: tq.MarketEnvironment) -> LocalVolatilityModel:
-    """Calibra un LocalVolatilityModel (Dupire) dalla superficie di vol."""
-    vol_surface = market_env.get_eq_vol_surface(UNDERLYING, ccy=CCY)
-    disc_curve  = market_env.get_ir_curve(CCY)
-    S0          = float(market_env.get_eq_spot(UNDERLYING, ccy=CCY))
-    q           = float(market_env.get_eq_div_yield(UNDERLYING, ccy=CCY) or 0.0)
-
-    T_grid    = tf.constant(vol_surface.maturity,          dtype=tf.float32)
-    K_grid    = tf.constant(vol_surface.strike,            dtype=tf.float32)
-    iv_matrix = tf.cast(vol_surface.volatility_matrix, tf.float32)
-
-    T_max = float(T_grid[-1].numpy())
-    df    = float(disc_curve.discount(END_DATE))
-    T_ref = float(tq.DayCounter(tq.DayCounterConvention.Actual365).year_fraction(
-        EVALUATION_DATE, END_DATE
-    ))
-    r = -np.log(df) / T_ref
-
-    return LocalVolatilityModel.from_implied_vol(
-        iv_matrix=iv_matrix,
-        T_grid=T_grid,
-        K_grid=K_grid,
-        S0=tf.constant(S0, dtype=tf.float32),
-        r=tf.constant(r, dtype=tf.float32),
-        q=tf.constant(q, dtype=tf.float32),
-    )
+    """Dupire local vol from the market vol surface (flat r, q up to END_DATE)."""
+    return LocalVolatilityModel.from_equity(market_env.get_equity(UNDERLYING, ccy=CCY), END_DATE)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -201,8 +155,8 @@ def main() -> None:
     df_val = float(call_bs.discount_factor.numpy())
 
     # ---- 2. GBM Monte Carlo ------------------------------------------------
-    gbm_model = build_gbm(market_env, T)
-    gbm_pricer = VanillaMCPricer(model=gbm_model, n_paths=N_PATHS, n_steps=N_STEPS, seed=SEED)
+    gbm_model = build_gbm(market_env)
+    gbm_pricer = VanillaMCPricer(model=GeometricBrownianMotion, n_paths=N_PATHS, n_steps=N_STEPS, seed=SEED)
 
     call_gbm = make_option(tq.OptionType.Call)
     put_gbm  = make_option(tq.OptionType.Put)
@@ -213,7 +167,7 @@ def main() -> None:
 
     # ---- 3. Local Volatility Monte Carlo (Dupire) --------------------------
     lv_model  = build_local_vol(market_env)
-    lv_pricer = VanillaMCPricer(model=lv_model, n_paths=N_PATHS, n_steps=N_STEPS, seed=SEED)
+    lv_pricer = VanillaMCPricer(model=LocalVolatilityModel, n_paths=N_PATHS, n_steps=N_STEPS, seed=SEED)
 
     call_lv = make_option(tq.OptionType.Call)
     put_lv  = make_option(tq.OptionType.Put)
@@ -246,39 +200,34 @@ def main() -> None:
     T_idx  = int(np.argmin(np.abs(np.array(vol_surface.maturity) - T)))
     iv_row = np.array(vol_surface.volatility_matrix[T_idx])
 
-    S0_tf = tf.constant(100.0, dtype=tf.float32)
-    r_tf  = tf.constant(r_val, dtype=tf.float32)
-    q_tf  = tf.constant(q_val, dtype=tf.float32)
+    S0_tf = tf.constant(100.0, dtype=tf.float64)
+    r_tf  = tf.constant(r_val, dtype=tf.float64)
+    q_tf  = tf.constant(q_val, dtype=tf.float64)
 
     from tensorquant.pricers.black import blackscholes_calc
 
     # BS analitico su ogni strike
     bs_calls_arr = np.array([
         float(blackscholes_calc(
-            S0_tf, tf.constant(K, tf.float32), r_tf,
-            tf.constant(float(iv_row[i]), tf.float32),
-            tf.constant(T, tf.float32), q_tf, tq.OptionType.Call,
+            S0_tf, tf.constant(K, tf.float64), r_tf,
+            tf.constant(float(iv_row[i]), tf.float64),
+            tf.constant(T, tf.float64), q_tf, tq.OptionType.Call,
         ).numpy())
         for i, K in enumerate(strikes_np)
     ])
     bs_puts_arr = np.array([
         float(blackscholes_calc(
-            S0_tf, tf.constant(K, tf.float32), r_tf,
-            tf.constant(float(iv_row[i]), tf.float32),
-            tf.constant(T, tf.float32), q_tf, tq.OptionType.Put,
+            S0_tf, tf.constant(K, tf.float64), r_tf,
+            tf.constant(float(iv_row[i]), tf.float64),
+            tf.constant(T, tf.float64), q_tf, tq.OptionType.Put,
         ).numpy())
         for i, K in enumerate(strikes_np)
     ])
 
     # GBM MC su ogni strike (stesso seed, stessi path)
-    tf.random.set_seed(SEED)
-    T_max_gbm = T
-    t_grid_gbm = tf.cast(tf.linspace(0.0, T_max_gbm, N_STEPS + 1)[1:], tf.float64)
-    dw_gbm     = tf.cast(tf.random.normal([N_PATHS, N_STEPS]), tf.float64)
-    paths_gbm  = gbm_model.evolve(t_grid_gbm, dw_gbm)
-    t_np_gbm   = t_grid_gbm.numpy()
-    idx_gbm    = int(np.argmin(np.abs(t_np_gbm - T)))
-    S_T_gbm    = tf.cast(paths_gbm[:, idx_gbm], tf.float32)
+    t_grid = tf.linspace(tf.constant(0.0, tf.float64), tf.constant(T, tf.float64), N_STEPS + 1)[1:]
+    dw     = tf.random.stateless_normal([N_PATHS, N_STEPS], seed=[SEED, 0], dtype=tf.float64)
+    S_T_gbm = gbm_model.evolve(t_grid, dw)[:, -1]
 
     gbm_calls_arr = np.array([
         float(df_val * tf.reduce_mean(tf.maximum(S_T_gbm - K, 0.0)).numpy())
@@ -290,14 +239,7 @@ def main() -> None:
     ])
 
     # LV MC su ogni strike (stesso seed, stessi path)
-    T_max_lv  = float(lv_model._T_grid[-1].numpy())
-    tf.random.set_seed(SEED)
-    t_grid_lv = tf.linspace(0.0, T_max_lv, N_STEPS + 1)[1:]
-    dw_lv     = tf.random.normal([N_PATHS, N_STEPS], dtype=tf.float32)
-    paths_lv  = lv_model.evolve(t_grid_lv, dw_lv)
-    t_np_lv   = t_grid_lv.numpy()
-    idx_lv    = int(np.argmin(np.abs(t_np_lv - T)))
-    S_T_lv    = paths_lv[:, idx_lv]
+    S_T_lv = lv_model.evolve(t_grid, dw)[:, -1]
 
     lv_calls_arr = np.array([
         float(df_val * tf.reduce_mean(tf.maximum(S_T_lv - K, 0.0)).numpy())
@@ -408,5 +350,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    tf.keras.backend.set_floatx("float32")
     main()
