@@ -4,12 +4,14 @@ Python quant-finance library on **TensorFlow**. Core idea: prices are TF graphs,
 from `tf.GradientTape` (AAD) instead of separate analytic code.
 
 - Package `tensorquant/` (import as `import tensorquant as tq`; everything is re-exported via `*`).
-- `setup.py` only (no `pyproject.toml`); Sphinx docs in `docs/`; study material in `study/` (own `CLAUDE.md`).
+- `setup.py` only (no `pyproject.toml`): loose bounds there, exact verified pins in `requirements.txt`.
+- `docs/` (Sphinx/ReadTheDocs) is **deprecated**: out of date, do not update or rebuild it.
+- Study material in `study/` (own `CLAUDE.md`).
 - Code, docstrings and comments in English.
 
 ## Environment & commands
 
-- Venv: `C:\dev\virtual_envs\tqenv` (Python 3.12, TF 2.21, library installed with `pip install -e .`).
+- Venv: `C:\dev\virtual_envs\tqenv` (Python 3.12), set up with `pip install -r requirements.txt -e .`.
 - Tests: `python -m unittest discover -s tests -v`
 - Examples: `python examples/<script>.py` — most read `SOURCE_MKT_DATA`: `'Generated'` uses the synthetic
   market in `examples/market_data.py`; `'Real'` needs the MDM datastore on `W:/` (not always available).
@@ -70,7 +72,9 @@ If a needed piece is missing, **propose first** (which class/ABC/enum, where it 
 
 ## Known issues (refactor backlog)
 
-- `setup.py` misses `scipy` and `numpy`; `requirements.txt` still pins `tensorflow==2.15.1` (env uses 2.21).
+- `pandas` capped `<3` in `setup.py` until the CSV loading in `MarketEnvironment.from_data_path` is checked on pandas 3.
+- `examples/swap_pricing.py` never sets `tq.Settings.evaluation_date` (defaults to `date.today()`), so it fails once
+  past fixings are needed. Examples 2-4 default to real tickers (ISP/SX5E): use `TICKER1` with `'Generated'`.
 - dtypes are mixed: mostly `tf.float32`, `float64` in `DividendCurve` and a few places (explicit casts needed).
 - `StochasticProcess.evolve(t0, x0, dt, dw)` vs subclasses `evolve(t_grid, dw)`; GBM `drift(dt)` signature differs too.
 - `PricerAssignment` uses `type(...) ==` and covers only Deposit/Ois/Fra/Swap.

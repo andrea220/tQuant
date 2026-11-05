@@ -6,7 +6,7 @@
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-**TensorQuant** is a Python financial library that uses TensorFlow as its computational engine. Leveraging tensor arrays, TensorQuant supports pricing, intensive risk management computations, and algorithmic differentiation. You can explore examples and use cases in the [**playground repository**](https://github.com/andrea220/tqPlayground) with Jupyter notebooks. For detailed API references and comprehensive documentation, visit the [**ReadTheDocs**](https://tquant.readthedocs.io/en/latest/index.html) page. 
+**TensorQuant** is a Python financial library that uses TensorFlow as its computational engine. Leveraging tensor arrays, TensorQuant supports pricing, intensive risk management computations, and algorithmic differentiation. You can explore examples and use cases in the [**playground repository**](https://github.com/andrea220/tqPlayground) with Jupyter notebooks. The [**ReadTheDocs**](https://tquant.readthedocs.io/en/latest/index.html) documentation is currently deprecated (out of date). 
 
 It is particularly valuable in academic settings, such as the [Finance Master courses at the University of Siena](https://finance.unisi.it/it), where students gain hands-on experience with financial libraries and object-oriented programming. At the same time, TensorQuant is designed to support fast prototyping, replication of academic and industry results, and professional-grade applications.
 
@@ -60,7 +60,7 @@ To get started using `TensorQuant`, here are some resources:
 - Visit the [**`Playground`**](https://github.com/andrea220/tqPlayground) for Jupyter notebooks containing examples and use cases.
 
 ### Documentation
-- The [**`ReadTheDocs`**](https://tquant.readthedocs.io/en/latest/index.html) page provides API references and comprehensive documentation.
+- The [**`ReadTheDocs`**](https://tquant.readthedocs.io/en/latest/index.html) page is **deprecated**: it is out of date and not rebuilt for now.
 
 ### GitHub Repository
 - Check out the open-source code on [**GitHub**](https://github.com/andrea220/tQuant).

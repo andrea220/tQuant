@@ -1,5 +1,11 @@
-tensorflow==2.15.1
-python-dateutil==2.9.0.post0
+# Pinned, verified environment (Python 3.12, tqenv).
+# Library bounds live in setup.py; install with: pip install -r requirements.txt -e .
+tensorflow==2.21.0
+numpy==2.5.4
+scipy==1.18.1
 pandas==2.2.2
-sphinx>=3.0
-sphinx_rtd_theme>=0.5.2
+python-dateutil==2.9.0.post0
+
+# examples / study notebooks
+matplotlib==3.11.2
+ipykernel==7.4.0
