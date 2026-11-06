@@ -16,6 +16,7 @@ from .volatilitysurface import VolatilitySurface
 from .dividendcurve import DividendCurve
 from .equity import Equity
 from .correlation import CorrelationMatrix
+from .swaptionvolcube import SwaptionVolCube
 from ..numericalhandles.dtypes import as_variable
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
 from ..timehandles.utils import Settings
@@ -52,6 +53,7 @@ class MarketDataType(Enum):
     REPO = "REPO"
     DIVYIELD = "DIVYIELD"
     DIV = "DIV"
+    SWVOL = "SWVOL"
 
 
 class MarketMapValidator:
@@ -72,7 +74,7 @@ class MarketMapValidator:
     """
 
     KEY_PATTERN = re.compile(r"^(IR|EQ|FX|CORR):([A-Z]{3}):([A-Z0-9_]+)$")
-    VALUE_PATTERN = re.compile(r"^(IR|EQ|FX|CORR):([A-Z]{3}):([A-Z0-9_]+):(SPOT|VOL|REPO|DIVYIELD|DIV)$")
+    VALUE_PATTERN = re.compile(r"^(IR|EQ|FX|CORR):([A-Z]{3}):([A-Z0-9_]+):(SPOT|VOL|SWVOL|REPO|DIVYIELD|DIV)$")
 
     @classmethod
     def validate_key(cls, key: str) -> tuple[str, str, str]:
@@ -215,7 +217,12 @@ class MarketMapValidator:
             risk_factor, _ccy, _ticker, data_type = match.groups()
 
             if risk_factor == RiskFactor.IR.value:
-                if data_type == MarketDataType.VOL.value:
+                if data_type == MarketDataType.SWVOL.value:
+                    if not isinstance(value, SwaptionVolCube):
+                        raise TypeError(
+                            f"Market key '{key}' expects a SwaptionVolCube, got {type(value).__name__}"
+                        )
+                elif data_type == MarketDataType.VOL.value:
                     if not isinstance(value, VolatilitySurface):
                         raise TypeError(
                             f"Market key '{key}' expects a VolatilitySurface, got {type(value).__name__}"
@@ -315,6 +322,20 @@ class MarketMapValidator:
                 "(unknown or misspelled instruments):\n"
                 + "\n".join(f"  '{k}'" for k in orphans)
             )
+
+
+def _tenor_years(term: str) -> float:
+    """``"6M"`` -> 0.5, ``"5Y"`` -> 5.0 (swap tenors of the swaption cube)."""
+    term = str(term).strip().upper()
+    n = float(term[:-1])
+    return n / 12.0 if term.endswith("M") else n
+
+
+def _tenor_term(years: float) -> str:
+    """Inverse of :func:`_tenor_years` (whole years as ``Y``, else months as ``M``)."""
+    if abs(years - round(years)) < 1e-9:
+        return f"{int(round(years))}Y"
+    return f"{int(round(years * 12))}M"
 
 
 class MarketEnvironment:
@@ -430,7 +451,7 @@ class MarketEnvironment:
         factors: dict[str, list[tf.Variable]] = {}
         for key in sorted(self._market):
             value = self._market[key]
-            if isinstance(value, (RateCurve, VolatilitySurface, CorrelationMatrix, DividendCurve)):
+            if isinstance(value, (RateCurve, VolatilitySurface, CorrelationMatrix, DividendCurve, SwaptionVolCube)):
                 factors[key] = value.variables
             elif self._is_scalar_key(key):
                 factors[key] = [value]
@@ -441,7 +462,7 @@ class MarketEnvironment:
     # ------------------------------------------------------------------
 
     MARKET_DATA_FILES = (
-        "ir_curves.csv", "ir_vol.csv", "fx_spot.csv", "fx_vol.csv", "eq_spot.csv", "eq_vol.csv",
+        "ir_curves.csv", "ir_vol.csv", "ir_swaption_vol.csv", "fx_spot.csv", "fx_vol.csv", "eq_spot.csv", "eq_vol.csv",
         "eq_dividends.csv", "correlations.csv",
     )
 
@@ -509,6 +530,8 @@ class MarketEnvironment:
         - ``ir_vol.csv``: ``ccy, curve, expiry, strike, vol, vol_type`` (``normal`` absolute or
           ``lognormal``; caplet vols of the index ``curve`` by fixing date and strike) ->
           ``IR:<ccy>:<curve>:VOL``.
+        - ``ir_swaption_vol.csv``: ``ccy, curve, expiry, tenor, strike_offset, vol, vol_type`` (expiry date,
+          underlying swap tenor term e.g. ``5Y``, strike - ATM forward; full cube) -> ``IR:<ccy>:<curve>:SWVOL``.
         - ``fx_spot.csv``: ``base, quote, spot`` (1 base = spot quote) ->
           ``FX:<quote>:<base><quote>:SPOT``.
         - ``fx_vol.csv``: ``base, quote, expiry, strike, vol`` (full grid) ->
@@ -606,6 +629,26 @@ class MarketEnvironment:
             for (ticker, ccy), grp in vols.groupby(["ticker", "ccy"], sort=False):
                 market[f"{RiskFactor.EQ.value}:{ccy}:{ticker}:{MarketDataType.VOL.value}"] = surface(grp, ticker)
 
+        sw_vols = read("ir_swaption_vol.csv")
+        if sw_vols is not None:
+            sw_vols = sw_vols.assign(expiry=to_dates(sw_vols["expiry"]))
+            for (ccy, name), grp in sw_vols.groupby(["ccy", "curve"], sort=False):
+                vol_types = grp["vol_type"].unique()
+                if len(vol_types) != 1:
+                    raise ValueError(f"Swaption vol {ccy} {name}: vol_type must be unique")
+                expiries = sorted(grp["expiry"].unique())
+                tenors = sorted(grp["tenor"].unique(), key=_tenor_years)
+                offsets = sorted(grp["strike_offset"].unique())
+                cube = grp.set_index(["expiry", "tenor", "strike_offset"])["vol"]
+                try:
+                    values = [[[float(cube.loc[(e, t, k)]) for k in offsets] for t in tenors] for e in expiries]
+                except KeyError as exc:
+                    raise ValueError(f"Swaption vol {ccy} {name}: incomplete cube ({exc})") from exc
+                market[f"{RiskFactor.IR.value}:{ccy}:{name}:{MarketDataType.SWVOL.value}"] = SwaptionVolCube(
+                    evaluation_date, dc, [dc.year_fraction(evaluation_date, e) for e in expiries],
+                    [_tenor_years(t) for t in tenors], offsets, values, vol_type=str(vol_types[0]),
+                )
+
         fx_vols = read("fx_vol.csv")
         if fx_vols is not None:
             fx_vols = fx_vols.assign(expiry=to_dates(fx_vols["expiry"]))
@@ -670,7 +713,16 @@ class MarketEnvironment:
 
         for key, value in self._market.items():
             rf, ccy, ticker, data_type = key.split(":")
-            if rf == RiskFactor.IR.value and data_type == MarketDataType.VOL.value:
+            if rf == RiskFactor.IR.value and data_type == MarketDataType.SWVOL.value:
+                vols = value.volatilities.numpy()
+                for i, e in enumerate(value.expiries):
+                    expiry = eval_date + timedelta(days=int(round(e * 365)))
+                    for j, t in enumerate(value.tenors):
+                        for k, off in enumerate(value.strike_offsets):
+                            tables["ir_swaption_vol.csv"].append({
+                                "ccy": ccy, "curve": ticker, "expiry": expiry, "tenor": _tenor_term(t),
+                                "strike_offset": off, "vol": float(vols[i, j, k]), "vol_type": value.vol_type})
+            elif rf == RiskFactor.IR.value and data_type == MarketDataType.VOL.value:
                 tables["ir_vol.csv"] += surface_rows(value, {"ccy": ccy, "curve": ticker, "vol_type": value.vol_type})
             elif rf == RiskFactor.IR.value:
                 for d, r in value.nodes:
@@ -854,6 +906,32 @@ class MarketEnvironment:
             if leg_1 is not None and leg_2 is not None:
                 return leg_1 * leg_2
         raise ValueError(f"FX spot {base}{quote} cannot be resolved from the stored pairs {sorted(pairs)}")
+
+    def get_swaption_vol_cube(self, ccy: Currency, ticker: str) -> SwaptionVolCube:
+        """Swaption vol cube of a rate index (``IR:<ccy>:<ticker>:SWVOL``).
+
+        Raises:
+            ValueError: If there is no cube for the index.
+        """
+        market_key = self._market_map.get(f"{RiskFactor.IR.value}:{ccy.name}:{ticker}", {}).get(
+            MarketDataType.SWVOL.value)
+        if market_key is None or market_key not in self._market:
+            raise ValueError(f"No swaption vol cube for {ccy.name} {ticker}")
+        return self._market[market_key]
+
+    def set_swaption_vol_cube(self, ccy: Currency, ticker: str, cube: SwaptionVolCube) -> None:
+        """Add or replace the swaption vol cube of a rate index.
+
+        Raises:
+            ValueError: If the index has no SWVOL entry in the market map.
+            TypeError: If *cube* is not a :class:`SwaptionVolCube`.
+        """
+        market_key = self._market_map.get(f"{RiskFactor.IR.value}:{ccy.name}:{ticker}", {}).get(
+            MarketDataType.SWVOL.value)
+        if market_key is None:
+            raise ValueError(f"No SWVOL entry for IR:{ccy.name}:{ticker} in the market map")
+        MarketMapValidator.validate_market({market_key: cube})
+        self._market[market_key] = cube
 
     def set_ir_vol_surface(self, ccy: Currency, ticker: str, surface: VolatilitySurface) -> None:
         """Add or replace the caplet vol surface of a rate index (e.g. a stripped one).

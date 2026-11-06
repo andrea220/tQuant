@@ -198,6 +198,115 @@ class GaussianShortRateModel(StochasticProcess):
         p_e = tf.cast(self._curve.discount(end if isinstance(end, date) else self.time(end)), DTYPE)
         return cap - (_as_param(basis) * p_s - k_tau * p_e)
 
+    def _variance_tau(self, tau) -> tf.Tensor:
+        """``V`` for horizons ``tau`` of any shape (``V(t, t + tau)`` does not depend on ``t``)."""
+        tau = tf.constant(np.asarray(tau, dtype=float), DTYPE)[..., None, None]
+        k_i, k_j = self._kappa[:, None], self._kappa[None, :]
+        s = self._sigma[:, None] * self._sigma[None, :] * self._rho
+        b_i, b_j = (1.0 - tf.exp(-k_i * tau)) / k_i, (1.0 - tf.exp(-k_j * tau)) / k_j
+        b_ij = (1.0 - tf.exp(-(k_i + k_j) * tau)) / (k_i + k_j)
+        return tf.reduce_sum(s / (k_i * k_j) * (tau - b_i - b_j + b_ij), axis=[-2, -1])
+
+    def swaption_normal_vols(self, te, pay_t, pay_w, p0_pay, st_t, st_w, p0_st, en_t, en_w, p0_en, p0_te) -> tf.Tensor:
+        """Batched Gaussian swap-rate normal vols ``[n]`` (see :meth:`swaption_from_arrays`).
+
+        Flow arrays are ``[n, m]`` (pad shorter swaps with zero weights), ``te`` and ``p0_te`` ``[n]``.
+        """
+        te = np.asarray(te, dtype=float)
+        v_te = self._variance_tau(te)[:, None]
+        p0_te = tf.constant(np.asarray(p0_te, dtype=float), DTYPE)[:, None]
+
+        def legs(times, p0):
+            horizon = np.maximum(np.asarray(times, dtype=float) - te[:, None], 0.0)
+            conv = 0.5 * (self._variance_tau(horizon) - self._variance_tau(np.asarray(times, dtype=float)) + v_te)
+            c = tf.constant(np.asarray(p0, dtype=float), DTYPE) / p0_te * tf.exp(conv)
+            return c, self._B(horizon)
+
+        c_p, b_p = legs(pay_t, p0_pay)
+        c_s, b_s = legs(st_t, p0_st)
+        c_e, b_e = legs(en_t, p0_en)
+        w_p, w_s, w_e = (tf.constant(np.asarray(w, dtype=float), DTYPE) for w in (pay_w, st_w, en_w))
+        a_x = tf.reduce_sum(w_p * c_p, axis=1)
+        f_x = tf.reduce_sum(w_s * c_s, axis=1) - tf.reduce_sum(w_e * c_e, axis=1)
+        da = -tf.reduce_sum((w_p * c_p)[..., None] * b_p, axis=1)
+        df = -tf.reduce_sum((w_s * c_s)[..., None] * b_s, axis=1) + tf.reduce_sum((w_e * c_e)[..., None] * b_e, axis=1)
+        g = (df * a_x[:, None] - f_x[:, None] * da) / (a_x * a_x)[:, None]
+        k_i, k_j = self._kappa[:, None], self._kappa[None, :]
+        tt = tf.constant(te, DTYPE)[:, None, None]
+        cov = (self._sigma[:, None] * self._sigma[None, :] * self._rho) * (1.0 - tf.exp(-(k_i + k_j) * tt)) / (k_i + k_j)
+        return tf.sqrt(tf.maximum(tf.einsum("ni,nij,nj->n", g, cov, g), 1e-300) / tf.constant(te, DTYPE))
+
+    def swaption_from_arrays(self, te: float, pay_t, pay_w, p0_pay, st_t, st_w, p0_st, en_t, en_w, p0_en,
+                             p0_te: float, strike: float, payer: bool = True):
+        """Vectorized Gaussian swap-rate swaption (see :meth:`swaption`) from time-0 bond values.
+
+        ``S(x) = (sum st_w P(te, st) - sum en_w P(te, en)) / sum pay_w P(te, pay)`` with
+        ``P(te, T; x) = c_T exp(-B(T - te) x)``, ``c_T = P(0,T)/P(0,te) exp((V(te,T) - V(0,T) + V(0,te))/2)``;
+        ``g = dS/dx`` at ``x = 0`` analytically (``dP/dx = -B P``).
+
+        Returns:
+            tuple: ``(price, forward_swap_rate, annuity, normal_vol)``.
+        """
+        def legs(times, p0):
+            times = np.asarray(times, dtype=float)
+            v_te = self._variance_tau([te])[0]
+            conv = 0.5 * (self._variance_tau(times - te) - self._variance_tau(times) + v_te)
+            c = tf.constant(np.asarray(p0, dtype=float), DTYPE) / p0_te * tf.exp(conv)        # [m]
+            return c, self._B(times - te)                                                       # [m], [m, nf]
+
+        c_p, b_p = legs(pay_t, p0_pay)
+        c_s, b_s = legs(st_t, p0_st)
+        c_e, b_e = legs(en_t, p0_en)
+        w_p, w_s, w_e = (tf.constant(np.asarray(w, dtype=float), DTYPE) for w in (pay_w, st_w, en_w))
+        a_x = tf.reduce_sum(w_p * c_p)
+        f_x = tf.reduce_sum(w_s * c_s) - tf.reduce_sum(w_e * c_e)
+        da = -tf.reduce_sum((w_p * c_p)[:, None] * b_p, axis=0)                                # [nf]
+        df = -tf.reduce_sum((w_s * c_s)[:, None] * b_s, axis=0) + tf.reduce_sum((w_e * c_e)[:, None] * b_e, axis=0)
+        g = (df * a_x - f_x * da) / (a_x * a_x)
+        k_i, k_j = self._kappa[:, None], self._kappa[None, :]
+        cov = self._sigma[:, None] * self._sigma[None, :] * self._rho * (1.0 - tf.exp(-(k_i + k_j) * te)) / (k_i + k_j)
+        normal_vol = tf.sqrt(tf.maximum(tf.einsum("i,ij,j->", g, cov, g), 1e-300) / te)
+        annuity = float(np.dot(pay_w, p0_pay))
+        forward = (float(np.dot(st_w, p0_st)) - float(np.dot(en_w, p0_en))) / annuity
+        phi = 1.0 if payer else -1.0
+        std = normal_vol * np.sqrt(te)
+        d = (forward - strike) / std
+        cdf = lambda v: 0.5 * (1.0 + tf.math.erf(v / np.sqrt(2.0)))
+        pdf = lambda v: tf.exp(-0.5 * v * v) / np.sqrt(2.0 * np.pi)
+        price = annuity * (phi * (forward - strike) * cdf(phi * d) + std * pdf(d))
+        return price, tf.constant(forward, DTYPE), tf.constant(annuity, DTYPE), normal_vol
+
+    def swaption(self, expiry, fixed_flows, floating_flows, strike: float, payer: bool = True):
+        """European swaption (physical settlement) by the Gaussian swap-rate approximation.
+
+        Swap rate at expiry ``S(x) = sum_j n_j (basis_j P(te, s_j) - P(te, e_j)) / sum_i w_i P(te, p_i)`` with the
+        model bonds (floating periods paid at their end, deterministic index basis). ``S`` is linearised in the
+        factors at ``x = 0``: ``g = dS/dx``, normal vol ``sigma_N^2 te = g^T Cov(x(te)) g``; price
+        ``A(0) * Bachelier(S(0), K, sigma_N, te)`` with ``A(0) = sum_i w_i P(0, p_i)`` and ``S(0)`` the forward
+        swap rate. The forward is exact; the frozen-weight vol is within ~0.4bp of the exact (MC) ATM vol.
+        The curve values are read as numbers (no gradient to the curve).
+
+        Args:
+            expiry: Exercise date / year fraction.
+            fixed_flows: ``[(pay, tau_times_notional), ...]`` of the fixed leg.
+            floating_flows: ``[(start, end, notional, basis), ...]`` of the floating leg (paid at ``end``).
+            strike (float): Fixed rate.
+            payer (bool): Payer (call on the swap rate) or receiver.
+
+        Returns:
+            tuple: ``(price, forward_swap_rate, annuity, normal_vol)`` float64 tensors.
+        """
+        te = self.time(expiry)
+        p0 = lambda T: float(self._curve.discount(T if isinstance(T, date) else self.time(T)))
+        pay_t = [self.time(p) for p, _ in fixed_flows]
+        st_t = [self.time(st) for st, _, _, _ in floating_flows]
+        en_t = [self.time(en) for _, en, _, _ in floating_flows]
+        return self.swaption_from_arrays(
+            te, pay_t, [w for _, w in fixed_flows], [p0(p) for p, _ in fixed_flows],
+            st_t, [n * float(b) for _, _, n, b in floating_flows], [p0(st) for st, _, _, _ in floating_flows],
+            en_t, [n for _, _, n, _ in floating_flows], [p0(en) for _, en, _, _ in floating_flows],
+            p0(expiry), strike, payer)
+
     # ------------------------------------------------------------------
     # Simulation
     # ------------------------------------------------------------------

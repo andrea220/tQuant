@@ -6,7 +6,8 @@ with ``MarketEnvironment.to_folder`` or ``DataFrame.to_csv``); ``generate_market
 equities, FX, correlations), all dates relative to the evaluation date.
 
 - Curves: Nelson-Siegel zero rates per currency (smooth forwards); EUR 6M Euribor = ESTR + a Nelson-Siegel spread.
-- Rate vols: EUR 6M caplet normal (Bachelier) vols from a normal SABR (beta = 0, Hagan) smile per expiry.
+- Rate vols: EUR 6M caplet normal (Bachelier) vols from a normal SABR (beta = 0, Hagan) smile per expiry;
+  EUR 6M swaption normal vol cube (expiry x tenor x strike offset), normal SABR per (expiry, tenor).
 - Equities: spot, repo, discrete dividends, SSVI vol surface in forward moneyness
   (``Equity.forward``, dividends included).
 - FX: spots and SSVI vol surfaces on the FX forward (covered interest parity).
@@ -32,6 +33,9 @@ FX_SPOTS = [("EUR", "USD", 1.0850), ("GBP", "USD", 1.2700)]   # 1 base = spot qu
 EUR6M_SPREAD = ((0.0020, 0.0030), (0.0030, 0.0045))          # short, long spread ranges over ESTR
 CAPLET_EXPIRIES_M = [6, 12, 18, 24, 36, 48, 60, 84, 120]
 CAPLET_STRIKES = [round(k, 4) for k in np.arange(-0.005, 0.0601, 0.005)]
+SWAPTION_EXPIRIES_M = [6, 12, 24, 36, 60, 84, 120]
+SWAPTION_TENORS = ["1Y", "2Y", "5Y", "10Y", "20Y"]
+SWAPTION_OFFSETS = [-0.02, -0.01, -0.005, -0.0025, 0.0, 0.0025, 0.005, 0.01, 0.02]
 VOL_TENORS_M = [1, 3, 6, 12, 18, 24, 36, 60]
 EQ_MONEYNESS = np.round(np.arange(0.6, 1.401, 0.1), 2)
 FX_MONEYNESS = np.round(np.arange(0.8, 1.201, 0.05), 2)
@@ -46,7 +50,7 @@ def add_months(d: date, months: int) -> date:
 
 
 def _streams(seed: int) -> dict:
-    names = ("curves", "equities", "fx", "correlations", "rate_vols")   # child i does not depend on the count
+    names = ("curves", "equities", "fx", "correlations", "rate_vols", "swaption_vols")   # child i: count-independent
     return dict(zip(names, (np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(len(names)))))
 
 
@@ -120,6 +124,24 @@ def caplet_vol_table(evaluation_date: date, curves: pd.DataFrame, rng) -> pd.Dat
     return pd.DataFrame(rows)
 
 
+def swaption_vol_table(evaluation_date: date, rng) -> pd.DataFrame:
+    """EUR 6M swaption normal vols: ATM level with expiry / tenor shape, normal SABR smile in K - F (beta = 0
+    makes the smile depend on K - F only, so no forward swap rate is needed)."""
+    level = rng.uniform(0.0075, 0.0095)
+    rho, nu = rng.uniform(-0.20, 0.20), rng.uniform(0.25, 0.40)
+    rows = []
+    for m in SWAPTION_EXPIRIES_M:
+        expiry = add_months(evaluation_date, m)
+        t = (expiry - evaluation_date).days / 365.0
+        for tenor in SWAPTION_TENORS:
+            years = float(tenor[:-1])
+            alpha = level * (0.85 + 0.25 * np.exp(-t / 3.0)) * (0.80 + 0.30 * np.exp(-years / 7.0))
+            vols = sabr_normal_vol(0.0, np.asarray(SWAPTION_OFFSETS), t, alpha, rho, nu / np.sqrt(1.0 + years / 10.0))
+            rows += [{"ccy": "EUR", "curve": "6M", "expiry": expiry, "tenor": tenor, "strike_offset": k,
+                      "vol": round(float(v), 8), "vol_type": "normal"} for k, v in zip(SWAPTION_OFFSETS, vols)]
+    return pd.DataFrame(rows)
+
+
 def generate_market_data(
     evaluation_date: date,
     seed: int = 42,
@@ -133,7 +155,7 @@ def generate_market_data(
         tickers_per_currency: ``(currency, count)``; tickers are numbered ``TICKER1, TICKER2, ...`` in order.
 
     Returns:
-        dict: ``ir_curves.csv``, ``ir_vol.csv``, ``fx_spot.csv``, ``fx_vol.csv``, ``eq_spot.csv``, ``eq_vol.csv``,
+        dict: ``ir_curves.csv``, ``ir_vol.csv``, ``ir_swaption_vol.csv``, ``fx_spot.csv``, ``fx_vol.csv``, ``eq_spot.csv``, ``eq_vol.csv``,
             ``eq_dividends.csv``, ``correlations.csv``.
     """
     from .marketenvironment import MarketEnvironment
@@ -144,6 +166,7 @@ def generate_market_data(
     tickers = [f"TICKER{i}" for i in range(1, len(currencies) + 1)]
     curves = curve_table(evaluation_date, rng["curves"])
     ir_vol = caplet_vol_table(evaluation_date, curves, rng["rate_vols"])
+    sw_vol = swaption_vol_table(evaluation_date, rng["swaption_vols"])
     fx_spot = pd.DataFrame(FX_SPOTS, columns=["base", "quote", "spot"])
 
     # equities: spots, repos, dividends, SSVI parameters
@@ -201,7 +224,7 @@ def generate_market_data(
                  for i in range(len(names)) for j in range(i + 1, len(names))]
 
     tables = {
-        "ir_curves.csv": curves, "ir_vol.csv": ir_vol, "fx_spot.csv": fx_spot, "fx_vol.csv": pd.DataFrame(fx_rows),
+        "ir_curves.csv": curves, "ir_vol.csv": ir_vol, "ir_swaption_vol.csv": sw_vol, "fx_spot.csv": fx_spot, "fx_vol.csv": pd.DataFrame(fx_rows),
         "eq_spot.csv": eq_spot, "eq_vol.csv": pd.DataFrame(vol_rows), "eq_dividends.csv": eq_div,
         "correlations.csv": pd.DataFrame(corr_rows),
     }

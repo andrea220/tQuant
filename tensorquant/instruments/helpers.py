@@ -552,3 +552,28 @@ class CapFloorGenerator:
 
         return Collar(self.build(trade_date, cap_strike, term, OptionType.Call),
                       self.build(trade_date, floor_strike, term, OptionType.Put))
+
+
+class SwaptionGenerator:
+    """European swaptions on the swaps of a :class:`SwapGenerator` (expiry and tenor as terms, e.g. ``"1Y"``, ``"5Y"``).
+
+    The underlying swap starts ``swap_generator.start_delay`` business days after the expiry.
+
+    Args:
+        swap_generator (SwapGenerator): Conventions of the underlying swap (legs, index, calendar, notional).
+    """
+
+    def __init__(self, swap_generator: SwapGenerator) -> None:
+        self.swap_generator = swap_generator
+
+    def build(self, trade_date: datetime.date, expiry: str, tenor: str, strike: float, payer: bool = True):
+        """Swaption expiring *expiry* after *trade_date* on a *tenor* swap with fixed rate *strike*."""
+        from .swaption import Swaption
+
+        g = self.swap_generator
+        n, unit = decode_term(expiry)
+        expiry_date = g.calendar.advance(trade_date, n, unit, g.roll_convention)
+        swap = g.build(expiry_date, strike, tenor)
+        m, m_unit = decode_term(tenor)
+        years = m / 12.0 if m_unit == TimeUnit.Months else float(m)
+        return Swaption(swap, expiry_date, payer, years)

@@ -116,6 +116,7 @@ market_map = {
     "IR:EUR:6M": {
         "SPOT": "IR:EUR:6M:SPOT",
         "VOL": "IR:EUR:6M:VOL",
+        "SWVOL": "IR:EUR:6M:SWVOL",
     },
     "IR:USD:SOFR": {
         "SPOT": "IR:USD:SOFR:SPOT",

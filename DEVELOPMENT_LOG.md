@@ -51,6 +51,18 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       and the inverse `cap_flat_vols`; `MarketEnvironment.set_ir_vol_surface`. Snapshot: flat cap vols 71-99bp; the
       stripped vols reprice every cap with `CapFloorPricer` to 4e-12 and stay within 2.2bp of the SABR caplet vols.
 
+- [x] Swaptions: `SwaptionVolCube` (expiry × tenor × strike offset from ATM, one float64 variable, trilinear, flat
+      outside), key `IR:<ccy>:<index>:SWVOL`, `ir_swaption_vol.csv`, `get/set_swaption_vol_cube`; `Swaption`
+      (European, physical) + `SwaptionGenerator`; `SwaptionPricer`: annuity × Bachelier (normal) / Black-76
+      (lognormal) on the two-curve forward swap rate, AAD to both curves and every cube node. Synthetic EUR 6M cube:
+      normal SABR per (expiry, tenor) in K − F (7 × 5 × 9, ATM 1Y×5Y 78bp), added to snapshot `20261105/2240`.
+      The cube interpolation found a float32 round trip of Python numbers (`tf.cast(float)`), fixed (1e-12).
+- [x] G2++ (and HW) swaptions by the Gaussian swap-rate approximation (`GaussianShortRateModel.swaption`,
+      `swaption_from_arrays`, batched `swaption_normal_vols`: sensitivity of the swap rate to the factors analytic,
+      variance g^T Cov(x(te)) g): ≤ 0.4bp ATM / 0.8bp at ±1% vs MC. Joint calibration caplets + swaptions in
+      `calibrate_gaussian_short_rate` (batched, 50 s → 5 s); recovers the G2++ parameters (rho included) from
+      model-generated caplet + swaption vols.
+
 ## 4. Stochastic processes & Monte Carlo (`models/`, MC pricers, `analytics/`)
 
 - [x] dtype policy: **float64 everywhere** (decided; no float32 casts): GBM/ABM, `LocalVolatilityModel`,

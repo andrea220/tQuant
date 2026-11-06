@@ -18,6 +18,9 @@ from .black import BlackScholesPricer
 from ..instruments.capfloor import CapFloor, Collar
 from .capfloor import CapFloorPricer
 
+from ..instruments.swaption import Swaption
+from .swaption import SwaptionPricer
+
 
 class PricerAssignment:
     """Default pricer for a product type."""
@@ -30,6 +33,7 @@ class PricerAssignment:
         (VanillaOption, BlackScholesPricer),
         (CapFloor, CapFloorPricer),
         (Collar, CapFloorPricer),
+        (Swaption, SwaptionPricer),
     )
 
     @staticmethod
@@ -37,11 +41,11 @@ class PricerAssignment:
         """Return a new default pricer for *product* (``isinstance``, so subclasses are covered).
 
         Args:
-            product (Product): Deposit, Ois, Fra, Swap, VanillaOption, CapFloor or Collar.
+            product (Product): Deposit, Ois, Fra, Swap, VanillaOption, CapFloor, Collar or Swaption.
 
         Returns:
             Pricer: ``DepositPricer``, ``OisPricer``, ``FraPricer``, ``SwapPricer`` or
-                ``BlackScholesPricer()`` (default arguments) or ``CapFloorPricer``.
+                ``BlackScholesPricer()`` (default arguments) ``CapFloorPricer`` or ``SwaptionPricer``.
 
         Raises:
             TypeError: If no default pricer exists for the product type.
