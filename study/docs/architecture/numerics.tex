@@ -1,0 +1,20 @@
+\section{Numerics}\label{sec:arch-numerics}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Float64 and dtypes}\label{sec:arch-dtypes}
+\code{DTYPE}, \code{as\_variable}, the float32 round trip of \code{tf.cast} on Python numbers.
+
+\pending
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{AAD in practice}\label{sec:arch-aad}
+\code{GradientTape}, dense gradients (no \code{IndexedSlices}), \code{tf.function} and loops,
+\code{stop\_gradient} where a derivative must not flow.
+
+\pending
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Performance}\label{sec:arch-performance}
+Compiled functions traced once, batching, vectorised closed forms.
+
+\pending

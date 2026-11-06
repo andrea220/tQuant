@@ -1,0 +1,28 @@
+% tQuant Architecture: technical description of the library (market data, class architecture, numerics,
+% conventions). Filled in during the guided review, together with the notebooks.
+% Build: latexmk (see .latexmkrc). Shared preamble: preamble.tex.
+\documentclass[11pt,a4paper]{article}
+
+\input{preamble}
+
+\title{tQuant --- Architecture}
+\author{Andrea Carapelli}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\clearpage
+
+\section*{Scope}
+How the library is built: the market data (storage, keys, risk factors), the class architecture
+(products, pricers, models, calibration), the numerical conventions (TensorFlow graphs, float64, AAD) and
+the testing approach. The financial content of the models is in \emph{tQuant --- Models and Pricing}.
+
+\input{architecture/overview}
+\input{architecture/market_data}
+\input{architecture/classes}
+\input{architecture/numerics}
+\input{architecture/testing}
+
+\end{document}

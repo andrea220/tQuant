@@ -1,12 +1,30 @@
 # study/ — rules
 
-Study material on tQuant: Jupyter notebooks (`notebooks/`) + LaTeX Q/A (`docs/`).
-Everything is in **English**.
+Study material on tQuant: Jupyter notebooks (`notebooks/`) + three LaTeX documents (`docs/`).
+Everything is in **English**. The material grows during the guided review (see `ROADMAP.md`): each step adds a
+notebook and updates the three documents together.
 
-## docs/ (LaTeX Q/A)
+## docs/ — three documents, shared preamble
 
-- One `\section` per asset class, one file each: `chapters/equity.tex`, `chapters/rates.tex`.
-  Topics are `\subsection`s. Shared topics (numerics, AAD) go where first used, with a cross-reference.
+| Document | Main file | Chapters | Content |
+|---|---|---|---|
+| Exercises | `exercises.tex` | `chapters/equity.tex`, `chapters/rates.tex` | questions, answers, exercises |
+| Models and Pricing | `models_and_pricing.tex` | `models/equity.tex`, `models/rates.tex` | functional: dynamics, pricing formula / algorithm, calibration, greeks |
+| Architecture | `architecture.tex` | `architecture/*.tex` | technical: market data (snapshots, keys, risk factors), class architecture, numerics, testing |
+
+- `preamble.tex` is shared: packages, math macros (`\E`, `\Q`, `\dd`, ...), `\nb{...}` (notebook reference),
+  `\code{...}` (library names), `\pending` (section still to be written). Macros live only there; the Q/A
+  environments and tags stay in `exercises.tex`.
+- One `\section` per asset class (Q/A, Models and Pricing) or per topic (Architecture); topics are `\subsection`s
+  with a `\label` (`sec:mp-...`, `sec:arch-...`) and a `\nb{...}` to the notebook that shows them.
+- Models and Pricing: what is computed, not how the code is organised; key formulas, the calibration and how
+  the greeks are obtained; short, no long derivations. Architecture: the real classes, methods and files (check the
+  code), how they connect; no financial derivations. Each fact in one document, cross-referenced from the others.
+- Replace `\pending` when a subsection is written; keep the headings in the review order.
+- After every edit: `latexmk` in `docs/` (builds the three documents into `docs/build/`), fix errors and warnings.
+
+### Exercises (`exercises.tex`)
+
 - Always a `question` + `answer` pair, with one tag (`\Theory` or `\Practice`; interview/desk
   questions are `\Theory`) and a difficulty `\diff{1..3}`:
   ```latex
@@ -19,9 +37,8 @@ Everything is in **English**.
   ```
 - `\Practice` questions point to a notebook with `\nb{...}` and use the real tQuant API.
 - Answers are short: key formula + intuition, no long derivations.
-- Math macros live only in `main.tex` (`\E`, `\Q`, `\dd`, ...).
-- `\showanswersfalse` in `main.tex` -> questions-only version.
-- After every edit: `latexmk` in `docs/` (output in `docs/build/`), fix errors and warnings.
+- Shared topics (numerics, AAD) go where first used, with a cross-reference.
+- `\showanswersfalse` in `exercises.tex` -> questions-only version.
 
 ## notebooks/
 

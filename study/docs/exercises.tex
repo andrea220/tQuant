@@ -1,20 +1,8 @@
-% tQuant Q&A: theory and practical applications, by asset class.
-% Build: latexmk (see .latexmkrc) or LaTeX Workshop in VS Code.
+% tQuant Exercises: questions and answers (theory and practical applications), by asset class.
+% Build: latexmk (see .latexmkrc) or LaTeX Workshop in VS Code. Shared preamble: preamble.tex.
 \documentclass[11pt,a4paper]{article}
 
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
-\usepackage[english]{babel}
-\usepackage{lmodern}
-\usepackage[margin=2.5cm]{geometry}
-\usepackage{amsmath,amssymb,amsthm,bm}
-\usepackage{xcolor}
-\usepackage[most]{tcolorbox}
-\usepackage{enumitem}
-\usepackage{environ}
-\usepackage{hyperref}
-
-\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+\input{preamble}
 
 % ── Show / hide answers ─────────────────────────────────────────────────────
 % \showanswerstrue  -> full version
@@ -32,9 +20,6 @@
 % Difficulty: \diff{1}..\diff{3}
 \newcommand{\diff}[1]{\textcolor{gray}{\ifcase#1\or$\star$\or$\star\star$\or$\star\star\star$\fi}}
 
-% Reference to a notebook in study/notebooks
-\newcommand{\nb}[1]{\textsf{\small[notebook: \texttt{#1}]}}
-
 % ── Q/A environments ────────────────────────────────────────────────────────
 % \begin{question}{<tag> <difficulty>}{<short title>} ... \end{question}
 \newtcolorbox[auto counter, number within=section]{question}[2]{
@@ -51,14 +36,7 @@
   \NewEnviron{answer}{}
 \fi
 
-% ── Math macros ─────────────────────────────────────────────────────────────
-\newcommand{\E}{\mathbb{E}}
-\newcommand{\Q}{\mathbb{Q}}
-\newcommand{\R}{\mathbb{R}}
-\newcommand{\dd}{\,\mathrm{d}}
-\newcommand{\Nc}{\mathcal{N}}
-
-\title{tQuant --- Study Notes \& Q/A}
+\title{tQuant --- Exercises}
 \author{Andrea Carapelli}
 \date{\today}
 

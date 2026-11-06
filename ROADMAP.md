@@ -9,7 +9,9 @@ Current focus: equity.
 - [ ] **Guided review of the equity pricers and models, together, step by step** (before the new products): for each
       piece, walk through the code and its tests, fix what the review finds, and write the study material
       (`study/`, rules in `study/CLAUDE.md`): one notebook on the `marketdata/` snapshot, `\Theory` / `\Practice` Q/A
-      in `study/docs/chapters/equity.tex`, 1-3 exercises. Proposed order (notebooks after `04_black_scholes`):
+      in `study/docs/chapters/equity.tex`, 1-3 exercises, and the matching sections of the *Models and Pricing*
+      (functional) and *Architecture* (technical) documents (`study/docs/models/`, `study/docs/architecture/`).
+      Proposed order (notebooks after `04_black_scholes`):
       `05_monte_carlo_gbm` (`VanillaMCPricer`, AAD greeks, common random numbers), `06_local_vol` (Gatheral, SSVI,
       forward mode), `07_displaced_diffusion` (slice fit, skew averaging, implicit-function greeks, skew limit),
       `08_heston` (characteristic function, COS, calibration, QE-M), `09_heston_slv` (leverage, particle method,

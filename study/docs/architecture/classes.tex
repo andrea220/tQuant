@@ -1,0 +1,26 @@
+\section{Class architecture}\label{sec:arch-classes}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Products and cash flows}\label{sec:arch-products}
+\code{Product} and the instruments; \code{flows/} coupons and legs; generators.
+
+\pending
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Pricers}\label{sec:arch-pricers}
+\code{Pricer}: \code{calculate\_price}, \code{price(..., autodiff)}, the tape; \code{PricerAssignment}.
+
+\pending
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Models}\label{sec:arch-models}
+\code{StochasticProcess} (\code{size}, \code{initial\_values}, \code{noise\_size}, \code{evolve}) and the
+\code{from\_equity} factories used by the Monte Carlo pricers.
+
+\pending
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Calibration}\label{sec:arch-calibration}
+Calibration inside the factories (implicit-function greeks) and the rates calibration module.
+
+\pending

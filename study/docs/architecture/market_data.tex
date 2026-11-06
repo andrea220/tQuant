@@ -1,0 +1,28 @@
+\section{Market data}\label{sec:arch-market-data}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Snapshots on disk}\label{sec:arch-snapshots}
+\code{marketdata/<yyyymmdd>/<calibration\_set>/} and its CSV files; the synthetic generator.
+
+\pending
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{MarketEnvironment and keys}\label{sec:arch-market-env}
+Keys \code{RISKFACTOR:CCY:TICKER:TYPE}, validation, typed accessors, I/O round trip.
+\nb{01\_market\_handles.ipynb}
+
+\pending
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Market objects and risk factors}\label{sec:arch-risk-factors}
+\code{RateCurve}, \code{VolatilitySurface}, \code{DividendCurve}, \code{SwaptionVolCube},
+\code{CorrelationMatrix}, scalar equity data; \code{risk\_factors()}.
+
+\pending
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{The Equity view}\label{sec:arch-equity}
+References to spot, repo, dividends, surface and discount curve; single place for the forward.
+\nb{03\_equity\_underlying.ipynb}
+
+\pending

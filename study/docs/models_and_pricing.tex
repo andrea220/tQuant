@@ -1,0 +1,26 @@
+% tQuant Models and Pricing: functional description of the models and pricers (dynamics, pricing formulas,
+% calibration, greeks), by asset class. Filled in during the guided review, together with the notebooks.
+% Build: latexmk (see .latexmkrc). Shared preamble: preamble.tex.
+\documentclass[11pt,a4paper]{article}
+
+\input{preamble}
+
+\title{tQuant --- Models and Pricing}
+\author{Andrea Carapelli}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\clearpage
+
+\section*{Scope}
+What each model and pricer computes, at the functional level: the dynamics, the pricing formula or
+algorithm, the calibration to the market and how the greeks are obtained. Implementation (classes, market
+data layout) is in the companion document \emph{tQuant --- Architecture}; questions and exercises in
+\emph{tQuant --- Exercises}.
+
+\input{models/equity}
+\input{models/rates}
+
+\end{document}
