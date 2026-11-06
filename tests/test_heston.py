@@ -17,6 +17,7 @@ from tensorquant.models.heston import (
 from tensorquant.timehandles.daycounter import DayCounter, DayCounterConvention
 
 from test_black_scholes import make_market, make_option
+from markers import slow
 
 EVAL_DATE = date(2026, 5, 15)
 S0 = 100.0
@@ -94,6 +95,7 @@ class TestClosedForm(unittest.TestCase):
         np.testing.assert_allclose(call - put, 1.0 - k[0], atol=1e-15)
         self.assertTrue(np.all(put > 0.0))
 
+    @slow
     def test_negative_rho_gives_negative_skew(self):
         model = HestonModel(heston_market().get_equity("HES"), **TRUTH)
         vols = [model.implied_vol(K, 1.0) for K in (80.0, 100.0, 120.0)]
@@ -111,6 +113,7 @@ class TestCalibration(unittest.TestCase):
     def setUp(self):
         tq.Settings.evaluation_date = EVAL_DATE
 
+    @slow
     def test_recovers_the_generating_parameters(self):
         model = HestonModel.from_equity(self.mkt.get_equity("HES"), initial=dict(kappa=3.0, xi=0.3, rho=-0.3))
         for name, value in TRUTH.items():
@@ -151,6 +154,7 @@ class TestCalibration(unittest.TestCase):
         fd = (out[0] - out[1]) / (2e-6 * s0)
         self.assertAlmostEqual(float(d_spot), fd, delta=rel * abs(fd))
 
+    @slow
     def test_greeks_through_the_calibration(self):
         """Vega per node and delta: Heston market (exact fit) and synthetic SSVI market (residuals)."""
         self.gradient_vs_recalibration(self.mkt, "HES", 95.0, 1.0, [(2, 4), (5, 8)], 1e-6)
@@ -158,6 +162,7 @@ class TestCalibration(unittest.TestCase):
         surface = ssvi.get_equity("TICKER1").vol_surface
         self.gradient_vs_recalibration(ssvi, "TICKER1", float(surface.strike[4]), 1.0, [(3, 4), (0, 4), (3, 0)], 1e-6)
 
+    @slow
     def test_synthetic_market_fit(self):
         """SSVI smiles: ATM within 1.5 vol points everywhere, wings within 1.5 from 1Y (steep short-term wings
         are beyond a 5-parameter Heston), parameters inside the bounds."""
@@ -181,6 +186,7 @@ class TestMonteCarlo(unittest.TestCase):
     def setUp(self):
         tq.Settings.evaluation_date = EVAL_DATE
 
+    @slow
     def test_qe_vs_closed_form(self):
         """QE-M with 26 steps a year: calls at 70/100/130% within 3 SE of the COS price (Feller violated)."""
         mkt = heston_market()
@@ -211,6 +217,7 @@ class TestMonteCarlo(unittest.TestCase):
                     else:
                         self.assertLess(abs(paths[:, col].mean() - F), 3 * paths[:, col].std() / np.sqrt(self.N))
 
+    @slow
     def test_variance_moments_and_shapes(self):
         """E[v_t] = theta + (v0 - theta) e^{-kappa t} within 3 SE, v >= 0; noise_size 2, dw shape checked."""
         model = HestonModel(heston_market().get_equity("HES"), **TRUTH)
@@ -224,6 +231,7 @@ class TestMonteCarlo(unittest.TestCase):
         with self.assertRaises(ValueError):
             model.evolve(grid, tf.zeros([10, 26], tf.float64))
 
+    @slow
     def test_vanilla_mc_pricer(self):
         """VanillaMCPricer(model=HestonModel): price = closed form within 3 SE; MC delta and vega by AAD (through
         the calibration) = the closed-form ones. Bump-and-reprice with common random numbers is no reference

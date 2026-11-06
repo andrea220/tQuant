@@ -12,6 +12,7 @@ from tensorquant.markethandles.volatilitysurface import VolatilitySurface
 from tensorquant.timehandles.daycounter import DayCounter, DayCounterConvention
 
 from test_black_scholes import EVAL_DATE, EXPIRIES, PILLARS, RATES, S0, make_market, make_option
+from markers import slow
 
 GBM_PATHS = 200_000
 
@@ -295,6 +296,7 @@ class TestLocalVolForward(unittest.TestCase):
         for k in range(0, len(t_grid), 25):
             self.assertAlmostEqual(float(tf.reduce_mean(paths[:, k])), float(self.eq.forward(float(t_grid[k]))), places=8)
 
+    @slow
     def test_ssvi_smile_repriced_at_the_nodes(self):
         """Arbitrage-free surface on a narrow grid: MC implied vols (OTM options) at the 1Y and 3Y nodes."""
         vs = self.eq.vol_surface
@@ -325,6 +327,7 @@ class TestLocalVolForward(unittest.TestCase):
             model = tq.LocalVolatilityModel.from_equity(mkt.get_equity("ARB"))
         self.assertGreater(model.arbitrage["arbitrage_fraction"], 0.0)
 
+    @slow
     def test_greeks_vs_common_random_numbers_bumps(self):
         """Pathwise AAD delta and node vega of the pricer = derivatives of the same MC estimator."""
         pricer_args = dict(model=tq.LocalVolatilityModel, n_paths=20_000, n_steps=100, seed=5)

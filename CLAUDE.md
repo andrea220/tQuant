@@ -23,7 +23,7 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 ## Environment & commands
 
 - Venv: `C:\dev\virtual_envs\tqenv` (Python 3.12), set up with `pip install -r requirements.txt -e .`.
-- Tests: `python -m unittest discover -s tests -v`
+- Tests: `python -m unittest discover -s tests` = fast suite (~45 s, `@slow` tests skipped); full suite (~3.5 min): `TQ_SLOW=1 python -m unittest discover -s tests`, before a commit or when touching a model.
 - Examples: `python examples/<script>.py`. Examples 1-4 and `local_vol_mdm` load the latest `marketdata/` snapshot
   (`SNAPSHOT_DATE` / `CALIBRATION_SET` at the top select another one). The MDM datastore on `W:/` **no longer
   exists** (do not look for it).
@@ -108,7 +108,7 @@ If a needed piece is missing, **propose first** (which class/ABC/enum, where it 
 Regression safety comes from the unit tests in `tests/`, **not** from running `examples/` or `study/` notebooks.
 Run examples/notebooks only when changing them or when asked.
 
-- Run: `python -m unittest discover -s tests -v` (in `tqenv`, with `TF_ENABLE_ONEDNN_OPTS=0`).
+- Run: `python -m unittest discover -s tests` (fast) or with `TQ_SLOW=1` (full) (in `tqenv`, with `TF_ENABLE_ONEDNN_OPTS=0`). Tests over ~1 s (MC with tight tolerances, bumps through calibrations) are marked `@slow` (`tests/markers.py`).
 - Before refactoring an area, add tests that pin the current numbers (prices, greeks) with explicit tolerances,
   then refactor until they are green. Add independent checks where possible: closed form, put–call parity,
   finite differences vs AAD gradients, MC within a few standard errors.

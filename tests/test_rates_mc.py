@@ -11,6 +11,7 @@ from tensorquant.index.curverateindex import IborIndex
 from tensorquant.instruments.helpers import SwapGenerator
 from tensorquant.pricers.fixedflow import FixedCouponDiscounting
 from tensorquant.pricers.floatingflow import FloatingCouponDiscounting
+from markers import slow
 
 EVAL_DATE = date(2026, 5, 15)
 A365 = tq.DayCounterConvention.Actual365
@@ -210,12 +211,14 @@ class TestSwapExposure(RatesTestCase):
         x = sum(float(FixedCouponDiscounting(c).calculate_price(self.curve)) for c in swap.fixed_leg.leg_flows if c.date > d)
         return f - x
 
+    @slow
     def test_today_equals_the_swap_pricer(self):
         gen, swap = self.exposure(n_paths=100)
         ref = make_swap()
         tq.SwapPricer().price(ref, self.mkt)
         np.testing.assert_allclose(gen.mtm[:, 0].numpy(), float(ref.price), rtol=1e-12)
 
+    @slow
     def test_discounted_mtm_is_the_pv_of_the_remaining_flows(self):
         """E[D(0,t) V(t)] = PV(0) of the flows paid after t (martingale), HW and G2++, within 4 SE."""
         for name in ("HW", "G2"):
@@ -226,6 +229,7 @@ class TestSwapExposure(RatesTestCase):
                 with self.subTest(model=name, date=EXPOSURE_DATES[k]):
                     self.assertLess(abs(dv.mean() - self.pv_after(swap, EXPOSURE_DATES[k])), 4 * dv.std() / np.sqrt(len(dv)))
 
+    @slow
     def test_profile_identities(self):
         gen, swap = self.exposure(n_paths=5_000)
         ee, ene = gen.expected_exposure.numpy(), gen.expected_negative_exposure.numpy()
@@ -236,6 +240,7 @@ class TestSwapExposure(RatesTestCase):
         self.assertTrue(after)
         self.assertEqual(float(tf.reduce_max(tf.abs(gen.mtm[:, after[0]]))), 0.0)
 
+    @slow
     def test_discounted_epe_gradient_vs_common_random_numbers_bump(self):
         var = self.curve.variables[4]   # 5Y pillar
         model = self.models()["HW"]

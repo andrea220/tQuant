@@ -17,6 +17,7 @@ from tensorquant.models.displaceddiffusion import (
 from tensorquant.timehandles.daycounter import DayCounter, DayCounterConvention
 
 from test_black_scholes import EXPIRIES, make_market, make_option
+from markers import slow
 
 EVAL_DATE = date(2026, 5, 15)
 S0 = 100.0
@@ -138,6 +139,7 @@ class TestCalibration(unittest.TestCase):
         eq.spot.assign(s0)
         self.assertAlmostEqual(float(d_spot), (out[0] - out[1]) / (2e-6 * s0), delta=1e-6)
 
+    @slow
     def test_greeks_through_the_calibration(self):
         """Interior optimum (DD market) and beta on its bound (synthetic SSVI market): vega per node and delta."""
         self.gradient_vs_recalibration(self.mkt, "DD", 95.0, 1.0, [(1, 4), (1, 0), (1, 8), (0, 3), (2, 4)])
@@ -146,6 +148,7 @@ class TestCalibration(unittest.TestCase):
         k = list(surface.strike)[4]
         self.gradient_vs_recalibration(ssvi, "TICKER1", k, float(surface.maturity[3]), [(3, 4), (3, 0), (3, 7)])
 
+    @slow
     def test_steep_equity_skew_is_out_of_reach(self):
         """Synthetic SSVI smiles are steeper than the normal skew: beta on its lower bound, ATM still within
         1 vol point (vega-weighted fit), the wings off."""
@@ -207,6 +210,7 @@ class TestMonteCarlo(unittest.TestCase):
                 with self.subTest(T=T, K=K):
                     self.assertLess(abs(mc - float(eq.vol_surface.volatility(K, T))), 3e-3)
 
+    @slow
     def test_steps_across_the_pieces(self):
         """A grid that does not hit the nodes (steps across pieces with different beta) keeps the slice law:
         coarse (7 steps) and fine (1 step per day-ish) grids give the node-grid price within 3 SE."""
@@ -238,6 +242,7 @@ class TestMonteCarlo(unittest.TestCase):
                     else:
                         self.assertLess(abs(paths[:, col].mean() - F), 3 * paths[:, col].std() / np.sqrt(self.N))
 
+    @slow
     def test_vanilla_mc_pricer(self):
         """VanillaMCPricer(model=DisplacedDiffusionModel): price = closed form within 3 SE; delta and node vega
         (through the calibration) vs common-random-numbers bumps."""

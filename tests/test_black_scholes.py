@@ -17,6 +17,7 @@ from tensorquant.markethandles.marketenvironment import MarketEnvironment
 from tensorquant.markethandles.utils import Currency
 from tensorquant.markethandles.volatilitysurface import VolatilitySurface
 from tensorquant.timehandles.daycounter import DayCounter, DayCounterConvention
+from markers import slow
 
 EVAL_DATE = date(2026, 5, 15)
 EXPIRIES = {"1Y": date(2027, 5, 15), "6M": date(2026, 11, 15)}
@@ -201,6 +202,7 @@ class BSTestCase(unittest.TestCase):
 
 
 class TestPinnedValues(BSTestCase):
+    @slow
     def test_prices(self):
         for (ename, model, ex, ot, K), expected in PRICES.items():
             with self.subTest(expiry=ename, model=model, exercise=ex, type=ot, K=K):
@@ -208,6 +210,7 @@ class TestPinnedValues(BSTestCase):
                 self.price(opt, model)
                 self.assertAlmostEqual(float(opt.price), expected, delta=2e-5 + 2e-6 * abs(expected))
 
+    @slow
     def test_greeks(self):
         surface = self.mkt.get_eq_vol_surface("DISC")
         for (ename, model, ex, ot), (delta, vega, theta) in GREEKS.items():

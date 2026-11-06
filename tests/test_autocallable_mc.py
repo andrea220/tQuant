@@ -10,6 +10,7 @@ import tensorquant as tq
 from tensorquant.markethandles.marketenvironment import MarketEnvironment
 from tensorquant.markethandles.volatilitysurface import VolatilitySurface
 from tensorquant.timehandles.daycounter import DayCounter, DayCounterConvention
+from markers import slow
 
 EVAL_DATE = date(2026, 5, 15)
 RATE, VOL, S0 = 0.021, 0.25, 100.0
@@ -98,6 +99,7 @@ class TestHardPayoff(ACTestCase):
                 self.assertAlmostEqual(float(prod.put_pv), p.mean(), places=12)
                 self.assertAlmostEqual(float(prod.price), c.mean() - p.mean(), places=12)
 
+    @slow
     def test_consistent_with_the_old_pricer(self):
         """Same GBM as the old pricer: coupons and put within 4 SE; the put now enters with a minus (investor)."""
         for memory, (old_c, old_p) in OLD.items():
@@ -141,6 +143,7 @@ class TestHardPayoff(ACTestCase):
 
 
 class TestSmoothing(ACTestCase):
+    @slow
     def test_smoothing_converges_to_the_hard_payoff(self):
         prod = make_autocallable()
         self.price(prod, eps=0.0)
@@ -154,6 +157,7 @@ class TestSmoothing(ACTestCase):
         self.assertLess(diffs[1], 1e-3)
         self.assertLess(diffs[0], 5e-3)   # eps = 1%: bias well below 0.5% of notional
 
+    @slow
     def test_hard_payoff_has_no_delta_from_the_digitals(self):
         """eps = 0: AAD sees only the put (continuous part); eps = 1% gives the full delta."""
         spot = self.mkt.get_eq_spot("UND")
@@ -193,11 +197,13 @@ class TestGreeks(ACTestCase):
         self.assertAlmostEqual(vega, (out[0] - out[1]) / 2e-4, delta=5e-3 * abs(vega) + 1e-6)
         return float(d_spot), vega
 
+    @slow
     def test_gbm_greeks_vs_common_random_numbers_bumps(self):
         delta, vega = self.check_vs_bump(tq.GeometricBrownianMotion, 20_000)
         self.assertGreater(delta, 0.0)   # investor: short the put, long the coupons
         self.assertLess(vega, 0.0)
 
+    @slow
     def test_local_vol_default_greeks_vs_bumps(self):
         self.assertIs(tq.AutocallableMCPricer()._model, tq.LocalVolatilityModel)
         prod = make_autocallable()
@@ -205,6 +211,7 @@ class TestGreeks(ACTestCase):
         self.assertEqual(prod.price.dtype, tf.float64)
         self.check_vs_bump(tq.LocalVolatilityModel, 5_000)
 
+    @slow
     def test_displaced_diffusion_flat_surface(self):
         """Flat smile: the displaced diffusion calibrates to beta = 1 (lognormal), the price is the GBM one within
         4 SE; delta and vega through the calibration vs common-random-numbers bumps."""
@@ -217,6 +224,7 @@ class TestGreeks(ACTestCase):
         self.assertLess(abs(float(gbm.price) - float(dd.price)), 4 * se)
         self.check_vs_bump(tq.DisplacedDiffusionModel, 5_000)
 
+    @slow
     def test_heston_flat_surface(self):
         """Flat smile: Heston fits it with v0 = theta = vol^2 (vol of vol and mean reversion nearly degenerate),
         the price is the GBM one within 4 SE; the AAD greeks reach spot and vol nodes (finite)."""
@@ -233,6 +241,7 @@ class TestGreeks(ACTestCase):
                                                          self.mkt.get_eq_vol_surface("UND").volatility_matrix])
         self.assertTrue(np.isfinite(float(d_spot)) and np.all(np.isfinite(d_vol.numpy())))
 
+    @slow
     def test_local_vol_flat_surface_close_to_gbm(self):
         """Flat surface: local vol = GBM up to MC noise and the proportional vs escrowed dividends (none here)."""
         gbm, lv = make_autocallable(), make_autocallable()

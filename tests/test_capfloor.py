@@ -13,6 +13,7 @@ from tensorquant.markethandles.marketenvironment import MarketEnvironment
 from tensorquant.markethandles.synthetic import generate_market_data, sabr_normal_vol
 from tensorquant.markethandles.volatilitysurface import VolatilitySurface
 from tensorquant.timehandles.daycounter import DayCounter, DayCounterConvention
+from markers import slow
 
 EVAL_DATE = date(2026, 5, 15)
 A365, A360 = DayCounterConvention.Actual365, DayCounterConvention.Actual360
@@ -140,6 +141,7 @@ class TestPricing(CapTestCase):
 
 
 class TestGreeks(CapTestCase):
+    @slow
     def test_vega_per_node_and_rho_per_pillar_vs_bumps(self):
         make = lambda: generator().build(EVAL_DATE, 0.025, "5Y")
         cap = make()

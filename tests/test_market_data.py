@@ -12,6 +12,7 @@ import tensorflow as tf
 import tensorquant as tq
 from tensorquant.markethandles.marketenvironment import MarketEnvironment
 from tensorquant.markethandles.synthetic import generate_market_data
+from markers import slow
 
 EVAL_DATE = date(2026, 5, 15)
 SMALL = (("EUR", 3), ("GBP", 1), ("USD", 1))
@@ -167,6 +168,7 @@ class TestSyntheticGenerator(unittest.TestCase):
     def setUp(self):
         tq.Settings.evaluation_date = EVAL_DATE
 
+    @slow
     def test_deterministic_and_seeded(self):
         a, b = generate_market_data(EVAL_DATE, 7, SMALL), generate_market_data(EVAL_DATE, 7, SMALL)
         for name in a:
@@ -182,6 +184,7 @@ class TestSyntheticGenerator(unittest.TestCase):
         self.assertTrue(corr.between(0.30, 0.80).all())
         self.assertEqual(len(corr), 5 * 4 // 2)
 
+    @slow
     def test_surfaces_free_of_static_arbitrage(self):
         mkt = generate_and_build()
         for ticker in ("TICKER1", "TICKER4", "TICKER5"):
@@ -202,6 +205,7 @@ class TestSyntheticGenerator(unittest.TestCase):
             iv_atm_fwd = float(eq.vol_surface.volatility(F, T))
             self.assertTrue(0.10 < iv_atm_fwd < 0.45)
 
+    @slow
     def test_curves_are_smooth(self):
         mkt = generate_and_build()
         for ccy in (tq.Currency.EUR, tq.Currency.GBP, tq.Currency.USD):
