@@ -78,7 +78,7 @@ sensitivity at once.
   \item \code{VolatilitySurface}: a grid of absolute strikes (\code{strike}) and maturities in years
         (\code{maturity}); the vols are one variable, \code{volatility\_matrix} of shape $[n_T, n_K]$, read by
         \code{volatility(strike, tenor)}; \code{vol\_type} is lognormal (equity, FX) or normal (caplets).
-  \item \code{DividendCurve}: fixed ex-dates, the amounts as one variable; PV with a discount curve.
+  \item \code{DividendCurve}: fixed ex-dates and payment dates, the amounts as one variable; PV with a discount curve.
   \item Scalars (spot, repo, dividend yield, FX spot): one variable each; \code{MarketEnvironment} wraps a float
         into a variable.
   \item \code{SwaptionVolCube}, \code{CorrelationMatrix}: one variable each (cube; $[n, n]$ matrix).
@@ -93,6 +93,31 @@ the single place for the forward (\code{forward}, \code{pv\_dividends}, \code{im
 point of the model factories (\code{from\_equity}). Dividend model from the data: \code{DIV} present $\Rightarrow$
 \code{"discrete"} (\code{DIVYIELD} ignored), otherwise \code{"continuous"}.
 \nb{market\_handles.ipynb} \nb{equity\_underlying.ipynb}
+
+\begin{center}
+\small
+\begin{tabular}{@{}L{4.2cm}L{11.0cm}@{}}
+\toprule
+Member & What it is \\
+\midrule
+\code{spot}, \code{repo}, \code{div\_yield} & the market variables (\code{div\_yield} is \code{None} with a cash schedule;
+  \code{repo} is a constant 0 when the market has none) \\
+\code{dividends} & the \code{DividendCurve}: \code{ex\_dates}, \code{payment\_dates}, \code{amounts} (one variable),
+  \code{dividends\_before(T)}, \code{to\_dataframe()} \\
+\code{vol\_surface}, \code{discount\_curve} & the market \code{VolatilitySurface} and the OIS curve of the currency \\
+\code{year\_fraction(T)} & time to a date with the discount-curve day count (Act/365 in the snapshots) \\
+\code{forward(T)}, \code{pv\_dividends(T)}, \code{implied\_div\_yield(T)} & float64 tensors, differentiable w.r.t.\ the
+  variables above \\
+\code{risk\_factors()} & \code{\{key: [variables]\}} restricted to the underlying (spot, repo, dividend yield or
+  amounts, vol, discount curve) \\
+\code{summary(T)} & table of the data, plus PV of dividends, implied yield, forward and ATM-forward vol at $T$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{DividendCurve.pv\_dividends(T, curve)} sums the amounts with ex-date in $(t_0, T]$, each discounted at its
+\emph{payment date} (the ex-date when the schedule has no payment dates), with dense weights (a dense gradient on the
+amounts vector). In the synthetic data the payment is 14 days after the ex-date.
 
 \emph{How \code{BlackScholesPricer} consumes the dividends.} Two arguments: \code{dividend\_model} (default
 \code{"continuous"}) and \code{use\_implied\_repo} (default \code{True}: the repo enters the carry). With a discrete schedule:

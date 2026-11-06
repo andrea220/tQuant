@@ -10,7 +10,18 @@
 \subsection{Pricers}\label{sec:arch-pricers}
 \code{Pricer}: \code{calculate\_price}, \code{price(..., autodiff)}, the tape; \code{PricerAssignment}.
 
-\pending
+A pricer implements \code{calculate\_price(product, market\_env)}: a TensorFlow graph from the market objects (read only
+through the \code{MarketEnvironment} accessors, never copied or detached with \code{.numpy()}) to a float64 price.
+\code{Pricer.price(product, market\_env, autodiff=False)} runs it, stores the price on \code{product.price} and, with
+\code{autodiff=True}, keeps the \code{GradientTape} on \code{pricer.tape}: the greeks are
+\code{pricer.tape.gradient(product.price, variables)} for any market variables (or all of them,
+\code{market\_env.risk\_factors()}); a second tape around the call gives second orders (gamma). The only variable a
+pricer may create is the time to maturity, left on the product (\code{product.time\_to\_maturity}) for theta.
+\code{PricerAssignment.create(product)} picks the default pricer by \code{isinstance}: \code{VanillaOption}
+$\to$ \code{BlackScholesPricer}, the rates products to their discounting / Bachelier pricers; Monte Carlo pricers are
+chosen explicitly. \code{BlackScholesPricer(dividend\_model, use\_implied\_repo)}: European by the Black formula,
+American by Bjerksund--Stensland (\code{pricers/black.py}), inputs from the \code{Equity} view, diagnostics on the
+product (Market data, The Equity view). \nb{black\_scholes.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Models}\label{sec:arch-models}

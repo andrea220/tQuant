@@ -209,6 +209,18 @@ class TestDividendCurvePV(unittest.TestCase):
         pv = self.divs.pv_dividends(date(2026, 7, 1), self.curve)
         self.assertAlmostEqual(float(pv), 1.2 * ref_discount((date(2026, 6, 15) - EVAL_DATE).days / 365.0), places=13)
 
+    def test_pv_discounts_at_the_payment_dates(self):
+        """With payment dates: in the horizon by ex-date, discounted at the payment date (even after the horizon)."""
+        pays = [date(2026, 6, 29), date(2026, 12, 29)]
+        divs = DividendCurve(reference_date=EVAL_DATE, ex_dates=self.divs.ex_dates, amounts=[1.2, 1.3],
+                             currency=Currency.EUR, daycounter_convention=DayCounterConvention.Actual365,
+                             payment_dates=pays)
+        yf = lambda d: (d - EVAL_DATE).days / 365.0
+        self.assertAlmostEqual(float(divs.pv_dividends(date(2027, 1, 1), self.curve)),
+                               1.2 * ref_discount(yf(pays[0])) + 1.3 * ref_discount(yf(pays[1])), places=13)
+        self.assertAlmostEqual(float(divs.pv_dividends(date(2026, 6, 20), self.curve)),    # ex <= T < pay
+                               1.2 * ref_discount(yf(pays[0])), places=13)
+
     def test_pv_no_dividends(self):
         pv = self.divs.pv_dividends(date(2026, 2, 1), self.curve)
         self.assertEqual(float(pv), 0.0)

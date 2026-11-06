@@ -10,6 +10,29 @@ Write put--call parity for an underlying paying discrete dividends.
 $C - P = S_0 - \mathrm{PV}(\text{div}) - K\,P(0,T)$.
 \end{answer}
 
+\begin{question}{\Practice \diff{1}}{Sensitivities of the forward}
+Compute by AAD the sensitivities of the 1Y forward of TICKER1 to spot, repo, dividend amounts and curve pillars, and
+check them in closed form. Why are only a few pillars non-zero? \nb{equity\_underlying.ipynb}
+\end{question}
+\begin{answer}
+Compute \texttt{F = eq.forward(T)} under a \texttt{tf.GradientTape} and take its gradient with respect to
+\texttt{eq.risk\_factors()}. In closed form: $\partial F/\partial S = e^{-q_r T}/P(0,T)$, $\partial F/\partial q_r = -T F$,
+$\partial F/\partial D_i = -P(0,p_i)\,e^{-q_r T}/P(0,T)$ ($p_i$ payment date) for ex-dates $t_i \le T$, 0 after. Only
+the pillars around $T$ (through
+$P(0,T)$) and around the payment dates of the dividends in the horizon (through their PV) move the forward: with linear
+interpolation a rate depends on its two neighbouring pillars only.
+\end{answer}
+
+\begin{question}{\Theory \diff{1}}{Where is at-the-money?}
+Why is the at-the-money vol of a maturity read at $K = F(T)$ rather than at $K = S_0$?
+\nb{equity\_underlying.ipynb}
+\end{question}
+\begin{answer}
+The option that is at the money for the risk-neutral distribution is the one struck at the forward (the mean of
+$S_T$): its call and put have the same value. With dividends and rates $F(T)$ can be far from $S_0$ (TICKER1: 14\%
+below at 5Y), so on a skewed smile $\sigma(F)$ and $\sigma(S_0)$ differ (here by up to 0.9 vol points).
+\end{answer}
+
 \begin{question}{\Theory \diff{2}}{Discrete vs continuous dividends}
 How do you model discrete cash dividends and a continuous dividend yield in
 Black--Scholes, and what actually changes between the two?
@@ -20,7 +43,7 @@ Black--Scholes, and what actually changes between the two?
 \begin{itemize}[nosep]
   \item \emph{Discrete (escrowed)}: lognormal dynamics on
         $S^* = S_0 - \mathrm{PV}(D)$, with
-        $\mathrm{PV}(D) = \sum_{t_i \le T} D_i\,P(0,t_i)$.
+        $\mathrm{PV}(D) = \sum_{t_i \le T} D_i\,P(0,p_i)$ (ex-dates $t_i$, payment dates $p_i$).
   \item \emph{Continuous}: $S$ pays a yield $q$, so the stock enters as
         $S_0 e^{-qT}$. The yield matching the same forward is
         $q_{\text{eff}} = -\frac{1}{T}\ln\!\big(1 - \mathrm{PV}(D)/S_0\big)$.
@@ -139,10 +162,24 @@ $\Nc(d_1)$ (times $e^{-qT}$) is the delta.
 \end{answer}
 
 \begin{question}{\Theory \diff{2}}{Gamma close to expiry}
-% TODO
+What happens to gamma and theta of an at-the-money option as $T \to 0$, and of an out-of-the-money one?
+\nb{black\_scholes.ipynb}
 \end{question}
 \begin{answer}
-% TODO
+ATM, $\Gamma \approx \frac{n(d_1)}{S\sigma\sqrt T} \to \infty$ as $1/\sqrt T$ (the payoff kink at $K$), and theta, its mirror in the
+PDE ($\theta \approx -\tfrac12 \sigma^2 S^2 \Gamma$), explodes too. OTM (or ITM) both go to zero: $d_1 \to \pm\infty$ and
+$n(d_1)$ vanishes faster than $1/\sqrt T$ grows. Near expiry the risk concentrates on the strike.
+\end{answer}
+
+\begin{question}{\Practice \diff{2}}{European vs American}
+For TICKER1 at 1Y, which options have an early-exercise premium in the escrowed and in the equivalent-yield model,
+and how does it move with the maturity? \nb{black\_scholes.ipynb}
+\end{question}
+\begin{answer}
+Escrowed (carry $r - q_r > 0$): calls none, puts yes (1.4\% of the ATM put, more for ITM strikes). Equivalent yield
+($q_{\text{eff}} > r$): calls yes (2.6\% ATM, more ITM), puts almost none. The premium grows with $T$ and jumps at each
+ex-date that enters the option life (lower escrowed spot, higher equivalent yield). Below the exercise boundary the
+American put is worth $K - S$: delta $-1$.
 \end{answer}
 
 % ─────────────────────────────────────────────────────────────────────────────

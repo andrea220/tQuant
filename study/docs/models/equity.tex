@@ -2,13 +2,35 @@
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Underlying, forward and dividends}\label{sec:mp-forward}
-Forward under discrete (escrowed) and continuous dividends, repo, discount curve; the forward ratio
-$X_t = S_t / F(t)$ used by the Monte Carlo models. \nb{equity\_underlying.ipynb}
+An equity is described by the spot $S_0$, a repo (or borrow) rate $q_r$, dividends (either a cash schedule $D_i$ with
+ex-dates $t_i$ and payment dates $p_i$, or a continuous yield $q$), the discount curve $P(0,T)$ of its currency and a
+Black vol surface.
+The forward (\code{Equity.forward}, the single implementation used by every pricer and model):
+\begin{align*}
+  \text{cash:}\quad & F(T) = \frac{\big(S_0 - \mathrm{PV}_{\mathrm{div}}(T)\big)\,e^{-q_r T}}{P(0,T)},\qquad
+    \mathrm{PV}_{\mathrm{div}}(T) = \sum_{t_i \le T} D_i\,P(0,p_i); \\
+  \text{yield:}\quad & F(T) = \frac{S_0\,e^{-(q + q_r)T}}{P(0,T)}.
+\end{align*}
+A dividend enters the horizon by its ex-date (the stock drops then) and is discounted from its payment date (the
+cash; the ex-date when no payment date is given). With cash dividends $F$ drops by about $D_i$ at each ex-date and
+grows at $r - q_r$ in between. The implied dividend
+yield $q_{\mathrm{eff}}(T) = -\ln\big(1 - \mathrm{PV}_{\mathrm{div}}(T)/S_0\big)/T$ is the flat yield with the same forward:
+it steps up at each ex-date and decays as $1/T$ in between.
 
-\pending
+\emph{Sensitivities.} $\partial F/\partial S_0 = e^{-q_r T}/P(0,T)$ (cash dividends do not move with the spot),
+$\partial F/\partial q_r = -T F$, $\partial F/\partial D_i = -P(0,p_i)\,e^{-q_r T}/P(0,T)$ for $t_i \le T$ and $0$ after;
+on the curve, the pillars around $T$ (through $P(0,T)$) and around each payment date of a dividend with $t_i \le T$
+(through $\mathrm{PV}_{\mathrm{div}}$).
+
+\emph{ATM.} The at-the-money vol of a maturity is the vol at $K = F(T)$, not at $S_0$: with dividends the forward is
+well below the spot (TICKER1: $F/S_0 = 0.86$ at 5Y), and on a skewed smile the two differ by up to a vol point.
+
+\emph{Forward ratio.} The Monte Carlo models simulate $X_t = S_t/F(t)$, a martingale with $X_0 = 1$, and return
+$S_t = F(t)\,X_t$: the market forward is matched at every date by construction, and cash dividends act as proportional
+drops in the dynamics. \nb{equity\_underlying.ipynb}
 
 \paragraph{Dividend models in Black--Scholes.} \nb{dividends.ipynb}
-With cash dividends $D_i$ at ex-dates $t_i \le T$, $\mathrm{PV} = \sum_i D_i\,P(0,t_i)$, repo $q_r$, $r = -\ln P(0,T)/T$:
+With cash dividends $D_i$ at ex-dates $t_i \le T$, $\mathrm{PV} = \sum_i D_i\,P(0,p_i)$, repo $q_r$, $r = -\ln P(0,T)/T$:
 \begin{itemize}[nosep]
   \item \emph{discrete (escrowed)}: lognormal $S^* = S - \mathrm{PV}$, $F = (S_0 - \mathrm{PV})\,e^{(r - q_r)T}$;
   \item \emph{continuous}: yield $q_{\mathrm{eff}} = -\ln(1 - \mathrm{PV}/S_0)/T$ on the whole $S$,
@@ -46,7 +68,26 @@ the nodes): steep negative skew at short maturities, flattening with $T$.
 European prices on the forward, dividend models, American (Bjerksund--Stensland), greeks by AAD.
 \nb{black\_scholes.ipynb}
 
-\pending
+\emph{European.} On the forward of \S\ref{sec:mp-forward} and the surface vol at $(K, T)$, $\phi = \pm 1$:
+\[
+  V = P(0,T)\,\phi\,\big(F N(\phi d_1) - K N(\phi d_2)\big),\qquad
+  d_{1,2} = \frac{\ln(F/K) \pm \tfrac12 \sigma^2 T}{\sigma\sqrt T},\qquad r = -\ln P(0,T)/T.
+\]
+Put--call parity $C - P = P(0,T)(F - K)$ holds to machine precision, hence $\Delta_C - \Delta_P = P(0,T)\,\partial F/\partial S$
+($= e^{-q_r T}$ with cash dividends), $\Gamma_C = \Gamma_P$, $\mathcal{V}_C = \mathcal{V}_P$.
+
+\emph{Greeks} by AAD on the market variables, one tape: delta and gamma (second tape around the first) on the spot;
+vega on the surface nodes (bucketed: the bilinear weights of the 4 nodes around $(K,T)$; parallel vega = sum); rho
+on the curve pillars; theta on the time to maturity, the only pricer-local variable ($r$ and the dividend inputs held,
+so it is the pure time decay of the formula). Desk units: vega per vol point, theta per day, rho per bp.
+
+\emph{American} (Bjerksund--Stensland 1993): a flat exercise boundary $I$ (trigger price) for the call with carry
+$b = r - q$, closed form in terms of $\phi(S, T, \gamma, H, I)$ functions; puts by the symmetry
+$P(S, K, r, b) = C(K, S, r - b, -b)$; immediate exercise above $I$; European value when $b \ge r$ (calls are not
+exercised early without dividends). Accuracy: a lower bound within about 1\% of a binomial tree. The early-exercise
+premium follows the carry (escrowed dividends: puts only; equivalent yield above $r$: calls only), grows with the
+maturity and jumps at each ex-date entering the option life; below the boundary the American put is worth $K - S$
+and its delta is $-1$.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Monte Carlo framework}\label{sec:mp-mc}

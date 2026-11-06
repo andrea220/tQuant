@@ -32,6 +32,13 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       MC 24.46; the flat rule gave 25.16). Study docs: dividend models in Models and Pricing, how the pricer consumes
       the dividends in Architecture, 3 questions in Exercises. `examples/3_options.py`, `option_pricing.py` price
       Americans: not rerun.
+- [x] Guided review, notebooks `equity_underlying` and `black_scholes`: `DividendCurve.pv_dividends` discounts each
+      dividend at its payment date (when given; the ex-date still decides the horizon): TICKER1 1Y PV 11.8653 → 11.8551
+      (payment 14 days after the ex-date); test added. `equity_underlying` shows everything the market holds on an
+      equity (keys and risk factors, full dividend schedule, vol surface table and ATM-forward vols, correlations, forward,
+      implied yield, AAD sensitivities); `black_scholes` gained European vs American (premium by strike, model and
+      maturity, with jumps at the ex-dates; American put delta). Docs: forward and Black--Scholes in Models and Pricing,
+      `Equity` members and pricers in Architecture, 4 questions in Exercises (incl. the empty "gamma close to expiry").
 
 - [x] `Equity` underlying view (`MarketEnvironment.get_equity`) with forward, PV dividends, implied yield, risk
       factors; example `study/notebooks/equity_underlying.ipynb`.

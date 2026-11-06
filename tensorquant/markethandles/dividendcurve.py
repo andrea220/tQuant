@@ -357,10 +357,12 @@ class DividendCurve:
 
         .. math::
 
-            PV(t) = \\sum_{\\substack{i \\\\ t_0 < ex_i \\le t}} D_i \\cdot P(0, ex_i)
+            PV(t) = \\sum_{\\substack{i \\\\ t_0 < ex_i \\le t}} D_i \\cdot P(0, pay_i)
 
-        where :math:`P(0, ex_i)` is the discount factor from ``discount_curve``
-        and :math:`t_0` is the ``reference_date``.
+        where :math:`P(0, pay_i)` is the discount factor from ``discount_curve`` at the payment date
+        (the ex-date when no payment dates were given) and :math:`t_0` is the ``reference_date``.
+        A dividend belongs to the horizon by its ex-date (the stock drops then), the cash is
+        discounted from its payment date.
 
         The discount curve is passed as a parameter (not stored), keeping
         ``DividendCurve`` decoupled from interest-rate objects.
@@ -370,7 +372,7 @@ class DividendCurve:
                 dividends with ``ex_date <= t`` are included.
             discount_curve: A :class:`~tensorquant.markethandles.ircurve.RateCurve`
                 (or any object exposing a ``discount(date) -> tf.Tensor``
-                method) used to compute :math:`P(0, ex_i)`.
+                method) used to compute :math:`P(0, pay_i)`.
 
         Returns:
             tf.Tensor: float64 scalar, differentiable w.r.t. the amounts
@@ -382,11 +384,12 @@ class DividendCurve:
         if not idx:
             return tf.constant(0.0, dtype=DTYPE)
 
-        # Dense weights (P(0, ex_i) inside the horizon, 0 outside): dense gradient w.r.t. the amounts.
+        # Dense weights (P(0, pay_i) inside the horizon, 0 outside): dense gradient w.r.t. the amounts.
         zero = tf.constant(0.0, dtype=DTYPE)
+        pay_dates = self._payment_dates if self._payment_dates is not None else self._ex_dates
         weights = tf.stack([
             tf.cast(discount_curve.discount(d), DTYPE) if i in idx else zero
-            for i, d in enumerate(self._ex_dates)
+            for i, d in enumerate(pay_dates)
         ])
         return tf.reduce_sum(self._amounts * weights)
 
