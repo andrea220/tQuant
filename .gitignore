@@ -17,3 +17,6 @@ __pycache__/
 !study/**/*.ipynb
 study/docs/build/
 .ipynb_checkpoints/
+
+# Libri e risorse di riferimento (locali, non versionati)
+resources/

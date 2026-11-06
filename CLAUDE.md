@@ -7,6 +7,9 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 - `setup.py` only (no `pyproject.toml`): loose bounds there, exact verified pins in `requirements.txt`.
 - `docs/` (Sphinx/ReadTheDocs) is **deprecated**: out of date, do not update or rebuild it.
 - Study material in `study/` (own `CLAUDE.md`).
+- Reference books and papers in `resources/` (local only, git-ignored): when in doubt on a model, formula, numerical
+  method or market convention, check them first (e.g. Brigo-Mercurio for rates, Gatheral / Derman for vol
+  surfaces, Savine for AAD and simulation).
 - Code, docstrings and comments in English.
 
 ## Working rules

@@ -4,16 +4,12 @@ Open and future developments (moved from `CLAUDE.md`). Completed work: `DEVELOPM
 
 Current focus: equity.
 
-## 4. Stochastic processes & Monte Carlo (`models/`, MC pricers, `analytics/`)
+## Future development (not prioritised)
 
-- [ ] `DisplacedDiffusionModel` cannot reach equity skews steeper than the normal one (about -sigma/2 per unit
-      log-moneyness): on the synthetic SSVI smiles beta ends on its lower bound up to ~1Y and the wings are off
-      (13 vol points at 1M, < 1 at 5Y; ATM within ~1.7). With time-dependent beta the MC reprices the slices up to
-      the skew averaging (~0.2 vol points). A steeper-skew model (stochastic vol, SLV) if needed; local vol for smiles.
+Equity:
+
 - [ ] Local vol MC noise is large in the wings and at long maturities (OTM call at 170%, 3Y: ±1 vol point with
       100k paths): variance reduction (antithetics, control variate on the forward) not done.
-
-## Future development (not prioritised)
 
 Interest rates:
 
