@@ -1,184 +1,157 @@
-from .stochasticprocess import StochasticProcess
-from .brownian import observation_columns
-import tensorflow as tf
+"""Displaced diffusion (shifted lognormal) equity model on the market forward."""
+
+from __future__ import annotations
+
+import warnings
+from datetime import date
+from typing import Sequence, Union
+
 import numpy as np
-from scipy import optimize
-from scipy.stats import norm as _scipy_norm
+import pandas as pd
+import tensorflow as tf
+from scipy.optimize import brentq, least_squares
+from scipy.stats import norm
+
+from .brownian import observation_columns
+from .stochasticprocess import StochasticProcess
+from ..numericalhandles.dtypes import DTYPE
+
+BETA_BOUNDS = (0.02, 1.5)
+SIGMA_BOUNDS = (1e-4, 3.0)
+
+
+def _f64(x) -> tf.Tensor:
+    """float64 tensor; numbers / lists go straight to float64 (``tf.cast`` of a Python float goes through float32)."""
+    if isinstance(x, (tf.Tensor, tf.Variable)):
+        return tf.cast(x, DTYPE)
+    return tf.constant(np.asarray(x, dtype=np.float64), DTYPE)
 
 
 # ============================================================
-# Numpy helpers  (calibration — not TF-traced)
+# Closed form (per unit forward, undiscounted)
 # ============================================================
 
-def _bs_call_np(S: float, K: float, T: float, vol: float, r: float, q: float) -> float:
-    """Black-Scholes call price (numpy scalar)."""
-    T   = max(T,   1e-12)
-    vol = max(vol, 1e-12)
-    sqrt_t = np.sqrt(T)
-    d1 = (np.log(S / K) + (r - q + 0.5 * vol * vol) * T) / (vol * sqrt_t)
-    d2 = d1 - vol * sqrt_t
-    return S * np.exp(-q * T) * _scipy_norm.cdf(d1) - K * np.exp(-r * T) * _scipy_norm.cdf(d2)
+def displaced_diffusion_price(k, beta, sigma, t, phi=1.0) -> tf.Tensor:
+    """``E[(phi (X_T - k))^+]`` for ``dX = sigma (beta X + 1 - beta) dW``, ``X_0 = 1`` (constant parameters).
 
+    ``Y = beta X + 1 - beta`` is lognormal with mean 1 and vol ``beta sigma``, so the call is
+    ``Black(1, k*, beta sigma, t) / beta`` with the shifted strike ``k* = beta k + 1 - beta``
+    (``k* <= 0``: always exercised, ``1 - k``); the put by parity ``C - P = 1 - k``. ``beta = 1`` is Black,
+    ``beta -> 0`` Bachelier with normal vol ``sigma``. Broadcasts; differentiable in every argument.
 
-def _dd_call_np(S0: float, K: float, T: float, beta: float, sigma: float,
-                r: float, q: float) -> float:
+    Args:
+        k: Strike over forward ``K / F(T)``.
+        beta: Skew parameter (> 0).
+        sigma: Vol parameter (the ATM local vol).
+        t: Maturity (years, > 0).
+        phi: 1 call, -1 put.
+
+    Returns:
+        tf.Tensor: float64 price per unit forward (multiply by ``P(0,T) F(T)``).
     """
-    Displaced Diffusion call price (numpy scalar).
-
-    The shifted process Z_t = S_t + a·e^{(r-q)t} follows GBM with drift (r-q):
-        Z_T = Z_0 · exp((r-q - ½σ_a²)T + σ_a·W_T)
-
-    where  Z_0 = S_0 + a = S_0/β,  a = S_0·(1-β)/β,  σ_a = σ·β.
-
-    C^DD = BS_call(S_0/β, K + a·e^{(r-q)T}, T, σ_a, r, q)
-    """
-    a        = S0 * (1.0 - beta) / beta
-    sigma_a  = sigma * beta
-    S_sh     = S0 + a                                       # = S0 / beta
-    K_sh     = K + a * np.exp((r - q) * T)
-    return _bs_call_np(S_sh, K_sh, T, sigma_a, r, q)
+    k, beta, sigma, t = (_f64(v) for v in (k, beta, sigma, t))
+    ks = beta * k + 1.0 - beta
+    safe = tf.maximum(ks, 1e-300)
+    sd = beta * sigma * tf.sqrt(t)
+    d1 = -tf.math.log(safe) / sd + 0.5 * sd
+    cdf = lambda x: 0.5 * (1.0 + tf.math.erf(x / np.sqrt(2.0)))
+    call = tf.where(ks > 0.0, (cdf(d1) - safe * cdf(d1 - sd)) / beta, 1.0 - k)
+    return call if phi == 1.0 else call - (1.0 - k)
 
 
-def _atm_vol_correction_np(atm_vol: float, beta: float, T: float) -> float:
-    """
-    Correct ATM implied vol so that the DD ATM price matches Black-Scholes:
-
-        σ = σ_ATM · [1 - σ_ATM²·T/24] / [1 - (β·σ_ATM)²·T/24]
-
-    Returns corrected σ (model vol), from which σ_a = β·σ.
-    """
-    numer = 1.0 - atm_vol ** 2 * T / 24.0
-    denom = 1.0 - (beta * atm_vol) ** 2 * T / 24.0
-    denom = max(denom, 1e-6)
-    return atm_vol * numer / denom
+def _price_np(k, beta, sigma, t):
+    """Numpy call of :func:`displaced_diffusion_price` (calibration objective)."""
+    ks = beta * k + 1.0 - beta
+    safe = np.maximum(ks, 1e-300)
+    sd = beta * sigma * np.sqrt(t)
+    d1 = -np.log(safe) / sd + 0.5 * sd
+    return np.where(ks > 0.0, (norm.cdf(d1) - safe * norm.cdf(d1 - sd)) / beta, 1.0 - k)
 
 
-def _compute_skew_average_np(fwd_betas, fwd_vols, maturities) -> float:
-    """
-    Discrete skew-averaging formula: recovers the spot β_T from forward betas.
-
-        β_T = Σ_j β_j · σ_j² · (Σ_{i≤j} σ_i²·Δt_i) · Δt_j
-              / Σ_j σ_j² · (Σ_{i≤j} σ_i²·Δt_i) · Δt_j
-    """
-    n    = len(fwd_betas)
-    mats = np.concatenate([[0.0], maturities[:n]])
-    dts  = np.diff(mats)
-    vols = np.asarray(fwd_vols[:n], dtype=float)
-    betas = np.asarray(fwd_betas,   dtype=float)
-
-    var    = vols ** 2 * dts
-    cumvar = np.cumsum(var)
-    num    = np.sum(betas * var * cumvar)
-    den    = np.sum(var * cumvar)
-    return float(num / den)
+def _black_tf(k, vol, t):
+    """Black call per unit forward (TF)."""
+    sd = vol * tf.sqrt(t)
+    d1 = -tf.math.log(k) / sd + 0.5 * sd
+    cdf = lambda x: 0.5 * (1.0 + tf.math.erf(x / np.sqrt(2.0)))
+    return cdf(d1) - k * cdf(d1 - sd)
 
 
-def _calibrate_forward_betas_np(spot_betas, atm_vols, maturities):
-    """
-    Extract forward betas from calibrated spot betas using the closed-form
-    inverse of the skew-averaging formula.
-
-    At each step j the relation is LINEAR in β_j^fwd:
-
-        spot_β_{T_j} = (A_j + β_j · B_j) / (C_j + B_j)
-
-    where A_j, C_j are known from β_0, ..., β_{j-1}, so:
-
-        β_j = [spot_β_{T_j} · (C_j + B_j) - A_j] / B_j
-
-    Returns
-    -------
-    fwd_betas : ndarray [nT]
-    fwd_vols  : ndarray [nT]  (forward ATM vols per interval)
-    """
-    nT       = len(maturities)
-    fwd_vols = np.zeros(nT)
-    mats_arr = np.asarray(maturities, dtype=float)
-    atm_arr  = np.asarray(atm_vols,   dtype=float)
-
-    # --- Forward ATM vols ---
-    fwd_vols[0] = atm_arr[0]
-    for j in range(1, nT):
-        T_j    = mats_arr[j]
-        T_prev = mats_arr[j - 1]
-        var_diff = max(atm_arr[j] ** 2 * T_j - atm_arr[j - 1] ** 2 * T_prev, 1e-8)
-        fwd_vols[j] = np.sqrt(var_diff / (T_j - T_prev))
-
-    # --- Precompute variance weights ---
-    dts    = np.diff(np.concatenate([[0.0], mats_arr]))   # [nT]
-    var    = fwd_vols ** 2 * dts                           # [nT]
-    cumvar = np.cumsum(var)                                 # [nT]
-
-    # --- Closed-form forward beta extraction ---
-    fwd_betas = np.zeros(nT)
-    for j in range(nT):
-        B_j = var[j] * cumvar[j]
-        if j == 0:
-            fwd_betas[0] = spot_betas[0]
-        else:
-            A_j = float(np.sum(fwd_betas[:j] * var[:j] * cumvar[:j]))
-            C_j = float(np.sum(var[:j] * cumvar[:j]))
-            if abs(B_j) < 1e-12:
-                fwd_betas[j] = spot_betas[j]
-            else:
-                fwd_betas[j] = (spot_betas[j] * (C_j + B_j) - A_j) / B_j
-
-    return fwd_betas, fwd_vols
-
-
-def _bs_implied_vol_np(C_mkt: float, S: float, K: float, T: float,
-                        r: float, q: float) -> float:
-    """Invert Black-Scholes via Brent on [1e-4, 10]."""
-    intrinsic = max(S * np.exp(-q * T) - K * np.exp(-r * T), 0.0)
-    if C_mkt <= intrinsic + 1e-10:
+def _black_implied_vol(price: float, k: float, t: float) -> float:
+    """Black vol of an undiscounted call per unit forward (NaN outside the no-arbitrage bounds)."""
+    def black(v):
+        sd = v * np.sqrt(t)
+        d1 = -np.log(k) / sd + 0.5 * sd
+        return norm.cdf(d1) - k * norm.cdf(d1 - sd)
+    lo, hi = 1e-6, 5.0
+    if not black(lo) < price < black(hi):
         return float("nan")
-    try:
-        return optimize.brentq(
-            lambda v: _bs_call_np(S, K, T, v, r, q) - C_mkt,
-            1e-4, 10.0, xtol=1e-7,
-        )
-    except ValueError:
-        return float("nan")
+    return brentq(lambda v: black(v) - price, lo, hi, xtol=1e-14)
 
 
 # ============================================================
-# TensorFlow helpers  (pricing / MC — differentiable)
+# Skew averaging (Piterbarg): forward pieces <-> effective (slice) parameters
 # ============================================================
 
-def _norm_cdf_tf(x):
-    """Standard-normal CDF via TF erf."""
-    return 0.5 * (1.0 + tf.math.erf(x / tf.sqrt(tf.constant(2.0, dtype=x.dtype))))
+def _averaging_weights(piece_var):
+    """``W_j = int_piece sigma^2(t) v(t) dt = var_j (cum_{j-1} + var_j / 2)`` with ``v(t) = int_0^t sigma^2``."""
+    cum = tf.cumsum(piece_var, axis=-1)
+    return piece_var * (cum - piece_var + 0.5 * piece_var), cum
 
 
-def _dd_call_tf(S0, K, T, beta, sigma, r, q):
+def forward_from_slices(t_nodes, beta_slice, sigma_slice):
+    """Piecewise constant forward parameters on ``[T_{j-1}, T_j)`` from the slice (effective) ones.
+
+    ``sigma``: total variance ``sigma_T^2 T`` differenced; ``beta``: inverse of the skew averaging
+    ``beta_T = sum_j beta_j W_j / sum_j W_j`` (``W_j = sigma_j^2 int_piece v(t) dt``, ``v`` the cumulative
+    variance), solved maturity by maturity (linear). Differentiable (TF).
+
+    Returns:
+        tuple: ``(beta_fwd [n], sigma_fwd [n], calendar_floor_hits)``.
     """
-    Displaced Diffusion call price (TensorFlow).
+    t = np.asarray(t_nodes, dtype=float)
+    dt = tf.constant(np.diff(np.concatenate([[0.0], t])), DTYPE)
+    total = tf.square(sigma_slice) * tf.constant(t, DTYPE)
+    piece_var = total - tf.concat([tf.zeros([1], DTYPE), total[:-1]], axis=0)
+    floored = int(tf.reduce_sum(tf.cast(piece_var <= 1e-10, tf.int32)))
+    piece_var = tf.maximum(piece_var, 1e-10)
+    sigma_fwd = tf.sqrt(piece_var / dt)
+    w, cum = _averaging_weights(piece_var)
+    total_w = 0.5 * tf.square(cum)                                            # sum_{i<=j} W_i
+    betas = []
+    for j in range(len(t)):
+        acc = tf.add_n([betas[i] * w[i] for i in range(j)]) if j else tf.constant(0.0, DTYPE)
+        betas.append((beta_slice[j] * total_w[j] - acc) / w[j])
+    return tf.stack(betas), sigma_fwd, floored
 
-    C^DD = BS_call(S0 + a, K + a·e^{(r-q)T}, T, σ_a, r, q)
-    where a = S0·(1-β)/β, σ_a = σ·β.
 
-    All arguments broadcastable; dtype follows S0.
-    """
-    dtype = tf.float64
-    S0    = tf.cast(S0,    dtype)
-    K     = tf.cast(K,     dtype)
-    T     = tf.maximum(tf.cast(T,     dtype), tf.constant(1e-12, dtype))
-    beta  = tf.cast(beta,  dtype)
-    sigma = tf.cast(sigma, dtype)
-    r     = tf.cast(r,     dtype)
-    q     = tf.cast(q,     dtype)
+def _piece_overlaps(knots: np.ndarray, starts: np.ndarray, ends: np.ndarray) -> np.ndarray:
+    """``[n_intervals, n_pieces]`` durations of ``[start, end]`` inside each piece (last piece open-ended)."""
+    lo = np.concatenate([[0.0], knots[:-1]])
+    hi = np.concatenate([knots[:-1], [np.inf]])
+    return np.maximum(np.minimum(ends[:, None], hi[None, :]) - np.maximum(starts[:, None], lo[None, :]), 0.0)
 
-    a        = S0 * (1.0 - beta) / beta
-    sigma_a  = sigma * beta
-    S_sh     = S0 + a
-    K_sh     = K + a * tf.exp((r - q) * T)
 
-    sigT = sigma_a * tf.sqrt(T)
-    d1   = (tf.math.log(S_sh / K_sh) + (r - q + 0.5 * sigma_a ** 2) * T) / sigT
-    d2   = d1 - sigT
+# ============================================================
+# Simulation
+# ============================================================
 
-    return (S_sh * tf.exp(-q * T) * _norm_cdf_tf(d1)
-            - K_sh * tf.exp(-r * T) * _norm_cdf_tf(d2))
+@tf.function(reduce_retracing=True)
+def _simulate_ratio(beta, step_sd, dw):
+    """Paths of ``X`` ``[n_paths, n_steps]``: exact shifted-lognormal step with the step's ``beta`` and the
+    standard deviation ``step_sd`` of ``ln Y`` (``Y = beta X + 1 - beta``, ``Y' = Y exp(sd Z - sd^2 / 2)``); rows read from
+    TensorArrays (dense gradients, see :mod:`localvolatility`)."""
+    n_paths, n_steps = tf.shape(dw)[0], tf.shape(dw)[1]
+    betas = tf.TensorArray(DTYPE, size=n_steps).unstack(beta)
+    sds = tf.TensorArray(DTYPE, size=n_steps).unstack(step_sd)
+    normals = tf.TensorArray(DTYPE, size=n_steps).unstack(tf.transpose(dw))
+    x = tf.ones([n_paths], DTYPE)
+    paths = tf.TensorArray(DTYPE, size=n_steps)
+    for k in tf.range(n_steps):
+        b, sd = betas.read(k), sds.read(k)
+        growth = tf.math.expm1(sd * normals.read(k) - 0.5 * sd * sd)
+        x = x + (b * x + 1.0 - b) * growth / b
+        paths = paths.write(k, x)
+    return tf.transpose(paths.stack(), perm=[1, 0])
 
 
 # ============================================================
@@ -186,210 +159,173 @@ def _dd_call_tf(S0, K, T, beta, sigma, r, q):
 # ============================================================
 
 class DisplacedDiffusionModel(StochasticProcess):
-    """
-    Displaced Diffusion (Shifted Lognormal) equity model.
+    """Displaced diffusion (shifted lognormal) equity model on the market forward.
 
-    The driftless SDE is:
-        dX_t = (X_t + a_t) · σ_a · dZ_t
+    ``S_t = F(t) X_t`` with ``F(t) = equity.forward(t)`` and ``dX = sigma(t) (beta(t) X + 1 - beta(t)) dW``,
+    ``X_0 = 1``: ``beta = 1`` is lognormal, ``beta -> 0`` normal, ``beta < 1`` a negative equity skew.
+    ``beta(t)``, ``sigma(t)`` are piecewise constant between the maturities of the vol surface (forward
+    parameters). Build it with :meth:`from_equity`:
 
-    Under risk-neutral measure (continuous dividend yield q):
-        d ln(S_t + a_t·e^{(r-q)t}) ≈ (r-q)·dt − ½σ_a²·dt + σ_a·dZ_t
+    1. slice calibration: per surface maturity, ``(beta_T, sigma_T)`` of the closed form
+       :func:`displaced_diffusion_price` fitted to the market smile by least squares on the prices per unit
+       forward (a vol error weighted by its vega: the strikes near the money dominate, the wings count little);
+    2. forward parameters by inverting Piterbarg's skew averaging (:func:`forward_from_slices`);
+    3. Monte Carlo with exact shifted-lognormal steps (a step across a piece boundary uses the
+       variance-weighted ``beta`` and the summed variance ``sum sigma_j^2 dt_j``: the ATM variance is kept).
 
-    where:
-        a_t  = S_t · (1−β_t)/β_t    (path-dependent displacement)
-        σ_a  = σ_t · β_t             (shifted vol)
+    The calibration is differentiable: the slice parameters are the solution of the first-order
+    conditions, so a Newton step on them at the optimum (implicit function theorem) carries the exact
+    sensitivities to the vol nodes and the forwards (spot, repo, dividends, curve). Vanilla prices at the
+    nodes are the fitted closed form; with time-dependent ``beta`` the MC reprices the slices only up to the
+    skew-averaging approximation.
 
-    β=1 recovers standard GBM; β→0 approaches normal diffusion.
-
-    Construction
-    ------------
-    From an implied-vol surface (calibrates β slice-by-slice + forward skew)::
-
-        model = DisplacedDiffusionModel.from_implied_vol(
-            spot, vol_surface, disc_curve, q=0.0, forward_skew=True
-        )
-
-    Direct construction (supply calibrated curves)::
-
-        model = DisplacedDiffusionModel(S0, r, q, T_grid,
-                                         fwd_beta_curve, fwd_sigma_curve)
-
-    Usage
-    -----
-    paths = model.evolve(t_grid, dw)       # [n_paths, n_steps]
-    price = model.dd_call(K, T_idx=0)      # DD call at maturity T_grid[0]
-    iv    = model.implied_vol_surface()    # [nT, nK] IV from DD prices
-    model.print_calibration_summary()
+    Skew limit: the steepest ATM skew is the normal one (``beta -> 0``), ``d sigma_imp / d ln K ~ -sigma / 2``.
+    Steeper equity skews (index smiles) are not reached: ``beta`` ends on its lower bound and the wings are
+    off (``calibration["beta_at_bound"]``, vol errors per slice). For full smiles use the local vol.
     """
 
-    # ------------------------------------------------------------------
-    # Constructors
-    # ------------------------------------------------------------------
+    def __init__(self, equity, t_nodes, beta_fwd, sigma_fwd, beta_slice=None, sigma_slice=None,
+                 martingale_correction: bool = True, calibration: tuple = None):
+        """Use :meth:`from_equity`, or give the forward parameters directly.
 
-    def __init__(
-        self,
-        S0,
-        r,
-        q,
-        T_grid,
-        fwd_beta_curve,
-        fwd_sigma_curve,
-        spot_beta_curve=None,
-        spot_sigma_curve=None,
-        K_grid=None,
-        r_vec=None,
-    ):
-        """
         Args:
-            S0:               Initial spot (scalar).
-            r:                Flat risk-free rate used for MC simulation (scalar).
-            q:                Continuous dividend yield (scalar).
-            T_grid:           [nT] calibrated maturities (year fractions).
-            fwd_beta_curve:   [nT] forward β per interval [0,T_0],[T_0,T_1],...
-            fwd_sigma_curve:  [nT] forward ATM vol per interval (raw, not corrected).
-                              σ_a for each step = fwd_sigma[j] · fwd_beta[j].
-            spot_beta_curve:  [nT] spot β per maturity (stored for pricing reference).
-            spot_sigma_curve: [nT] spot σ (ATM-corrected) per maturity.
-            K_grid:           [nK] strike grid (stored for implied_vol_surface).
-            r_vec:            [nT] per-maturity zero rates (stored for pricing).
+            equity (Equity): The underlying (its ``forward`` drives the dynamics).
+            t_nodes: ``[n]`` piece ends (year fractions, increasing; the last piece continues after it).
+            beta_fwd, sigma_fwd: ``[n]`` forward parameters per piece (tensors keep their gradients).
+            beta_slice, sigma_slice: ``[n]`` effective slice parameters (default: averaged from the pieces).
+            martingale_correction (bool): Rescale ``X_t`` to sample mean 1 (MC forward = ``F(t)``).
+            calibration (tuple, optional): Calibration inputs of the report (:attr:`calibration`).
+
+        Raises:
+            ValueError: If the shapes differ, the nodes are not increasing or a ``beta`` is not positive.
         """
-        self._S0    = tf.constant(float(S0),  dtype=tf.float64)
-        self._r     = tf.constant(float(r),   dtype=tf.float64)
-        self._q     = tf.constant(float(q),   dtype=tf.float64)
+        self._equity = equity
+        self._t = np.asarray(t_nodes, dtype=float)
+        self._beta = tf.reshape(_f64(beta_fwd), [-1])
+        self._sigma = tf.reshape(_f64(sigma_fwd), [-1])
+        if not len(self._t) == int(self._beta.shape[0]) == int(self._sigma.shape[0]):
+            raise ValueError("t_nodes, beta_fwd and sigma_fwd must have the same length")
+        if self._t[0] <= 0.0 or np.any(np.diff(self._t) <= 0.0):
+            raise ValueError("t_nodes must be increasing and > 0")
+        if float(tf.reduce_min(self._beta)) <= 0.0:
+            raise ValueError("beta must be positive")
+        if beta_slice is None or sigma_slice is None:
+            beta_slice, sigma_slice = self.effective_parameters(self._t)
+        self._beta_slice, self._sigma_slice = _f64(beta_slice), _f64(sigma_slice)
+        self._S0 = tf.cast(equity.spot, DTYPE)
+        self._martingale_correction = martingale_correction
+        self._calibration_inputs, self._calibration = calibration, None
 
-        T_np   = np.asarray(T_grid,          dtype=np.float64)
-        fb_np  = np.asarray(fwd_beta_curve,  dtype=np.float64)
-        fs_np  = np.asarray(fwd_sigma_curve, dtype=np.float64)
-
-        self._T_grid    = tf.constant(T_np)
-        self._fwd_beta  = tf.constant(fb_np)
-        self._fwd_sigma = tf.constant(fs_np)
-
-        self._spot_beta  = (tf.constant(np.asarray(spot_beta_curve,  np.float64))
-                            if spot_beta_curve  is not None else self._fwd_beta)
-        self._spot_sigma = (tf.constant(np.asarray(spot_sigma_curve, np.float64))
-                            if spot_sigma_curve is not None else self._fwd_sigma)
-
-        self._K_grid = (np.asarray(K_grid, dtype=np.float64)
-                        if K_grid is not None else None)
-        self._r_vec  = (np.asarray(r_vec,  dtype=np.float64)
-                        if r_vec  is not None else None)
+    @property
+    def calibration(self) -> pd.DataFrame:
+        """Calibration report per maturity (computed on first access; None if not calibrated): slice and forward
+        parameters, ``beta_at_bound``, model - market vol errors in vol points (ATM, rms, max over the strikes)."""
+        if self._calibration is None and self._calibration_inputs is not None:
+            self._calibration = _report(*self._calibration_inputs)
+        return self._calibration
 
     # ------------------------------------------------------------------
-    # Factory: calibrate from implied-vol surface
+    # Calibration
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_implied_vol(
-        cls,
-        spot,
-        vol_surface,
-        disc_curve,
-        q: float = 0.0,
-        forward_skew: bool = True,
-        weights=None,
-    ):
-        """
-        Calibrate a DisplacedDiffusionModel from a VolatilitySurface.
-
-        For each maturity T_j:
-          1. Interpolate ATM vol at K = spot.
-          2. Compute Black-Scholes market call prices.
-          3. Grid-search + Nelder-Mead minimisation of weighted squared
-             price residuals w.r.t. β_T (the single free parameter per slice).
-          4. Apply ATM vol correction to derive σ and σ_a.
-
-        If forward_skew=True, extract forward β via closed-form inversion
-        of the discrete skew-averaging formula (Section 13-15 of the spec).
+    def from_equity(cls, equity, maturity: Union[date, float] = None, strike: float = None,
+                    martingale_correction: bool = True) -> "DisplacedDiffusionModel":
+        """Calibrate the model to the vol surface of *equity* (differentiable w.r.t. the market).
 
         Args:
-            spot:         Initial spot level (float).
-            vol_surface:  VolatilitySurface (.maturity, .strike, .volatility_matrix).
-            disc_curve:   RateCurve with .zero_rate(T) method.
-            q:            Continuous dividend yield / repo rate (scalar).
-            forward_skew: Extract forward betas (default True).
-            weights:      [nK] optional strike weights (equal if None).
+            equity (Equity): The underlying (``market_env.get_equity``).
+            maturity, strike: Unused (same factory signature as the other MC models).
+            martingale_correction (bool): Rescale the simulated ``X_t`` to sample mean 1 at each time.
 
         Returns:
-            DisplacedDiffusionModel instance with calibrated curves stored.
+            DisplacedDiffusionModel: Calibrated model; :attr:`calibration` reports the fit per maturity.
+
+        Raises:
+            ValueError: If the underlying has no lognormal vol surface, or the forward betas are not positive.
         """
-        S0     = float(spot)
-        T_grid = np.asarray(vol_surface.maturity,          dtype=np.float64)
-        K_grid = np.asarray(vol_surface.strike,            dtype=np.float64)
-        iv_mat = np.asarray(vol_surface.volatility_matrix, dtype=np.float64)
-        nT, nK = iv_mat.shape
+        surface = equity.vol_surface
+        if surface is None:
+            raise ValueError(f"No volatility surface for underlying '{equity.ticker}'")
+        if surface.vol_type != "lognormal":
+            raise ValueError("the displaced diffusion calibrates to lognormal (Black) vols")
+        t = np.asarray(surface.maturity, dtype=float)
+        forwards = tf.stack([tf.cast(equity.forward(float(v)), DTYPE) for v in t])                 # [n]
+        k = tf.constant(np.asarray(surface.strike, dtype=float), DTYPE)[None, :] / forwards[:, None]   # [n, m]
+        iv = tf.cast(surface.volatility_matrix, DTYPE)
+        theta = _fit_slices(k.numpy(), iv.numpy(), t)                                             # [n, 2]
+        theta = _implicit_step(theta, k, iv, t)
+        beta_slice, sigma_slice = theta[:, 0], theta[:, 1]
+        beta_fwd, sigma_fwd, floored = forward_from_slices(t, beta_slice, sigma_slice)
+        if floored:
+            warnings.warn(f"Vol surface of '{equity.ticker}': total variance decreasing at {floored} maturities "
+                          "(calendar arbitrage): forward variance floored.", stacklevel=2)
+        if float(tf.reduce_min(beta_fwd)) <= 0.0:
+            raise ValueError(f"Vol surface of '{equity.ticker}': the skew averaging gives a non-positive forward beta "
+                             f"({beta_fwd.numpy().round(4)}): the slice skews are not consistent in time")
+        report = (k.numpy(), iv.numpy(), t, theta.numpy(), beta_fwd.numpy(), sigma_fwd.numpy())
+        return cls(equity, t, beta_fwd, sigma_fwd, beta_slice, sigma_slice, martingale_correction, report)
 
-        r_vec = np.array([float(disc_curve.zero_rate(T)) for T in T_grid])
+    # ------------------------------------------------------------------
+    # Parameters and closed forms
+    # ------------------------------------------------------------------
 
-        spot_betas  = np.zeros(nT)
-        spot_sigmas = np.zeros(nT)
-        atm_vols    = np.zeros(nT)
+    @property
+    def t_nodes(self) -> np.ndarray:
+        return self._t.copy()
 
-        for i, T in enumerate(T_grid):
-            r_i      = float(r_vec[i])
-            q_f      = float(q)
-            iv_slice = iv_mat[i, :]
+    @property
+    def forward_parameters(self) -> tuple:
+        """``(beta_fwd, sigma_fwd)`` ``[n]`` per piece."""
+        return self._beta, self._sigma
 
-            atm_vol = float(np.interp(S0, K_grid, iv_slice))
-            atm_vols[i] = atm_vol
+    @property
+    def slice_parameters(self) -> tuple:
+        """``(beta_T, sigma_T)`` ``[n]`` at the nodes (the calibrated closed-form parameters)."""
+        return self._beta_slice, self._sigma_slice
 
-            mkt_prices = np.array([
-                _bs_call_np(S0, K_grid[k], T, iv_slice[k], r_i, q_f)
-                for k in range(nK)
-            ])
+    def effective_parameters(self, maturities) -> tuple:
+        """Effective ``(beta_T, sigma_T)`` at any maturities from the forward pieces (skew averaging).
 
-            w = (np.ones(nK) if weights is None else np.asarray(weights, dtype=float))
-            w = w / w.sum()
+        Args:
+            maturities: ``[m]`` year fractions (> 0).
 
-            def _obj(beta_arr, _T=T, _r=r_i, _mkt=mkt_prices, _w=w, _atm=atm_vol):
-                beta = float(beta_arr[0])
-                if beta < 1e-4:
-                    return 1e10
-                a = S0 * (1.0 - beta) / beta
-                # All shifted strikes must be strictly positive
-                if K_grid.min() + a * np.exp((_r - q_f) * _T) <= 0.0:
-                    return 1e10
-                sigma = _atm_vol_correction_np(_atm, beta, _T)
-                dd    = np.array([_dd_call_np(S0, K_grid[k], _T, beta, sigma, _r, q_f)
-                                  for k in range(nK)])
-                return float(np.sum(_w * (dd - _mkt) ** 2))
+        Returns:
+            tuple: ``(beta [m], sigma [m])`` tensors.
+        """
+        T = np.atleast_1d(np.asarray(maturities, dtype=float))
+        overlap = tf.constant(_piece_overlaps(self._t, np.zeros_like(T), T), DTYPE)            # [m, n]
+        piece_var = overlap * tf.square(self._sigma)[None, :]
+        # W_j = sigma_j^2 int_piece v(t) dt, v linear inside the piece: var_j (cum_{j-1} + var_j / 2)
+        w, cum = _averaging_weights(piece_var)
+        total = cum[:, -1]
+        beta = tf.reduce_sum(w * self._beta[None, :], axis=1) / tf.reduce_sum(w, axis=1)
+        return beta, tf.sqrt(total / tf.constant(T, DTYPE))
 
-            # Coarse grid to find a good starting bracket
-            betas0    = np.linspace(0.05, 2.5, 30)
-            obj_vals  = [_obj([b]) for b in betas0]
-            beta_init = betas0[int(np.argmin(obj_vals))]
+    def vanilla_price(self, strike: float, maturity: Union[date, float], option_type: float = 1.0) -> tf.Tensor:
+        """Closed-form European price ``P(0,T) F(T) E[(phi (X_T - K/F))^+]`` with the effective parameters.
 
-            res = optimize.minimize(
-                _obj, x0=[beta_init], method="Nelder-Mead",
-                options={"xatol": 1e-7, "fatol": 1e-10, "maxiter": 3000},
-            )
-            beta_star  = float(res.x[0])
-            sigma_star = _atm_vol_correction_np(atm_vol, beta_star, T)
+        Args:
+            strike (float): Strike.
+            maturity: Date or year fraction.
+            option_type (float): 1 call, -1 put (or an :class:`OptionType`).
 
-            spot_betas[i]  = beta_star
-            spot_sigmas[i] = sigma_star
+        Returns:
+            tf.Tensor: float64 price, differentiable w.r.t. the market (through the calibration).
+        """
+        phi = float(getattr(option_type, "value", option_type))
+        T = self._equity.year_fraction(maturity)
+        beta, sigma = self.effective_parameters([T])
+        F = tf.cast(self._equity.forward(maturity), DTYPE)
+        df = tf.cast(self._equity.discount_curve.discount(maturity), DTYPE)
+        return df * F * displaced_diffusion_price(np.float64(strike) / F, beta[0], sigma[0], T, phi)
 
-        # --- Forward skew calibration ---
-        if forward_skew:
-            fwd_betas, fwd_vols = _calibrate_forward_betas_np(
-                spot_betas, atm_vols, T_grid
-            )
-        else:
-            fwd_betas = spot_betas.copy()
-            fwd_vols  = atm_vols.copy()
-
-        r_flat = float(r_vec[-1])   # representative flat rate for MC
-
-        return cls(
-            S0=S0, r=r_flat, q=q,
-            T_grid=T_grid,
-            fwd_beta_curve=fwd_betas,
-            fwd_sigma_curve=fwd_vols,
-            spot_beta_curve=spot_betas,
-            spot_sigma_curve=spot_sigmas,
-            K_grid=K_grid,
-            r_vec=r_vec,
-        )
+    def implied_vol(self, strike: float, maturity: Union[date, float]) -> float:
+        """Black vol of the closed-form price (number, not differentiable)."""
+        T = self._equity.year_fraction(maturity)
+        k = float(np.float64(strike) / float(self._equity.forward(maturity)))
+        beta, sigma = (float(v[0]) for v in self.effective_parameters([T]))
+        return _black_implied_vol(float(_price_np(k, beta, sigma, T)), k, T)
 
     # ------------------------------------------------------------------
     # StochasticProcess interface
@@ -398,167 +334,106 @@ class DisplacedDiffusionModel(StochasticProcess):
     def size(self) -> int:
         return 1
 
-    def initial_values(self):
+    def initial_values(self) -> tf.Tensor:
         return self._S0
 
-    def drift(self, t0, x0, dt):
-        """GBM-like drift  (r−q)·S·dt — same as standard equity GBM."""
-        return (self._r - self._q) * x0 * dt
-
-    def diffusion(self, t0, x0, dt):
-        raise NotImplementedError(
-            "DisplacedDiffusionModel uses a path-dependent diffusion. "
-            "Use evolve() to simulate paths."
-        )
-
-    # ------------------------------------------------------------------
-    # Vanilla pricing (TF, differentiable)
-    # ------------------------------------------------------------------
-
-    def dd_call(self, K, T_idx: int = 0):
-        """
-        Displaced Diffusion call price using spot-calibrated params.
+    def evolve(self, t_grid, dw, observation_times=None) -> tf.Tensor:
+        """Simulate spot paths ``S_t = F(t) X_t`` (exact shifted-lognormal steps).
 
         Args:
-            K:     Strike (scalar or tensor).
-            T_idx: Maturity index into T_grid.
+            t_grid: ``[n_steps]`` increasing times (year fractions), without 0.
+            dw: ``[n_paths, n_steps]`` standard normals.
+            observation_times: Optional subset of ``t_grid``: only those columns are returned and the
+                market forward is computed only there.
 
         Returns:
-            Call price as tf.Tensor (float64).
+            tf.Tensor: ``[n_paths, n_steps]`` (or ``[n_paths, len(observation_times)]``) spots.
         """
-        beta  = self._spot_beta[T_idx]
-        sigma = self._spot_sigma[T_idx]
-        T     = self._T_grid[T_idx]
-        r_val = (tf.constant(float(self._r_vec[T_idx]), tf.float64)
-                 if self._r_vec is not None else self._r)
-        return _dd_call_tf(self._S0, K, T, beta, sigma, r_val, self._q)
-
-    def implied_vol_surface(self):
-        """
-        Compute the implied-vol surface implied by the DD model by
-        inverting Black-Scholes on DD call prices.
-
-        Returns
-        -------
-        iv_dd : ndarray [nT, nK]
-            Implied vols from DD pricing (NaN where inversion fails).
-        """
-        if self._K_grid is None:
-            raise RuntimeError("K_grid not set — pass K_grid to __init__ or use from_implied_vol.")
-
-        T_np  = self._T_grid.numpy().astype(float)
-        K_np  = self._K_grid.astype(float)
-        b_np  = self._spot_beta.numpy().astype(float)
-        s_np  = self._spot_sigma.numpy().astype(float)
-        r_vec = self._r_vec if self._r_vec is not None else np.full(len(T_np), float(self._r.numpy()))
-        q_f   = float(self._q.numpy())
-        S0    = float(self._S0.numpy())
-
-        nT, nK = len(T_np), len(K_np)
-        iv_dd = np.full((nT, nK), float("nan"))
-        for i in range(nT):
-            for k in range(nK):
-                price = _dd_call_np(S0, K_np[k], T_np[i],
-                                    b_np[i], s_np[i], float(r_vec[i]), q_f)
-                iv_dd[i, k] = _bs_implied_vol_np(price, S0, K_np[k], T_np[i],
-                                                  float(r_vec[i]), q_f)
-        return iv_dd
-
-    # ------------------------------------------------------------------
-    # Calibration summary
-    # ------------------------------------------------------------------
-
-    def print_calibration_summary(self):
-        """Print a table of calibrated parameters (spot and forward)."""
-        T_np   = self._T_grid.numpy()
-        sb_np  = self._spot_beta.numpy()
-        ss_np  = self._spot_sigma.numpy()
-        fb_np  = self._fwd_beta.numpy()
-        fs_np  = self._fwd_sigma.numpy()
-        S0     = float(self._S0.numpy())
-
-        print("\n" + "=" * 72)
-        print("Displaced Diffusion — Calibration Summary")
-        print("=" * 72)
-        print(f"  S0 = {S0:.4f}   r = {float(self._r.numpy()):.4f}   q = {float(self._q.numpy()):.4f}")
-        print()
-        print(f"  {'T':>6}  {'b_spot':>8}  {'s_spot':>8}  {'a_spot':>8}  {'sa_spot':>10}"
-              f"  {'b_fwd':>8}  {'s_fwd':>8}  {'sa_fwd':>8}")
-        print("  " + "-" * 70)
-        for i, T in enumerate(T_np):
-            a_spot   = S0 * (1 - sb_np[i]) / sb_np[i]
-            siga_spt = ss_np[i] * sb_np[i]
-            siga_fwd = fs_np[i] * fb_np[i]
-            print(f"  {T:6.2f}  {sb_np[i]:8.4f}  {ss_np[i]:8.4f}  {a_spot:8.4f}"
-                  f"  {siga_spt:10.4f}  {fb_np[i]:8.4f}  {fs_np[i]:8.4f}  {siga_fwd:8.4f}")
-        print()
-
-    # ------------------------------------------------------------------
-    # Monte Carlo simulation
-    # ------------------------------------------------------------------
-
-    @tf.function
-    def evolve(self, t_grid, dw, observation_times=None):
-        """
-        Simulate displaced-diffusion paths with piecewise-constant forward
-        parameters and path-dependent displacement.
-
-        Euler step (per interval j with forward params β_j, σ_j):
-            a_t      = S_t · (1−β_j) / β_j
-            σ_a      = σ_j · β_j
-            S_{t+dt} = (S_t + a_t) · exp((r−q)·dt − ½σ_a²·dt + σ_a·√dt·Z)
-                       − a_t · exp((r−q)·dt)
-
-        This preserves the correct martingale forward E[S_T] = S_0·e^{(r−q)T}.
-
-        Args:
-            t_grid: [n_steps] observation times (year fractions, t > 0).
-            dw:     [n_paths, n_steps] standard-normal increments.
-            observation_times: optional subset of t_grid; only those columns are returned.
-
-        Returns:
-            paths: [n_paths, n_steps]  spot at each observation time (or the observed columns).
-        """
-        dw     = tf.cast(tf.convert_to_tensor(dw),     tf.float64)
-        t_grid = tf.cast(tf.convert_to_tensor(t_grid), tf.float64)
-
-        n_paths = tf.shape(dw)[0]
-        n_steps = tf.shape(dw)[1]
-        t_full  = tf.concat([tf.zeros([1], tf.float64), t_grid], axis=0)
-
-        S     = tf.fill([n_paths], self._S0)
-        paths = tf.TensorArray(dtype=tf.float64, size=n_steps)
-
-        carry = self._r - self._q
-
-        for k in tf.range(n_steps):
-            t0 = t_full[k]
-            dt = t_full[k + 1] - t_full[k]
-
-            # Piecewise-constant forward params: interval index j
-            # j = number of T_grid entries strictly < t0 (so at t0=T_j we enter next interval)
-            j = tf.reduce_sum(tf.cast(self._T_grid <= t0, tf.int32))
-            j = tf.clip_by_value(j, 0, tf.shape(self._fwd_beta)[0] - 1)
-
-            beta_j  = self._fwd_beta[j]
-            sigma_j = self._fwd_sigma[j]
-            sigma_a = sigma_j * beta_j
-
-            # Path-dependent displacement
-            a = S * (1.0 - beta_j) / beta_j
-
-            # DD Euler step
-            drift = (carry - 0.5 * sigma_a * sigma_a) * dt
-            diff  = sigma_a * tf.sqrt(dt) * dw[:, k]
-            exp_carry = tf.exp(carry * dt)
-            S = (S + a) * tf.exp(drift + diff) - a * exp_carry
-
-            # Absorbing barrier at zero to avoid negative spots
-            S = tf.maximum(S, tf.constant(1e-8, tf.float64))
-
-            paths = paths.write(k, S)
-
-        paths = tf.transpose(paths.stack(), perm=[1, 0])
+        times = np.asarray(tf.convert_to_tensor(t_grid), dtype=float)
+        if times[0] <= 0.0 or np.any(np.diff(times) <= 0.0):
+            raise ValueError("t_grid must be increasing and > 0")
+        starts = np.concatenate([[0.0], times[:-1]])
+        overlap = tf.constant(_piece_overlaps(self._t, starts, times), DTYPE)                   # [n_steps, n]
+        step_var = overlap * tf.square(self._sigma)[None, :]
+        var = tf.reduce_sum(step_var, axis=1)                                   # ATM variance of X over the step
+        beta = tf.reduce_sum(step_var * self._beta[None, :], axis=1) / var
+        x = _simulate_ratio(beta, beta * tf.sqrt(var), tf.cast(dw, DTYPE))      # sd of ln Y = beta sigma sqrt(dt)
         if observation_times is not None:
-            paths = tf.gather(paths, observation_columns(t_grid.numpy(), observation_times), axis=1)
-        return paths
+            cols = observation_columns(times, observation_times)
+            x, times = tf.gather(x, cols, axis=1), times[cols]
+        if self._martingale_correction:
+            x = x / tf.reduce_mean(x, axis=0, keepdims=True)
+        forwards = tf.stack([tf.cast(self._equity.forward(float(v)), DTYPE) for v in times])
+        return x * forwards[None, :]
+
+
+# ============================================================
+# Calibration helpers
+# ============================================================
+
+def _fit_slices(k: np.ndarray, iv: np.ndarray, t: np.ndarray) -> np.ndarray:
+    """Least squares per slice on the price residuals per unit forward (numbers): ``[n, 2]`` (beta, sigma)."""
+    out = []
+    for i in range(len(t)):
+        sd = iv[i] * np.sqrt(t[i])
+        d1 = -np.log(k[i]) / sd + 0.5 * sd
+        market = norm.cdf(d1) - k[i] * norm.cdf(d1 - sd)
+        atm = float(np.interp(0.0, np.log(k[i]), iv[i]))
+        fit = least_squares(lambda p: _price_np(k[i], p[0], p[1], t[i]) - market, [0.5, atm],
+                            bounds=([BETA_BOUNDS[0], SIGMA_BOUNDS[0]], [BETA_BOUNDS[1], SIGMA_BOUNDS[1]]),
+                            method="trf", x_scale=[0.1, 0.01], xtol=1e-14, ftol=1e-14, gtol=1e-14)
+        out.append(fit.x)
+    return np.array(out)
+
+
+def _implicit_step(theta: np.ndarray, k: tf.Tensor, iv: tf.Tensor, t: np.ndarray) -> tf.Tensor:
+    """Slice parameters as differentiable functions of the market (implicit function theorem).
+
+    ``theta(m) = theta* - H^{-1} grad_theta L(theta*, m)`` with ``L`` the half sum of squared residuals and
+    ``H`` its exact Hessian at the optimum (held constant): the value is ``theta*`` (``grad = 0``, up to
+    the solver tolerance) and ``d theta / d m = -H^{-1} d grad / d m``. Parameters on a bound stay fixed.
+    """
+    x = tf.constant(theta, DTYPE)
+    tt = tf.constant(t, DTYPE)[:, None]
+    market = _black_tf(k, iv, tt)
+
+    def objective(p):
+        model = displaced_diffusion_price(k, p[:, 0:1], p[:, 1:2], tt)
+        return 0.5 * tf.reduce_sum(tf.square(model - market), axis=1)                  # [n] separable slices
+
+    with tf.GradientTape(persistent=True) as outer:
+        outer.watch(x)
+        with tf.GradientTape() as inner:
+            inner.watch(x)
+            loss = tf.reduce_sum(objective(x))
+        grad = inner.gradient(loss, x)                                                    # [n, 2], depends on m
+        rows = [tf.reduce_sum(grad[:, j]) for j in range(2)]
+    # the slices are independent: the gradient of a column sum is that Hessian row of every slice
+    hess = tf.stop_gradient(tf.stack([outer.gradient(r, x) for r in rows], axis=1))       # [n, 2, 2]
+    del outer
+    lower = np.array([BETA_BOUNDS[0], SIGMA_BOUNDS[0]])
+    upper = np.array([BETA_BOUNDS[1], SIGMA_BOUNDS[1]])
+    free = tf.constant(~(np.isclose(theta, lower) | np.isclose(theta, upper)), DTYPE)    # [n, 2]
+    mask = free[:, :, None] * free[:, None, :]
+    eye = tf.eye(2, dtype=DTYPE)[None]
+    hess = hess * mask + eye * (1.0 - free[:, :, None])
+    step = tf.linalg.solve(hess, (grad * free)[..., None])[..., 0]
+    return x - step
+
+
+def _report(k, iv, t, theta, beta_fwd, sigma_fwd) -> pd.DataFrame:
+    rows = []
+    for i in range(len(t)):
+        errors = []
+        for kk, v in zip(k[i], iv[i]):
+            model = _black_implied_vol(float(_price_np(kk, theta[i, 0], theta[i, 1], t[i])), kk, t[i])
+            errors.append(model - v)
+        errors = np.array(errors) * 100.0                                                 # vol points
+        if np.isnan(errors).any():
+            errors = np.where(np.isnan(errors), np.nanmax(np.abs(errors)), errors)
+        rows.append({"maturity": t[i], "beta": theta[i, 0], "sigma": theta[i, 1],
+                     "beta_at_bound": bool(np.isclose(theta[i, 0], BETA_BOUNDS[0]) or np.isclose(theta[i, 0], BETA_BOUNDS[1])),
+                     "atm_error_volpts": float(np.interp(0.0, np.log(k[i]), errors)), "beta_fwd": beta_fwd[i],
+                     "sigma_fwd": sigma_fwd[i], "rms_error_volpts": float(np.sqrt(np.nanmean(errors ** 2))),
+                     "max_error_volpts": float(np.nanmax(np.abs(errors)))})
+    return pd.DataFrame(rows)

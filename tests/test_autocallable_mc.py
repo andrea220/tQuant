@@ -205,6 +205,18 @@ class TestGreeks(ACTestCase):
         self.assertEqual(prod.price.dtype, tf.float64)
         self.check_vs_bump(tq.LocalVolatilityModel, 5_000)
 
+    def test_displaced_diffusion_flat_surface(self):
+        """Flat smile: the displaced diffusion calibrates to beta = 1 (lognormal), the price is the GBM one within
+        4 SE; delta and vega through the calibration vs common-random-numbers bumps."""
+        model = tq.DisplacedDiffusionModel.from_equity(self.mkt.get_equity("UND"))
+        np.testing.assert_allclose(model.forward_parameters[0].numpy(), 1.0, atol=1e-6)
+        gbm, dd = make_autocallable(), make_autocallable()
+        self.price(gbm, model=tq.GeometricBrownianMotion, n_paths=50_000)
+        self.price(dd, model=tq.DisplacedDiffusionModel, n_paths=50_000)
+        se = float(np.hypot(float(gbm.standard_error), float(dd.standard_error)))
+        self.assertLess(abs(float(gbm.price) - float(dd.price)), 4 * se)
+        self.check_vs_bump(tq.DisplacedDiffusionModel, 5_000)
+
     def test_local_vol_flat_surface_close_to_gbm(self):
         """Flat surface: local vol = GBM up to MC noise and the proportional vs escrowed dividends (none here)."""
         gbm, lv = make_autocallable(), make_autocallable()

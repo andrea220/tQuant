@@ -92,6 +92,16 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       `tape.gradient` gives pathwise delta, vega per node, rho, dividend sensitivities. Grid ends exactly at maturity
       (was the nearest point of a grid up to the last vol maturity), stateless Gaussian draws (CRN bumps),
       `product.standard_error`. Discrete dividends: escrowed `S − PV`, carry repo (as BS discrete).
+- [x] `DisplacedDiffusionModel` rewritten on the market forward (was built from floats S0 / flat r / q, numpy
+      calibration, not usable by the MC pricers): `S = F(t) X`, `dX = sigma(t) (beta(t) X + 1 - beta(t)) dW`,
+      `from_equity` (VanillaMCPricer / AutocallableMCPricer). Slice fit of the closed form (beta, sigma) per
+      maturity on vega-weighted prices; forward pieces by inverting Piterbarg's skew averaging (exact integral
+      weights); calibration differentiable by one Newton step at the optimum (implicit function theorem, exact
+      Hessian, bound parameters held): vega per node and delta = bump-and-recalibrate to 1e-7. MC with exact
+      shifted-lognormal steps (a step across pieces keeps the ATM variance; first version summed beta^2 sigma^2:
+      up to +68% variance, caught by a grid-across-pieces test). `from_equity` 0.2 s (Hessian rows instead of
+      batch_jacobian: 1.15 s → 0.2 s; report lazy). Skew limit documented (normal skew -sigma/2: synthetic SSVI
+      smiles not reached at short maturities). Example `displ_diffusion.py` on the snapshot.
 - [x] `LocalVolatilityModel.evolve`: the loop is a module-level `tf.function` on tensors (was a `tf.function` on a
       bound method: retraced per model and, with a temporary model, `self` garbage-collected → `None._C`).
 - [x] 4d `StochasticProcess` reduced to `size`, `initial_values`, `evolve(t_grid, dw, observation_times=None)` (was an

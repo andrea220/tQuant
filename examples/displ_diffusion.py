@@ -1,274 +1,144 @@
 """
-Displaced Diffusion Model — calibration and Monte Carlo example.
+Displaced Diffusion Model on a marketdata/ snapshot: calibration, closed form vs market, Monte Carlo, greeks.
 
 Steps:
-  1. Build a static MarketEnvironment with a quadratic smile surface.
-  2. Calibrate DisplacedDiffusionModel (spot + forward betas).
-  3. Print calibration summary table.
-  4. Plot: market IV vs DD IV (one panel per maturity).
-  5. MC sanity checks: forward match, put-call parity, ATM vol proxy.
-  6. Paths plot: simulated paths + analytical vs simulated forward.
+  1. ``DisplacedDiffusionModel.from_equity``: per vol-surface maturity (beta_T, sigma_T) of the closed form
+     fitted to the market smile (vega-weighted), forward pieces by skew averaging; calibration report.
+  2. Plot: market smile vs displaced diffusion (closed form) per maturity -> examples/dd_smiles.png.
+  3. Monte Carlo (exact shifted-lognormal steps on the market forward): forward check and MC implied vols
+     vs the closed form at the nodes; a few paths -> examples/dd_paths.png.
+  4. ``VanillaMCPricer(model=DisplacedDiffusionModel)``: 1Y ATM call, delta and vega by AAD through the
+     calibration (implicit function theorem) vs bump-and-reprice.
+
+The synthetic equity smiles (SSVI) are steeper than the normal skew (the displaced diffusion limit,
+d sigma / d ln K ~ -sigma / 2): beta ends on its lower bound, ATM is fitted, the wings are not.
 """
 
-from datetime import date
-from pathlib import Path
-import sys
+import io
 import os
+import sys
+from datetime import timedelta
+from pathlib import Path
 
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
+import pandas as pd
 import tensorflow as tf
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 import tensorquant as tq
-from tensorquant.models.displaceddiffusion import (
-    DisplacedDiffusionModel,
-    _bs_call_np,
-)
-
+from tensorquant.models.displaceddiffusion import DisplacedDiffusionModel, _black_implied_vol
 
 # ----------------------------------------------------------------
-# Static market environment  (skewed smile: quadratic + slope)
+# Configuration
+# ----------------------------------------------------------------
+MARKET_DATA      = Path(__file__).resolve().parents[1] / "marketdata"
+SNAPSHOT_DATE    = None        # date(yyyy, m, d) | None = latest snapshot
+CALIBRATION_SET  = None        # e.g. "1516"      | None = latest of the day
+TICKER           = "TICKER1"   # TICKER1-30 EUR | TICKER31-40 GBP | TICKER41-50 USD
+N_PATHS          = 100_000
+SEED             = 42
+OUT_DIR          = Path(__file__).resolve().parent
 # ----------------------------------------------------------------
 
-def build_market_env(evaluation_date: date) -> tq.MarketEnvironment:
-    daycounter    = tq.DayCounter(tq.DayCounterConvention.Actual365)
-    spot          = 5.174
-    moneyness     = [0.40, 0.55, 0.70, 0.80, 0.90, 1.00, 1.10, 1.20, 1.35, 1.50, 1.65]
-    strike_grid   = [round(spot * m, 4) for m in moneyness]
-    maturity_grid = [0.25, 0.75, 1.50, 3.00]
 
-    # Skewed smile: put-side higher than call-side (realistic equity skew)
-    volatility_matrix = []
-    for base_vol, skew in [(0.33, -0.06), (0.30, -0.05), (0.28, -0.04), (0.26, -0.03)]:
-        row = [round(base_vol + 0.08 * (m - 1.0) ** 2 + skew * (m - 1.0), 5)
-               for m in moneyness]
-        volatility_matrix.append(row)
+def main() -> None:
+    market_env = tq.MarketEnvironment.from_folder(MARKET_DATA, SNAPSHOT_DATE, CALIBRATION_SET)
+    eval_date = market_env.evaluation_date
+    tq.Settings.evaluation_date = eval_date
+    print(f"snapshot marketdata/{eval_date:%Y%m%d}/{market_env.calibration_set}, {TICKER}")
+    eq = market_env.get_equity(TICKER)
+    surface = eq.vol_surface
+    T = np.asarray(surface.maturity, dtype=float)
+    K = np.asarray(surface.strike, dtype=float)
+    spot = float(eq.spot.numpy())
 
-    estr = tq.RateCurve(
-        reference_date=evaluation_date,
-        pillars=[0.25, 0.5, 1.0, 2.0, 5.0],
-        rates=[0.0200, 0.0210, 0.0220, 0.0230, 0.0240],
-        interp="LINEAR",
-        daycounter_convention=tq.DayCounterConvention.Actual365,
-    )
-    vol_surf = tq.VolatilitySurface(
-        reference_date=evaluation_date,
-        calendar=None,
-        daycounter=daycounter,
-        strike=strike_grid,
-        maturity=maturity_grid,
-        volatility_matrix=volatility_matrix,
-    )
-    market = {
-        "IR:EUR:ESTR:SPOT": estr,
-        "EQ:EUR:TESTCTP:SPOT": spot,
-        "EQ:EUR:TESTCTP:VOL": vol_surf,
-        "EQ:EUR:TESTCTP:REPO": -0.035,
-        "EQ:EUR:TESTCTP:DIVYIELD": 0.0,
-    }
-    return tq.MarketEnvironment(market=market)
+    # 1. calibration
+    model = DisplacedDiffusionModel.from_equity(eq)
+    pd.set_option("display.width", 200)
+    print("\nCalibration (slice beta/sigma, forward pieces, model - market vol errors in vol points)")
+    print(model.calibration.round(4).to_string(index=False))
 
+    # 2. smiles: market vs closed form
+    fig, axes = plt.subplots(2, (len(T) + 1) // 2, figsize=(4 * ((len(T) + 1) // 2), 7))
+    k_fine = np.linspace(K[0], K[-1], 60)
+    for ax, i in zip(axes.ravel(), range(len(T))):
+        ax.plot(K / spot, 100 * surface.volatility_matrix.numpy()[i], "o", label="market")
+        ax.plot(k_fine / spot, [100 * model.implied_vol(k, T[i]) for k in k_fine], "-", label="DD")
+        ax.set_title(f"T = {T[i]:.2f}y  beta = {model.calibration.beta[i]:.2f}")
+        ax.set_xlabel("K / S0")
+        ax.set_ylabel("vol (%)")
+    axes.ravel()[0].legend()
+    fig.suptitle(f"Displaced diffusion vs market smile ({TICKER})")
+    fig.tight_layout()
+    fig.savefig(OUT_DIR / "dd_smiles.png", dpi=120)
+    plt.close(fig)
 
-# ----------------------------------------------------------------
-# Main
-# ----------------------------------------------------------------
+    # 3. Monte Carlo at the nodes (exact steps: the grid only needs the nodes)
+    dw = tf.random.stateless_normal([N_PATHS, len(T)], seed=[SEED, 0], dtype=tf.float64)
+    paths = DisplacedDiffusionModel.from_equity(eq, martingale_correction=False).evolve(T, dw).numpy()
+    print("\nMonte Carlo vs closed form at the nodes (vol points; forward error in standard errors)")
+    for i, t in enumerate(T):
+        F = float(eq.forward(float(t)))
+        z = (paths[:, i].mean() - F) / (paths[:, i].std() / np.sqrt(N_PATHS))
+        errs = []
+        for k in K[2:-2]:
+            mc = _black_implied_vol(float(np.mean(np.maximum(paths[:, i] / F - k / F, 0.0))), k / F, t)
+            errs.append(100 * (mc - model.implied_vol(k, t)))
+        print(f"  T={t:5.2f}  forward z={z:+.2f}  MC - CF: {np.round(errs, 2)}")
+    grid = np.linspace(T[-1] / 250, T[-1], 250)
+    sample = model.evolve(grid, tf.random.stateless_normal([20, len(grid)], seed=[SEED, 1], dtype=tf.float64)).numpy()
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(grid, sample.T, lw=0.8, alpha=0.7)
+    ax.plot(grid, [float(eq.forward(float(t))) for t in grid], "k--", lw=2, label="market forward")
+    ax.set_xlabel("t (years)")
+    ax.set_ylabel("S")
+    ax.set_title(f"Displaced diffusion paths ({TICKER})")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(OUT_DIR / "dd_paths.png", dpi=120)
+    plt.close(fig)
 
-def main():
-    evaluation_date = date(2026, 3, 31)
-    tq.Settings.evaluation_date = evaluation_date
-    market_env = build_market_env(evaluation_date)
+    # 4. VanillaMCPricer with AAD greeks through the calibration
+    expiry = eval_date + timedelta(days=365)
+    strike = round(spot, 2)
 
-    ticker = "TESTCTP"
-    ccy    = tq.Currency.EUR
+    def option():
+        return tq.VanillaOption(tq.Currency.EUR, start_date=eval_date, end_date=expiry, strike=strike,
+                                option_type=tq.OptionType.Call, exercise_type=tq.ExerciseType.European,
+                                underlying=TICKER)
 
-    spot      = market_env.get_eq_spot(ticker, ccy=ccy)
-    vol_surf  = market_env.get_eq_vol_surface(ticker, ccy=ccy)
-    disc_curve = market_env.get_ir_curve(ccy)
-    q_val     = float(market_env.get_eq_div_yield(ticker, ccy=ccy) or 0.0)
+    pricer = tq.VanillaMCPricer(model=DisplacedDiffusionModel, n_paths=N_PATHS, n_steps=12, seed=SEED)
+    opt = option()
+    pricer.price(opt, market_env, autodiff=True)
+    d_spot, d_vol = pricer.tape.gradient(opt.price, [eq.spot, surface.volatility_matrix])
+    closed = float(model.vanilla_price(strike, expiry))
 
-    T_grid = np.array(vol_surf.maturity)
-    K_grid = np.array(vol_surf.strike)
-    iv_mat = np.array(vol_surf.volatility_matrix)
-    nT, nK = iv_mat.shape
-    S0     = float(spot)
+    def reprice():
+        o = option()
+        tq.VanillaMCPricer(model=DisplacedDiffusionModel, n_paths=N_PATHS, n_steps=12, seed=SEED).price(o, market_env)
+        return float(o.price)
 
-    print("\n" + "=" * 60)
-    print("Displaced Diffusion Calibration — TESTCTP")
-    print("=" * 60)
-    print(f"S0 = {S0:.4f}   q = {q_val:.4f}")
-
-    # ---- Calibrate ----
-    model = DisplacedDiffusionModel.from_implied_vol(
-        spot=spot,
-        vol_surface=vol_surf,
-        disc_curve=disc_curve,
-        q=q_val,
-        forward_skew=True,
-    )
-    model.print_calibration_summary()
-
-    # ---- DD implied vol surface ----
-    iv_dd = model.implied_vol_surface()    # [nT, nK]
-
-    # ---- Market call prices for comparison ----
-    r_vec = np.array([float(disc_curve.zero_rate(T)) for T in T_grid])
-    mkt_calls = np.array([
-        [_bs_call_np(S0, K_grid[k], T_grid[i], iv_mat[i, k], r_vec[i], q_val)
-         for k in range(nK)]
-        for i in range(nT)
-    ])
-    dd_calls = np.array([
-        [float(model.dd_call(float(K_grid[k]), T_idx=i).numpy())
-         for k in range(nK)]
-        for i in range(nT)
-    ])
-    price_err = dd_calls - mkt_calls
-
-    # ---- Print smile comparison ----
-    hdr = "  ".join(f"K={K_grid[k]:.2f}" for k in range(nK))
-    for i, T in enumerate(T_grid):
-        print(f"  T={T:.2f}  mkt IV  : " +
-              "  ".join(f"{iv_mat[i, k]:.4f}" for k in range(nK)))
-        dd_row = [iv_dd[i, k] if not np.isnan(iv_dd[i, k]) else float("nan")
-                  for k in range(nK)]
-        print(f"  T={T:.2f}  DD  IV  : " +
-              "  ".join(f"{v:.4f}" if not np.isnan(v) else "  nan " for v in dd_row))
-        print(f"  T={T:.2f}  price err: " +
-              "  ".join(f"{price_err[i, k]:+.5f}" for k in range(nK)))
-        print()
-
-    max_err = np.nanmax(np.abs(price_err))
-    print(f"  Max abs price error (all T, K): {max_err:.6f}")
-
-    # ----------------------------------------------------------------
-    # Monte Carlo sanity checks
-    # ----------------------------------------------------------------
-    n_mc     = 50_000
-    n_steps  = 120
-    T_max    = float(T_grid[-1])
-    tf.random.set_seed(42)
-
-    t_fine   = tf.cast(tf.linspace(0.0, T_max, n_steps + 1), tf.float64)[1:]
-    dw_mc    = tf.random.normal([n_mc, n_steps], dtype=tf.float64)
-    paths_mc = model.evolve(t_fine, dw_mc)                     # [n_mc, n_steps]
-
-    t_fine_np    = t_fine.numpy()
-    paths_np     = paths_mc.numpy()
-    mat_idx      = [int(np.argmin(np.abs(t_fine_np - T))) for T in T_grid]
-    terminal     = [paths_mc[:, idx] for idx in mat_idx]
-
-    r_mc  = float(model._r.numpy())
-    q_mc  = float(model._q.numpy())
-
-    print("\n" + "=" * 60)
-    print("Monte Carlo Sanity Checks")
-    print("=" * 60)
-    for i, T in enumerate(T_grid):
-        S_T     = terminal[i]
-        log_ret = tf.math.log(S_T / tf.constant(S0, tf.float64))
-
-        mc_fwd   = float(tf.reduce_mean(S_T).numpy())
-        theo_fwd = S0 * np.exp((r_mc - q_mc) * T)
-        fwd_err  = (mc_fwd - theo_fwd) / theo_fwd * 100
-
-        df_T     = np.exp(-r_mc * T)
-        mc_calls = df_T * tf.reduce_mean(
-            tf.maximum(S_T[:, None] - tf.constant(K_grid, tf.float64)[None, :], 0.0),
-            axis=0,
-        ).numpy()
-        mc_puts  = df_T * tf.reduce_mean(
-            tf.maximum(tf.constant(K_grid, tf.float64)[None, :] - S_T[:, None], 0.0),
-            axis=0,
-        ).numpy()
-
-        # Put-call parity
-        pcp_lhs = mc_calls - mc_puts
-        pcp_rhs = S0 * np.exp(-q_mc * T) - K_grid * df_T
-        pcp_err = np.abs(pcp_lhs - pcp_rhs)
-
-        # ATM vol proxy
-        atm_k   = int(np.argmin(np.abs(K_grid - S0)))
-        mc_vol  = float(tf.math.reduce_std(log_ret).numpy()) / np.sqrt(T)
-        mkt_atm = float(iv_mat[i, atm_k])
-
-        # MC call vs market
-        call_err = np.abs(mc_calls - mkt_calls[i])
-
-        print(f"\n  T = {T:.2f}Y")
-        print(f"    [1] Forward  — MC: {mc_fwd:.4f}  Theo: {theo_fwd:.4f}  Err: {fwd_err:+.3f}%")
-        print(f"    [2] ATM vol  — MC: {mc_vol:.4f}  Mkt ATM IV: {mkt_atm:.4f}  Diff: {mc_vol - mkt_atm:+.4f}")
-        print(f"    [3] PCP      — max: {pcp_err.max():.6f}  mean: {pcp_err.mean():.6f}")
-        print(f"    [4] Call err — max: {call_err.max():.4f}  mean: {call_err.mean():.4f}")
-
-    # ----------------------------------------------------------------
-    # Plot 1: IV smile — market vs DD (one panel per maturity)
-    # ----------------------------------------------------------------
-    fig1, axes1 = plt.subplots(1, nT, figsize=(4 * nT, 4), sharey=False)
-    fig1.suptitle("Displaced Diffusion — IV Smile: Market vs DD", fontsize=13, fontweight="bold")
-
-    for i, T in enumerate(T_grid):
-        ax = axes1[i]
-        ax.plot(K_grid, iv_mat[i], color="steelblue", marker="o", label="Market IV")
-        valid = ~np.isnan(iv_dd[i])
-        ax.plot(K_grid[valid], iv_dd[i][valid], color="tomato", marker="s",
-                linestyle="--", label="DD IV")
-        ax.axvline(S0, color="grey", linestyle=":", linewidth=1)
-        ax.set_title(f"T = {T:.2f}Y", fontsize=10)
-        ax.set_xlabel("Strike")
-        ax.set_ylabel("Implied vol" if i == 0 else "")
-        ax.legend(fontsize=8)
-        ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig("examples/dd_smiles.png", dpi=150)
-    plt.show()
-    print("\nSmile plot saved to examples/dd_smiles.png")
-
-    # ----------------------------------------------------------------
-    # Plot 2: MC paths + analytical vs simulated forward
-    # ----------------------------------------------------------------
-    fwd_theo = S0 * np.exp((r_mc - q_mc) * t_fine_np)
-    fwd_mc_t = paths_np.mean(axis=0)
-
-    p20 = float(np.percentile(paths_np[:, -1], 20))
-    p80 = float(np.percentile(paths_np[:, -1], 80))
-    y_lo = max(0.0, p20 - (p80 - p20) * 0.15)
-    y_hi = p80 + (p80 - p20) * 0.15
-
-    fig2, ax2 = plt.subplots(figsize=(11, 5))
-    fig2.suptitle("MC Paths — Displaced Diffusion (TESTCTP)", fontsize=13, fontweight="bold")
-
-    rng   = np.random.default_rng(0)
-    idx   = rng.choice(paths_np.shape[0], min(300, n_mc), replace=False)
-    for path in paths_np[idx]:
-        ax2.plot(t_fine_np, path, color="steelblue", alpha=0.04, linewidth=0.6)
-
-    ax2.plot(t_fine_np, fwd_mc_t,  color="tomato", linewidth=2.2,
-             label="Simulated forward  E[S_t]", zorder=3)
-    ax2.plot(t_fine_np, fwd_theo,  color="black",  linewidth=1.8,
-             linestyle="--", label=f"Analytical forward  S\u2080\u00b7e^{{(r-q)t}}", zorder=4)
-
-    for T in T_grid:
-        ax2.axvline(T, color="grey", linestyle=":", linewidth=0.9, alpha=0.6)
-        ax2.text(T + 0.02, y_hi * 0.97, f"T={T:.2f}", fontsize=7, color="grey", va="top")
-
-    ax2.axhline(S0, color="dimgrey", linestyle=":", linewidth=0.9, alpha=0.5,
-                label=f"S\u2080 = {S0:.2f}")
-    ax2.set_ylim(y_lo, y_hi)
-    ax2.set_xlabel("Time (years)")
-    ax2.set_ylabel("Spot")
-    ax2.legend(fontsize=9)
-    ax2.grid(True, alpha=0.25)
-
-    plt.tight_layout()
-    plt.savefig("examples/dd_paths.png", dpi=150)
-    plt.show()
-    print("Paths plot saved to examples/dd_paths.png")
+    h, out = 0.01, []
+    for sgn in (1, -1):
+        eq.spot.assign(spot + sgn * h)
+        out.append(reprice())
+    eq.spot.assign(spot)
+    base, vega_bump = surface.volatility_matrix.numpy(), []
+    for sgn in (1, -1):
+        surface.volatility_matrix.assign(base + sgn * 1e-4)
+        vega_bump.append(reprice())
+    surface.volatility_matrix.assign(base)
+    print(f"\n1Y ATM call (K = {strike}): MC {float(opt.price):.4f} +- {float(opt.standard_error):.4f}, closed form {closed:.4f}")
+    print(f"  delta: AAD {float(d_spot):.5f}  bump {(out[0] - out[1]) / (2 * h):.5f}")
+    print(f"  vega (parallel, per 1.00 vol): AAD {float(tf.reduce_sum(d_vol)):.4f}  bump {(vega_bump[0] - vega_bump[1]) / 2e-4:.4f}")
+    print(f"\nPlots: {OUT_DIR / 'dd_smiles.png'}, {OUT_DIR / 'dd_paths.png'}")
 
 
 if __name__ == "__main__":
-    tf.keras.backend.set_floatx("float64")
     main()
