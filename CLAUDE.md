@@ -9,7 +9,9 @@ from `tf.GradientTape` (AAD) instead of separate analytic code.
 - Study material in `study/` (own `CLAUDE.md`).
 - Reference books and papers in `resources/` (local only, git-ignored): when in doubt on a model, formula, numerical
   method or market convention, check them first (e.g. Brigo-Mercurio for rates, Gatheral / Derman for vol
-  surfaces, Savine for AAD and simulation).
+  surfaces, Savine for AAD and simulation, Oosterlee-Grzelak for Heston / SLV, with Python codes). They are a
+  reference only: never copy-paste their code; implement in the library architecture (TF, float64, market objects,
+  `Product` / `Pricer` / `StochasticProcess`, AAD to the risk factors).
 - Code, docstrings and comments in English.
 
 ## Working rules
