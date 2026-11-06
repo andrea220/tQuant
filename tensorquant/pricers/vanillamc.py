@@ -25,7 +25,8 @@ class VanillaMCPricer(Pricer):
 
     Args:
         model: Model class with a ``from_equity(equity, maturity, strike)`` factory
-            (:class:`GeometricBrownianMotion`, :class:`LocalVolatilityModel`).
+            (:class:`GeometricBrownianMotion`, :class:`LocalVolatilityModel`, :class:`DisplacedDiffusionModel`,
+            :class:`HestonModel`); ``model.noise_size()`` normals are drawn per path and step.
         n_paths: Number of Monte Carlo paths.
         n_steps: Number of time steps up to maturity.
         seed: Seed of the stateless Gaussian draws.
@@ -85,7 +86,9 @@ class VanillaMCPricer(Pricer):
 
         T = eq.vol_surface.daycounter.year_fraction(Settings.evaluation_date, product.end_date)
         t_grid = tf.linspace(tf.constant(0.0, DTYPE), tf.constant(T, DTYPE), self._n_steps + 1)[1:]
-        dw = tf.random.stateless_normal([self._n_paths, self._n_steps], seed=[self._seed, 0], dtype=DTYPE)
+        k = model.noise_size()
+        dw = tf.random.stateless_normal([self._n_paths, self._n_steps] + ([k] if k > 1 else []),
+                                        seed=[self._seed, 0], dtype=DTYPE)
         s_t = model.evolve(t_grid, dw, observation_times=[T])[:, 0]
 
         k = tf.cast(product.strike, DTYPE)

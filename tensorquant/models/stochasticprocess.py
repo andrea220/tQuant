@@ -36,6 +36,11 @@ class StochasticProcess(ABC):
             tf.Tensor: Paths ``[n_paths, n_steps(, n_state)]`` (or the observed columns).
         """
 
+    def noise_size(self) -> int:
+        """Standard normals per path and time step (``dw`` is ``[n_paths, n_steps]`` when 1, else
+        ``[n_paths, n_steps, noise_size]``)."""
+        return 1
+
     @property
     def factors(self) -> int:
         """Alias of :meth:`size`."""

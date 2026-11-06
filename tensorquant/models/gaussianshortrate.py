@@ -150,6 +150,10 @@ class GaussianShortRateModel(StochasticProcess):
     def initial_values(self) -> tf.Tensor:
         return tf.zeros([self.size()], DTYPE)
 
+    def noise_size(self) -> int:
+        """Two shocks per factor and step (the factor and its integral)."""
+        return 2 * self.size()
+
     @property
     def curve(self) -> RateCurve:
         return self._curve

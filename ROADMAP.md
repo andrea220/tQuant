@@ -6,18 +6,6 @@ Current focus: equity.
 
 ## Equity models (next)
 
-- [ ] **Heston** (`models/heston.py`, `HestonModel(StochasticProcess)`), on the market forward like local vol and
-      displaced diffusion: `S = F(t) X`, `dX / X = sqrt(v) dW_1`, `dv = kappa (theta - v) dt + xi sqrt(v) dW_2`,
-      `d<W_1, W_2> = rho dt` (discrete dividends as proportional drops).
-  - closed form: characteristic function in the stable ("little trap") form, European prices by a Fourier method
-    in TF (COS or Lewis), float64, differentiable w.r.t. the parameters, forward and discount;
-  - calibration to the equity vol surface (`from_equity`): least squares on vega-weighted prices, AAD Jacobian,
-    bounds, Feller condition reported; sensitivities to the vol nodes through the calibration (implicit function
-    theorem, as the displaced diffusion);
-  - Monte Carlo: Andersen QE for the variance (+ martingale correction for X), two Gaussian draws per step:
-    `VanillaMCPricer` / `AutocallableMCPricer` to draw `[n_paths, n_steps, n_factors]` noise for 2-factor models;
-  - tests: Black-Scholes limit (xi -> 0), put-call parity, closed form vs MC, own parameters recovered, greeks vs
-    bumps, MC forward = market forward.
 - [ ] **Heston SLV** (stochastic local vol): `dX / X = L(t, X) sqrt(v) dW_1` with the Heston variance (vol of vol
       possibly scaled by a mixing fraction) and the leverage `L^2(t, x) = sigma_LV^2(t, x) / E[v | X = x]`
       (`sigma_LV` from `gatheral_local_vol`, conditional expectation by binning / regression in a calibration MC

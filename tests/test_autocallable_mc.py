@@ -217,6 +217,22 @@ class TestGreeks(ACTestCase):
         self.assertLess(abs(float(gbm.price) - float(dd.price)), 4 * se)
         self.check_vs_bump(tq.DisplacedDiffusionModel, 5_000)
 
+    def test_heston_flat_surface(self):
+        """Flat smile: Heston fits it with v0 = theta = vol^2 (vol of vol and mean reversion nearly degenerate),
+        the price is the GBM one within 4 SE; the AAD greeks reach spot and vol nodes (finite)."""
+        model = tq.HestonModel.from_equity(self.mkt.get_equity("UND"))
+        self.assertAlmostEqual(float(model.parameters["v0"]) ** 0.5, VOL, delta=1e-3)
+        self.assertAlmostEqual(float(model.parameters["theta"]) ** 0.5, VOL, delta=1e-3)
+        self.assertLess(model.calibration.max_error_volpts.max(), 0.01)
+        gbm, hes = make_autocallable(), make_autocallable()
+        self.price(gbm, model=tq.GeometricBrownianMotion, n_paths=20_000)
+        pricer = self.price(hes, model=tq.HestonModel, eps=0.0, n_paths=20_000, autodiff=True)
+        se = float(np.hypot(float(gbm.standard_error), float(hes.standard_error)))
+        self.assertLess(abs(float(gbm.price) - float(hes.price)), 4 * se)
+        d_spot, d_vol = pricer.tape.gradient(hes.price, [self.mkt.get_eq_spot("UND"),
+                                                         self.mkt.get_eq_vol_surface("UND").volatility_matrix])
+        self.assertTrue(np.isfinite(float(d_spot)) and np.all(np.isfinite(d_vol.numpy())))
+
     def test_local_vol_flat_surface_close_to_gbm(self):
         """Flat surface: local vol = GBM up to MC noise and the proportional vs escrowed dividends (none here)."""
         gbm, lv = make_autocallable(), make_autocallable()

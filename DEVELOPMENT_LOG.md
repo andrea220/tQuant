@@ -92,6 +92,19 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       `tape.gradient` gives pathwise delta, vega per node, rho, dividend sensitivities. Grid ends exactly at maturity
       (was the nearest point of a grid up to the last vol maturity), stateless Gaussian draws (CRN bumps),
       `product.standard_error`. Discrete dividends: escrowed `S − PV`, carry repo (as BS discrete).
+- [x] `HestonModel` (`models/heston.py`) on the market forward (`S = F(t) X`, discrete dividends as proportional
+      drops). Closed form: characteristic function in the stable form, COS (1024 terms, ±30 sd; the variance
+      cumulant from the CF: the Fang-Oosterlee c2 formula was 5-7% off) = Lewis quadrature to 1e-12 from 1W to 10Y
+      (very heavy tails, xi 1.5 / rho -0.9, still 1e-4 at 5Y). `from_equity`: least squares on the whole surface
+      (each slice scaled by its ATM vega), search on a cheap COS, polish on the full one inside the bounds,
+      guarded Newton refinement; greeks through the calibration with a value-preserving implicit step (the value
+      stays the bounded optimum, the derivative is -H^{-1} dgrad/dm): vega per node and delta = bump-and-recalibrate
+      to 1e-9 (exact fit) / 1e-6. 0.4 s per calibration (compiled residuals, gradient and Hessian traced once per
+      session). Synthetic SSVI: ATM within ~1.3 vol pts, short-term wings off (5-parameter Heston), Feller violated.
+      MC: Andersen QE with the exact martingale correction (QE-M), = closed form within 2 SE from 12 steps a year.
+      Pathwise AAD greeks = closed-form greeks; CRN bump-and-reprice is no reference for QE (the branch switch per
+      path makes the estimator jump: FD does not converge as the bump shrinks). `StochasticProcess.noise_size()`;
+      `VanillaMCPricer` / `AutocallableMCPricer` draw `[n_paths, n_steps, k]` normals for k > 1 (unchanged for 1).
 - [x] `DisplacedDiffusionModel` rewritten on the market forward (was built from floats S0 / flat r / q, numpy
       calibration, not usable by the MC pricers): `S = F(t) X`, `dX = sigma(t) (beta(t) X + 1 - beta(t)) dW`,
       `from_equity` (VanillaMCPricer / AutocallableMCPricer). Slice fit of the closed form (beta, sigma) per

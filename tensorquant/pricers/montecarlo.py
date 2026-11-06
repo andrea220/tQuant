@@ -101,7 +101,9 @@ class AutocallableMCPricer(Pricer):
         column = {d: i for i, d in enumerate(fixings)}     # paths are returned at the fixings only
 
         model = self._model.from_equity(eq, product.end_date, float(product.strike))
-        dw = tf.random.stateless_normal([self._n_paths, len(time_grid)], seed=[self._seed, 0], dtype=DTYPE)
+        k = model.noise_size()
+        dw = tf.random.stateless_normal([self._n_paths, len(time_grid)] + ([k] if k > 1 else []),
+                                        seed=[self._seed, 0], dtype=DTYPE)
         paths = model.evolve(tf.constant(time_grid, DTYPE), dw, observation_times=fixing_times)
         self.paths, self.time_grid, self.date_grid = paths, fixing_times, fixings
 
