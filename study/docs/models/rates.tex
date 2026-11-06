@@ -2,9 +2,31 @@
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Curves and bootstrap}\label{sec:mp-curves}
-Discount and index curves, interpolation, bootstrap from deposits, FRAs, swaps and OIS.
+A curve is a set of continuously compounded zero rates $r_i$ on pillars $T_i$ (Act/365), linear in between and
+flat outside:
+\[
+  P(0,T) = e^{-r(T)\,T}, \qquad
+  r(T) = r_i + \frac{r_{i+1} - r_i}{T_{i+1} - T_i}\,(T - T_i) \quad (T_i \le T < T_{i+1}).
+\]
+Derived quantities (\code{RateCurve}):
+\begin{itemize}[nosep]
+  \item zero rate $r(T) = -\ln P(0,T)/T$ (\code{zero\_rate}), the pillar values on the pillars;
+  \item simple forward $F(0;T_1,T_2) = \frac{1}{\tau}\big(P(0,T_1)/P(0,T_2) - 1\big)$, $\tau = T_2 - T_1$ in the curve
+        day count (\code{forward\_rate});
+  \item instantaneous forward $f(0,T) = -\partial_T \ln P(0,T) = r(T) + T\,r'(T)$ (\code{inst\_fwd}), exact;
+        $\tau F(0;T,T+\tau) = e^{\int_T^{T+\tau} f(0,u)\,\dd u} - 1$.
+\end{itemize}
+\emph{Consequence of the interpolation.} Linear zero rates have a slope $r'$ that jumps at each pillar, so $f(0,T)$
+is a saw-tooth with a jump $T_i\,\Delta r'_i$ at each pillar (at the pillar the right value, the forward of the next
+segment); the simple forwards average it and are continuous. Before the first and after the last pillar $f = r$.
 
-\pending
+\emph{Two curves.} Each currency has an overnight curve (ESTR, SONIA, SOFR) for discounting; an Ibor index has its
+own projection curve (EUR 6M) for the forward fixings $F(0;T,T+6\mathrm{M})$. The difference of the two forwards
+is the tenor basis (about 30--40bp on EUR 6M in the synthetic data).
+
+The sensitivities to the pillar rates are AAD gradients w.r.t.\ the pillar variables (bucketed rho).
+Bootstrap from deposits, FRAs, swaps and OIS: \pending
+\nb{01\_market\_handles.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Linear products}\label{sec:mp-linear}

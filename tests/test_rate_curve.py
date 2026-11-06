@@ -55,11 +55,14 @@ class TestRateCurveValues(unittest.TestCase):
         with self.assertRaises(TypeError):
             self.curve.discount(1)
 
-    def test_zero_rate_is_simple_compounded(self):
-        for t in [0.5, 1.5, 7.0]:
+    def test_zero_rate_is_continuously_compounded(self):
+        """r(T) = -ln P(0,T) / T: the pillar rates on the pillars, linear in between, flat outside, r(0) = r_1."""
+        for t in [0.1, 0.5, 1.5, 7.0]:
             with self.subTest(t=t):
-                p = ref_discount(t)
-                self.assertAlmostEqual(float(self.curve.zero_rate(t)), (1 - p) / (t * p), places=12)
+                self.assertAlmostEqual(float(self.curve.zero_rate(t)), -np.log(ref_discount(t)) / t, places=12)
+        for t, r in zip(PILLARS, RATES):
+            self.assertAlmostEqual(float(self.curve.zero_rate(t)), r, places=12)
+        self.assertEqual(float(self.curve.zero_rate(0.0)), RATES[0])
 
     def test_forward_rate(self):
         t1, t2 = 1.0, 2.5
@@ -110,14 +113,13 @@ class TestRateCurveDtypes(unittest.TestCase):
 
 
 class TestInstFwd(unittest.TestCase):
-    """inst_fwd: central difference of -log P with dt = 0.01."""
+    """inst_fwd: exact f(t) = r(t) + t r'(t), right derivative at a pillar, flat zero rate outside the pillars."""
 
     def setUp(self):
         self.curve = make_curve()
 
     def test_exact_inside_segments(self):
-        # Inside a segment -log P(t) = r(t)·t is quadratic, so the central difference
-        # is exact: f(t) = r(t) + t·r'(t).
+        # Inside a segment -log P(t) = r(t)·t is quadratic: f(t) = r(t) + t·r'(t).
         cases = {
             0.5: 0.020 + (0.002 / 0.75) * 0.25 + 0.5 * (0.002 / 0.75),
             1.5: 0.0225 + 1.5 * 0.001,
@@ -128,6 +130,17 @@ class TestInstFwd(unittest.TestCase):
         for t, expected in cases.items():
             with self.subTest(t=t):
                 self.assertAlmostEqual(float(self.curve.inst_fwd(t)), expected, places=12)
+
+    def test_pillars_and_short_end(self):
+        """At a pillar the right derivative (the next segment's slope); before the first pillar r_1; away from the
+        pillars = central difference of -ln P."""
+        self.assertAlmostEqual(float(self.curve.inst_fwd(1.0)), 0.022 + 1.0 * 0.001, places=14)          # right
+        self.assertAlmostEqual(float(self.curve.inst_fwd(0.25)), 0.020 + 0.25 * 0.002 / 0.75, places=14)
+        self.assertAlmostEqual(float(self.curve.inst_fwd(0.004)), 0.020, places=14)
+        h = 1e-5
+        for t in (0.6, 1.4, 3.3):
+            fd = -(np.log(ref_discount(t + h)) - np.log(ref_discount(t - h))) / (2 * h)
+            self.assertAlmostEqual(float(self.curve.inst_fwd(t)), fd, places=9)
 
     def test_dtype(self):
         f = self.curve.inst_fwd(1.5)
@@ -152,7 +165,9 @@ class TestInstFwd(unittest.TestCase):
 
 class TestHullWhiteUsesInstFwd(unittest.TestCase):
     """Hull-White closed forms consume the curve (inst_fwd for phi): values pinned with the legacy
-    HullWhiteProcess (a = 3%, sigma = 1%), now through GaussianShortRateModel (x = r - phi(t))."""
+    HullWhiteProcess (a = 3%, sigma = 1%), now through GaussianShortRateModel (x = r - phi(t)). t = 1 is a pillar:
+    alpha(1) and the bond were repinned when inst_fwd became exact (right derivative; the old central difference
+    straddled the kink: alpha 0.0238735, bond 0.9572420, A 0.9970701)."""
 
     def setUp(self):
         tq.Settings.evaluation_date = EVAL_DATE
@@ -161,14 +176,14 @@ class TestHullWhiteUsesInstFwd(unittest.TestCase):
 
     def test_pinned_values(self):
         zero = tf.zeros([1, 1], tf.float64)
-        self.assertAlmostEqual(float(self.curve.inst_fwd(0.0)), 0.02000000000000225, places=12)    # r(0)
-        self.assertAlmostEqual(float(self.hw.short_rate(1.0, zero)[0]), 0.023873525915961924, places=9)  # alpha(1)
+        self.assertAlmostEqual(float(self.curve.inst_fwd(0.0)), 0.02, places=15)                    # r(0)
+        self.assertAlmostEqual(float(self.hw.short_rate(1.0, zero)[0]), 0.02304852591595736, places=9)   # alpha(1)
         B = float(self.hw._B(2.0)[0])
         self.assertAlmostEqual(B, 1.941182213858376, places=12)
         x = tf.constant([[0.021]], tf.float64) - (self.hw.short_rate(1.0, zero)[0] - 0.0)
         bond = float(self.hw.zero_bond(1.0, 3.0, x)[0])                    # P(1, 3) at r(1) = 2.1%
-        self.assertAlmostEqual(bond, 0.9572420164457541, places=9)
-        self.assertAlmostEqual(bond / np.exp(-B * 0.021), 0.9970700983024687, places=9)          # A(1, 3)
+        self.assertAlmostEqual(bond, 0.9557102438503723, places=9)
+        self.assertAlmostEqual(bond / np.exp(-B * 0.021), 0.995474593063443, places=9)           # A(1, 3)
 
 class TestDividendCurvePV(unittest.TestCase):
     def setUp(self):

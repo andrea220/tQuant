@@ -9,6 +9,15 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
 - [x] Risk factors in market objects: float64 `variables`, `MarketEnvironment.risk_factors()`.
 - [x] dtype policy for market objects: float64 variables and float64 tensor outputs (`discount(0)` no longer returns `int`).
 - [x] `RateCurve.inst_fwd` returns a differentiable float64 tensor (was `math.log` → float, no gradient).
+- [x] Guided review, notebook 01 (market handles): `RateCurve.zero_rate` is the continuously compounded `-ln P / T` (the
+      stored pillar rates; was the simple rate `(1 - P) / (T P)`, unused outside the tests); `inst_fwd` exact
+      `r + T r'` through `LinearInterp.derivative` (right value at a pillar, flat outside; was a central difference
+      with step 0.01, which straddled the pillars and evaluated negative times near 0): Hull-White `phi` at a pillar
+      repinned (test curve: alpha(1) 0.0238735 → 0.0230485, alpha(2) of the rates MC curve 0.0268411 → 0.0255145),
+      unchanged inside the segments; English error message in `forward_rate`. Notebook 01 rewritten (curves table,
+      zero / DF / instantaneous and 6M forwards with the pillars, EUR 6M - ESTR basis, equities, smiles and ATM term
+      structure; the old one plotted the 6M curve three times by taking the `IR:*:VOL` / `SWVOL` keys); study docs:
+      Architecture (market data), Models and Pricing (curves, implied vol surface), Exercises (3 questions).
 - [x] `pandas` (CSV loading and display tables): cap `<3` removed in `setup.py` after the full test suite and examples
       1-4, `swap_pricing`, `autocallable`, `local_vol_mdm` passed with pandas 3.1.1 (`FutureWarning` as error);
       `requirements.txt` still pins the installed 2.2.2.

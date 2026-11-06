@@ -2,27 +2,94 @@
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Snapshots on disk}\label{sec:arch-snapshots}
-\code{marketdata/<yyyymmdd>/<calibration\_set>/} and its CSV files; the synthetic generator.
+A snapshot is a folder \code{marketdata/<yyyymmdd>/<calibration\_set>/} (\code{calibration\_set} = time of the
+snapshot, e.g.\ \code{2240}: several snapshots a day) with one CSV per data block; every file is optional.
+Values are quotes, not objects: the library builds the market objects when loading.
 
-\pending
+\begin{center}
+\small
+\begin{tabular}{@{}L{3.6cm}L{11.6cm}@{}}
+\toprule
+File & Columns \\
+\midrule
+\code{ir\_curves.csv} & \code{ccy, curve, pillar, value, quote, daycount, interp} (zero rates on pillar dates) \\
+\code{ir\_vol.csv} & \code{ccy, curve, vol\_type, expiry, strike, vol} (caplet vols) \\
+\code{ir\_swaption\_vol.csv} & \code{ccy, curve, expiry, tenor, strike\_offset, vol, vol\_type} \\
+\code{eq\_spot.csv} & \code{ticker, ccy, spot, repo, div\_yield} \\
+\code{eq\_dividends.csv} & \code{ticker, ccy, ex\_date, pay\_date, amount} \\
+\code{eq\_vol.csv} & \code{ticker, ccy, expiry, strike, vol} (Black vols on absolute strikes) \\
+\code{fx\_spot.csv}, \code{fx\_vol.csv} & \code{base, quote, spot}; \code{base, quote, expiry, strike, vol} \\
+\code{correlations.csv} & \code{factor\_1, factor\_2, corr} (pairs; factor = key prefix, e.g.\ \code{EQ:EUR:TICKER1}) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{MarketEnvironment.from\_folder} (arguments: the root folder, the date and the calibration set) loads
+the latest snapshot when the last two are \code{None}; the evaluation date is the folder date. \code{from\_frames} builds the market
+from the tables, \code{to\_frames} / \code{to\_folder} write it back (exact round trip). The synthetic snapshots
+come from \code{tq.generate\_market\_data} (tables) / \code{tq.generate\_market} (in memory), seeded:
+Nelson--Siegel OIS curves (EUR, GBP, USD) and EUR 6M as ESTR + spread, SSVI equity and FX smiles, caplet vols and
+swaption cube from one G2++, 50 tickers with discrete dividends, correlations.
+\nb{01\_market\_handles.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{MarketEnvironment and keys}\label{sec:arch-market-env}
-Keys \code{RISKFACTOR:CCY:TICKER:TYPE}, validation, typed accessors, I/O round trip.
-\nb{01\_market\_handles.ipynb}
+\code{MarketEnvironment} is the only access point to market data (pricers never read files or hold their own
+copies). It is a flat dictionary with keys \code{RISKFACTOR:CCY:TICKER:TYPE}:
+\code{RISKFACTOR} $\in$ \{\code{IR}, \code{EQ}, \code{FX}, \code{CORR}\} (enum \code{RiskFactor}),
+\code{TYPE} $\in$ \{\code{SPOT}, \code{VOL}, \code{SWVOL}, \code{REPO}, \code{DIVYIELD}, \code{DIV}\} (enum
+\code{MarketDataType}); \code{MarketMapValidator} checks the format and the type of each value.
 
-\pending
+\begin{center}
+\small
+\begin{tabular}{@{}L{4.4cm}L{4.3cm}L{6.1cm}@{}}
+\toprule
+Key & Value & Accessor \\
+\midrule
+\code{IR:EUR:ESTR:SPOT} & \code{RateCurve} & \code{get\_ir\_curve(ccy, ticker=None)} (default: OIS) \\
+\code{IR:EUR:6M:VOL} / \code{:SWVOL} & caplet \code{VolatilitySurface} / \code{SwaptionVolCube} & \code{get\_ir\_vol\_surface},
+  \code{get\_swaption\_vol\_cube} \\
+\code{EQ:EUR:X:SPOT}, \code{:REPO}, \code{:DIVYIELD} & float64 \code{tf.Variable} & \code{get\_eq\_spot},
+  \code{get\_eq\_repo}, \code{get\_eq\_div\_yield} \\
+\code{EQ:EUR:X:DIV} & \code{DividendCurve} & \code{get\_eq\_dividends} \\
+\code{EQ:EUR:X:VOL} & \code{VolatilitySurface} & \code{get\_eq\_vol\_surface}; all of them: \code{get\_equity} \\
+\code{FX:USD:EURUSD:SPOT} / \code{:VOL} & \code{tf.Variable} (1 EUR = $x$ USD) / surface & \code{get\_fx\_spot},
+  \code{get\_fx\_forward}, \code{get\_fx\_vol\_surface} \\
+\code{CORR:ALL:GLOBAL:SPOT} & \code{CorrelationMatrix} & \code{get\_correlation(names)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{get\_ir\_curve(ccy)} without a ticker returns the overnight curve of the currency (ESTR, SOFR, SONIA), the
+discount curve of everything in that currency; projection curves (e.g.\ EUR 6M) are asked by ticker.
+\nb{01\_market\_handles.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Market objects and risk factors}\label{sec:arch-risk-factors}
-\code{RateCurve}, \code{VolatilitySurface}, \code{DividendCurve}, \code{SwaptionVolCube},
-\code{CorrelationMatrix}, scalar equity data; \code{risk\_factors()}.
-
-\pending
+Every market input is a float64 \code{tf.Variable} owned by a market object, with a stable identity (updates by
+\code{assign}, so tapes and references stay valid). \code{market\_env.risk\_factors()} returns
+\code{\{key: [variables]\}}: one \code{tape.gradient(price, market\_env.risk\_factors())} gives every bucketed
+sensitivity at once.
+\begin{itemize}[nosep]
+  \item \code{RateCurve}: pillars (dates or year fractions, Act/365 in the snapshots), one variable per pillar zero
+        rate (\code{rates}, \code{variables}); \code{discount}, \code{zero\_rate}, \code{forward\_rate},
+        \code{inst\_fwd} (definitions: Models and Pricing, Curves). Interpolation \code{LINEAR} through
+        \code{numericalhandles.LinearInterp}.
+  \item \code{VolatilitySurface}: a grid of absolute strikes (\code{strike}) and maturities in years
+        (\code{maturity}); the vols are one variable, \code{volatility\_matrix} of shape $[n_T, n_K]$, read by
+        \code{volatility(strike, tenor)}; \code{vol\_type} is lognormal (equity, FX) or normal (caplets).
+  \item \code{DividendCurve}: fixed ex-dates, the amounts as one variable; PV with a discount curve.
+  \item Scalars (spot, repo, dividend yield, FX spot): one variable each; \code{MarketEnvironment} wraps a float
+        into a variable.
+  \item \code{SwaptionVolCube}, \code{CorrelationMatrix}: one variable each (cube; $[n, n]$ matrix).
+\end{itemize}
+\nb{01\_market\_handles.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{The Equity view}\label{sec:arch-equity}
-References to spot, repo, dividends, surface and discount curve; single place for the forward.
-\nb{03\_equity\_underlying.ipynb}
-
-\pending
+\code{market\_env.get\_equity(ticker)} returns an \code{Equity}: references (not copies) to spot, repo, dividend
+yield, dividends, vol surface and the discount curve of the currency, plus \code{currency} and \code{ticker}. It is
+the single place for the forward (\code{forward}, \code{pv\_dividends}, \code{implied\_div\_yield}) and the entry
+point of the model factories (\code{from\_equity}). Dividend model from the data: \code{DIV} present $\Rightarrow$
+\code{"discrete"} (\code{DIVYIELD} ignored), otherwise \code{"continuous"}.
+\nb{01\_market\_handles.ipynb} \nb{03\_equity\_underlying.ipynb}

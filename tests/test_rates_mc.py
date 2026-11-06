@@ -62,7 +62,9 @@ class TestClosedForms(RatesTestCase):
     # Legacy HullWhiteProcess / G2PlusPlusProcess closed forms (removed), pinned on the same inputs
     HW_BONDS = {(1.0, 4.0): [0.949350959054944, 0.9232685498151152, 0.8854823619908484],
                 (2.0, 7.0): [0.9067075755681021, 0.8674693209792198, 0.8117727051831314]}
-    HW_ALPHA = {1.0: 0.02404757138069243, 2.0: 0.026841118340126337}
+    # alpha(2) repinned when inst_fwd became exact (t = 2 is a pillar: right derivative; legacy central difference
+    # across the kink: 0.026841118340126337); alpha(1) unchanged (same slope on both sides)
+    HW_ALPHA = {1.0: 0.02404757138069243, 2.0: 0.02551445167345459}
     G2_BONDS = {(0.01, -0.005): 0.8726451304277352, (-0.02, 0.003): 0.9549468705302201}
 
     def test_hull_white_matches_the_legacy_process(self):

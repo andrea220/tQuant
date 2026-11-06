@@ -1,4 +1,4 @@
-from tensorflow import Tensor, Variable, constant, exp
+from tensorflow import Tensor, Variable, constant, convert_to_tensor, exp
 from tensorflow.math import log as tf_log
 import numpy
 from datetime import date, timedelta
@@ -270,14 +270,16 @@ class RateCurve:
             df = exp(nrt)
             return df
 
-    def zero_rate(self, term: Union[date, float]) -> float:
-        """Calculates the zero rate for a given term.
+    def zero_rate(self, term: Union[date, float]) -> Tensor:
+        """Continuously compounded zero rate ``r(T) = -ln P(0, T) / T`` (the quantity stored on the pillars).
+
+        Linear between the pillars, flat outside; at ``T = 0`` the limit, the first pillar rate.
 
         Args:
             term (Union[date, float]): The term for which to calculate the zero rate. Can be a date or year fraction.
 
         Returns:
-            float: The zero rate.
+            tf.Tensor: Scalar float64 zero rate, differentiable with respect to :attr:`variables`.
 
         Raises:
             TypeError: If the term is not a date or float.
@@ -288,8 +290,9 @@ class RateCurve:
             pass
         else:
             raise TypeError("term must be of type date or float")
-        P_tT = self.discount(term)
-        return (1 - P_tT) / (term * P_tT)
+        if term == 0.0:
+            return convert_to_tensor(self._rates[0])
+        return -tf_log(self.discount(term)) / term
 
     def forward_rate(self, d1: Union[date, float], d2: Union[date, float]) -> float:
         """Calculates the forward rate between two dates or year fractions.
@@ -317,14 +320,16 @@ class RateCurve:
             df1 = self.discount(d1)
             df2 = self.discount(d2)
         else:
-            raise TypeError("d1 e d2 devono essere entrambi date oppure entrambi float")
+            raise TypeError("d1 and d2 must be both dates or both floats")
 
         return (df1 / df2 - 1) / tau
 
     def inst_fwd(self, t: float) -> Tensor:
-        """Calculates the instantaneous forward rate at a specific time.
+        """Instantaneous forward rate ``f(0, t) = -d ln P(0, t) / dt = r(t) + t r'(t)``, exact.
 
-        Central difference of ``-log P(0, t)`` with step ``dt = 0.01``.
+        With zero rates linear between the pillars, ``r'`` jumps at each pillar: there ``f`` is the right
+        derivative (the forward of the period starting at the pillar). Flat zero rate outside the pillars:
+        ``f = r`` before the first and after the last pillar.
 
         Args:
             t (float): The time (in year fractions) to calculate the instantaneous forward rate.
@@ -333,10 +338,12 @@ class RateCurve:
             tf.Tensor: Scalar float64 instantaneous forward rate, differentiable with
                 respect to :attr:`variables`.
         """
-        # time-step needed for differentiation
-        dt = 0.01
-        expr = -(tf_log(self.discount(t + dt)) - tf_log(self.discount(t - dt))) / (2 * dt)
-        return expr
+        t = float(t)
+        if t < self._pillars[0]:
+            return convert_to_tensor(self._rates[0])
+        if t >= self._pillars[-1]:
+            return convert_to_tensor(self._rates[-1])
+        return self.interp.interpolate(t) + t * self.interp.derivative(t)
 
     def _set_rates(self, rates: list[float]) -> None:
         """Sets the pillar rates in place.

@@ -111,6 +111,16 @@ $\Nc(d_1)$ (times $e^{-qT}$) is the delta.
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Volatility: smile, local vol, displaced diffusion}
 
+\begin{question}{\Practice \diff{1}}{Which nodes carry the vega?}
+A price uses the vol surface at one $(K, T)$ between the nodes. Which nodes of \texttt{volatility\_matrix} does it
+depend on? Check it by bumping one node with \texttt{assign}. \nb{01\_market\_handles.ipynb}
+\end{question}
+\begin{answer}
+\texttt{volatility(K, T)} is bilinear and flat outside: only the 4 nodes around $(K, T)$ (2 on an edge, 1 at a
+corner), with the bilinear weights. Hence the bucketed vega (gradient w.r.t.\ the matrix) of a Black--Scholes price
+sits on those nodes; a model that builds its own surface (local vol) spreads it further.
+\end{answer}
+
 \begin{question}{\Theory \diff{2}}{Dupire formula}
 % TODO
 \end{question}

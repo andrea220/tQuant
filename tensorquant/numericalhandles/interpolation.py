@@ -48,6 +48,26 @@ class LinearInterp:
 
         raise ValueError(f"Term {term} is outside the range of x-values.")
 
+    def derivative(self, term):
+        """
+        Slope of the linear interpolant at *term*: ``(y[i+1] - y[i]) / (x[i+1] - x[i])`` on the segment that
+        :meth:`interpolate` uses (``x[i] <= term < x[i+1]``: at a knot, the segment on its right).
+
+        Args:
+            term (float): The x-value.
+
+        Returns:
+            The slope (same type as the y-values: tensors keep their gradients).
+
+        Raises:
+            ValueError: If the term is outside the range of x-values.
+        """
+        for i in range(0, len(self.x) - 1):
+            if term < self.x[i + 1]:
+                return (self.y[i + 1] - self.y[i]) / (self.x[i + 1] - self.x[i])
+
+        raise ValueError(f"Term {term} is outside the range of x-values.")
+
 
 def natural_cubic_spline(x, f, q, max_slope=None):
     """Natural cubic spline through ``(x, f)`` evaluated at ``q``: value, first and second derivative.

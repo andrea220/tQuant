@@ -15,13 +15,16 @@ $P(0,T) = e^{-r(T)\,T}$ and, by no-arbitrage,
 \end{answer}
 
 \begin{question}{\Practice \diff{1}}{Reading a curve from the MarketEnvironment}
-How do you get discount factors and 1Y forwards from a EUR curve in tQuant?
+How do you get discount factors, zero rates and 1Y forwards from the EUR curves in tQuant, and which curve
+discounts?
 \nb{01\_market\_handles.ipynb}
 \end{question}
 \begin{answer}
 \begin{itemize}[nosep]
-  \item \texttt{curve = mkt.get\_ir\_curve(tq.Currency.EUR, ticker=...)}
-  \item \texttt{curve.discount(T)}, \texttt{curve.forward\_rate(T, T+1)}
+  \item \texttt{mkt.get\_ir\_curve(tq.Currency.EUR)} returns the ESTR curve (discounting);
+        with \texttt{ticker="6M"} the Euribor 6M projection curve.
+  \item \texttt{curve.discount(T)}, \texttt{curve.zero\_rate(T)} ($-\ln P/T$, continuous compounding),
+        \texttt{curve.forward\_rate(T, T+1)}, \texttt{curve.inst\_fwd(T)}.
 \end{itemize}
 \end{answer}
 
@@ -32,6 +35,25 @@ Why is the instantaneous forward curve much less smooth than the zero curve?
 $f(0,T) = r(T) + T\,r'(T)$: the forward depends on the \emph{derivative} of the
 zero curve, so it amplifies any irregularity of the interpolation (e.g.\ linear
 on zero rates $\Rightarrow$ discontinuous forwards at the pillars).
+\end{answer}
+
+\begin{question}{\Practice \diff{2}}{The jump of the forward at a pillar}
+With zero rates linear between pillars, how large is the jump of $f(0,T)$ at a pillar $T_i$? Measure it on the
+ESTR curve and check $f \approx r + T\,r'$ away from the pillars. \nb{01\_market\_handles.ipynb}
+\end{question}
+\begin{answer}
+$\Delta f(T_i) = T_i\,(r'_{i+} - r'_{i-})$ (slopes of the two segments): it grows with $T_i$ for the same change of
+slope. In tQuant \texttt{inst\_fwd(T\_i)} is the right value; compare with
+\texttt{inst\_fwd(T\_i - 1e-6)}; away from pillars a central difference of $-\ln P$ matches \texttt{inst\_fwd}.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Tenor basis}
+Why does EUR need two curves (ESTR and Euribor 6M), and what is the tenor basis?
+\end{question}
+\begin{answer}
+Collateralised cash flows are discounted at the overnight rate (ESTR); Euribor 6M fixings embed term credit and
+liquidity premia, so they are projected on their own curve. The tenor basis is
+$F_{6M}(0;T,T+6\mathrm{M}) - F_{\mathrm{ESTR}}(0;T,T+6\mathrm{M})$ (tens of bp), the spread paid in basis swaps.
 \end{answer}
 
 % ─────────────────────────────────────────────────────────────────────────────

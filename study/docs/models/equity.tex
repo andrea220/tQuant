@@ -8,6 +8,17 @@ $X_t = S_t / F(t)$ used by the Monte Carlo models. \nb{03\_equity\_underlying.ip
 \pending
 
 % ─────────────────────────────────────────────────────────────────────────────
+\subsection{Implied volatility surface}\label{sec:mp-vol-surface}
+Market quotes are Black implied vols $\sigma_{ij}$ on maturities $T_i$ (years) $\times$ absolute strikes $K_j$. The
+surface used by the pricers (\code{VolatilitySurface.volatility(K, T)}) is bilinear in $(K, T)$ on the vols and flat
+outside the grid: a vol between nodes depends on the 4 surrounding nodes only, so the vega of a price is bucketed
+on the nodes (gradient w.r.t.\ the matrix). The interpolation is not arbitrage-free by construction (linear in vol,
+not in total variance); the local vol model builds its own smooth representation in total variance and forward
+moneyness (\S\ref{sec:mp-lv}). In the synthetic data the smiles come from an SSVI parametrisation (arbitrage-free on
+the nodes): steep negative skew at short maturities, flattening with $T$.
+\nb{01\_market\_handles.ipynb}
+
+% ─────────────────────────────────────────────────────────────────────────────
 \subsection{Black--Scholes}\label{sec:mp-bs}
 European prices on the forward, dividend models, American (Bjerksund--Stensland), greeks by AAD.
 \nb{04\_black\_scholes.ipynb}
