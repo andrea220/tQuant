@@ -46,6 +46,11 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       Nelson-Siegel spread, 30-40bp) and EUR 6M normal caplet vols from a normal SABR (beta = 0) smile (70-110bp); added
       to snapshot `20261105/2240` (other files unchanged). 5Y cap on 1M: K=2% 50,748, K=3% 21,455.
 
+- [x] Caplet vol stripping (`tensorquant/calibration/capletstripping.py`): `strip_caplet_vols` (per strike, caps by
+      increasing maturity, one vol for the caplets each cap adds, Brent root so the cap reprices its flat-vol quote)
+      and the inverse `cap_flat_vols`; `MarketEnvironment.set_ir_vol_surface`. Snapshot: flat cap vols 71-99bp; the
+      stripped vols reprice every cap with `CapFloorPricer` to 4e-12 and stay within 2.2bp of the SABR caplet vols.
+
 ## 4. Stochastic processes & Monte Carlo (`models/`, MC pricers, `analytics/`)
 
 - [x] dtype policy: **float64 everywhere** (decided; no float32 casts): GBM/ABM, `LocalVolatilityModel`,
@@ -61,6 +66,12 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       Euler `evolve(t0, x0, dt, dw)` + drift/diffusion/expectation no pricer used, overridden with other signatures);
       DD and `GaussianShortRateModel` (`evolve` = factors, `simulate` = draws + discount) on it.
 - [x] `HullWhiteProcess.x0` (was `.numpy()` on a numpy value: `AttributeError`).
+- [x] Calibration of `GaussianShortRateModel` to caplet vols (`tensorquant/calibration/shortrate.py`,
+      `calibrate_gaussian_short_rate`): model caplet in closed form (`caplet` / `exchange_option_values`: exchange option
+      between two bonds with the deterministic index basis, = MC within 2 SE), least squares on vega-scaled residuals
+      with the Jacobian by AAD, compiled with `tf.function` (G2++ 47 s → 1 s), bounded natural parameters with
+      `at_bound` report. Recovers HW params from HW-generated vols; snapshot ATM caplets: HW (a, sigma) rms 3.5bp
+      (a at the bound: increasing vols), G2++ max 0.25bp (rho at the bound: under-determined without swaptions).
 - [x] 4c `GaussianShortRateModel` (`hull_white`, `g2pp`; any n factors): `r = sum x_i + phi(t)` fitted to the market
       curve; exact joint simulation of `(x_i, int x_i)` (no time-step error, stateless seed, float64); bank-account
       discount `D(0,t) = P(0,t) exp(-sum I - V/2)`; Brigo-Mercurio closed-form bonds. The curve enters only through

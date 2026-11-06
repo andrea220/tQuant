@@ -855,6 +855,24 @@ class MarketEnvironment:
                 return leg_1 * leg_2
         raise ValueError(f"FX spot {base}{quote} cannot be resolved from the stored pairs {sorted(pairs)}")
 
+    def set_ir_vol_surface(self, ccy: Currency, ticker: str, surface: VolatilitySurface) -> None:
+        """Add or replace the caplet vol surface of a rate index (e.g. a stripped one).
+
+        Args:
+            ccy (Currency): Currency.
+            ticker (str): Index tenor (e.g. ``"6M"``); ``IR:<ccy>:<ticker>:VOL`` must be in the market map.
+            surface (VolatilitySurface): The caplet vols.
+
+        Raises:
+            ValueError: If the index has no VOL entry in the market map.
+            TypeError: If *surface* is not a :class:`VolatilitySurface`.
+        """
+        market_key = self._market_map.get(f"{RiskFactor.IR.value}:{ccy.name}:{ticker}", {}).get(MarketDataType.VOL.value)
+        if market_key is None:
+            raise ValueError(f"No VOL entry for IR:{ccy.name}:{ticker} in the market map")
+        MarketMapValidator.validate_market({market_key: surface})
+        self._market[market_key] = surface
+
     def get_ir_vol_surface(self, ccy: Currency, ticker: str) -> VolatilitySurface:
         """Caplet vol surface of a rate index (``IR:<ccy>:<ticker>:VOL``; ``vol_type`` normal or lognormal).
 

@@ -4,13 +4,14 @@ Open and future developments (moved from `CLAUDE.md`). Completed work: `DEVELOPM
 
 ## 3. Interest rates (analytic pricers)
 
-- [ ] Caplet vol stripping from market cap quotes (flat cap vols by maturity × strike): today the caplet vols are
-      stored directly (`IR:EUR:6M:VOL`).
 - [ ] Caps on overnight rates (compounded SOFR / SONIA / €STR caplets) and other Ibor indices: only EUR 6M now.
 
 ## 4. Stochastic processes & Monte Carlo (`models/`, MC pricers, `analytics/`)
 
-- [ ] Calibration of the Gaussian short rate models to rate vols (swaptions/caps): later (no swaption pricer).
+- [ ] Gaussian short rate calibration to caplets only is under-determined for G2++ (factor correlation ends at the
+      bound, a at 1e-4 on the synthetic market): swaptions (pricer + vols) would pin the correlation. Hull-White with
+      constant (a, sigma) fits only the ATM term structure (±6.5bp on the SABR market); time-dependent sigma(t) would
+      fit it exactly. Cap quotes are not part of the snapshot (only caplet vols); a market data file for them if needed.
 - [ ] Local vol MC noise is large in the wings and at long maturities (OTM call at 170%, 3Y: ±1 vol point with
       100k paths): variance reduction (antithetics, control variate on the forward) not done.
 

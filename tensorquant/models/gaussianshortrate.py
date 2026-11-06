@@ -136,6 +136,68 @@ class GaussianShortRateModel(StochasticProcess):
         phi = tf.cast(self._curve.inst_fwd(float(tt)), DTYPE) + 0.5 * tape.gradient(v, tt)
         return tf.reduce_sum(tf.cast(state, DTYPE), axis=-1) + phi
 
+    def exchange_option_values(self, t, s, e, A, B) -> tf.Tensor:
+        """Vectorized ``E[D(0,t) (a P(t,s) - b P(t,e))^+]`` given ``A = a P(0,s)`` and ``B = b P(0,e)``.
+
+        Args:
+            t, s, e: ``[n]`` year fractions (``t <= s, e``).
+            A, B: ``[n]`` forward values of the two legs at time 0 (tensors or arrays).
+
+        Returns:
+            tf.Tensor: ``[n]`` option values (Margrabe on the Gaussian log bond ratio).
+        """
+        t, s, e = (np.asarray(v, dtype=float) for v in (t, s, e))
+        k_i, k_j = self._kappa[:, None], self._kappa[None, :]
+        tt = tf.constant(t, DTYPE)[:, None, None]
+        cov = (self._sigma[:, None] * self._sigma[None, :] * self._rho)[None] *             (1.0 - tf.exp(-(k_i + k_j)[None] * tt)) / (k_i + k_j)[None]                    # [n, nf, nf]
+        db = self._B(e - t) - self._B(s - t)                                                  # [n, nf]
+        v = tf.sqrt(tf.maximum(tf.einsum("ni,nij,nj->n", db, cov, db), 1e-300))
+        A, B = _as_param(A), _as_param(B)
+        d1 = (tf.math.log(A / B) + 0.5 * v * v) / v
+        cdf = lambda x: 0.5 * (1.0 + tf.math.erf(x / np.sqrt(2.0)))
+        return A * cdf(d1) - B * cdf(d1 - v)
+
+    def bond_exchange_option(self, t, s, e, a, b) -> tf.Tensor:
+        """``E[D(0, t) (a P(t, s) - b P(t, e))^+]`` in closed form (``t <= s, e``).
+
+        ``ln(P(t,s) / P(t,e))`` is Gaussian with variance
+        ``v^2 = sum_ij rho_ij sigma_i sigma_j (B_i(e-t) - B_i(s-t)) (B_j(e-t) - B_j(s-t)) (1 - e^{-(k_i+k_j) t}) / (k_i + k_j)``,
+        so the value is ``A N(d1) - B N(d2)`` with ``A = a P(0, s)``, ``B = b P(0, e)``,
+        ``d1 = (ln(A/B) + v^2/2) / v``, ``d2 = d1 - v`` (Margrabe). Zero-bond options are the special
+        cases ``s = t`` (put on ``P(t, e)``) or ``e = t`` (call on ``P(t, s)``).
+        """
+        tt, ss, ee = self.time(t), self.time(s), self.time(e)
+        A = _as_param(a) * tf.cast(self._curve.discount(s if isinstance(s, date) else ss), DTYPE)
+        B = _as_param(b) * tf.cast(self._curve.discount(e if isinstance(e, date) else ee), DTYPE)
+        return self.exchange_option_values([tt], [ss], [ee], tf.reshape(A, [1]), tf.reshape(B, [1]))[0]
+
+    def caplet(self, fixing, start, end, strike: float, tau: float, basis=1.0, is_cap: bool = True) -> tf.Tensor:
+        """Caplet / floorlet per unit notional, paid at *end*, rate fixed at *fixing* on ``[start, end]``.
+
+        With a deterministic multiplicative basis between the index curve and the model (discount)
+        curve, ``1 + tau L = basis P(fix, start) / P(fix, end)``,
+        ``basis = [P_idx(0,start)/P_idx(0,end)] / [P(0,start)/P(0,end)]``, so the caplet is an exchange
+        option: ``E[D (basis P(fix, start) - (1 + tau K) P(fix, end))^+]`` (floor: the other way round).
+
+        Args:
+            fixing, start, end: Dates (or year fractions) of the period.
+            strike (float): Strike rate.
+            tau (float): Index accrual year fraction of the period.
+            basis: Index-vs-discount curve ratio (1 for a single curve).
+            is_cap (bool): Caplet (True) or floorlet.
+
+        Returns:
+            tf.Tensor: float64 value per unit notional (``tau`` included).
+        """
+        k_tau = 1.0 + tau * strike
+        cap = self.bond_exchange_option(fixing, start, end, basis, k_tau)
+        if is_cap:
+            return cap
+        # floor = cap - (basis P(0,start) - (1 + tau K) P(0,end))   (parity)
+        p_s = tf.cast(self._curve.discount(start if isinstance(start, date) else self.time(start)), DTYPE)
+        p_e = tf.cast(self._curve.discount(end if isinstance(end, date) else self.time(end)), DTYPE)
+        return cap - (_as_param(basis) * p_s - k_tau * p_e)
+
     # ------------------------------------------------------------------
     # Simulation
     # ------------------------------------------------------------------
