@@ -1,4 +1,4 @@
-"""Calibration of the Gaussian short rate models (Hull-White / G2++) to the market caplet vols."""
+"""Calibration of the Gaussian short rate models (Hull-White / G2++) to the market caplet and swaption vols."""
 
 from __future__ import annotations
 
@@ -62,9 +62,22 @@ NAMES = {1: ("a", "sigma"), 2: ("a", "b", "sigma", "eta", "rho")}
 BOUNDS = {"a": (1e-4, 3.0), "b": (1e-4, 3.0), "sigma": (1e-5, 0.1), "eta": (1e-5, 0.1), "rho": (-0.99, 0.99)}
 
 
-def _model(curve, factors: int, x: tf.Tensor) -> GaussianShortRateModel:
-    """Model from the parameter vector (``NAMES[factors]`` order)."""
+def _names(factors: int, sigma_times) -> tuple:
+    """Parameter names: ``NAMES[factors]``, or ``a, sigma_1..sigma_P`` for a piecewise Hull-White vol."""
+    if sigma_times is None:
+        return NAMES[factors]
+    return ("a",) + tuple(f"sigma_{k + 1}" for k in range(len(sigma_times) + 1))
+
+
+def _bounds(name: str) -> tuple:
+    return BOUNDS["sigma"] if name.startswith("sigma_") else BOUNDS[name]
+
+
+def _model(curve, factors: int, x: tf.Tensor, sigma_times=None) -> GaussianShortRateModel:
+    """Model from the full parameter vector (:func:`_names` order)."""
     if factors == 1:
+        if sigma_times is not None:
+            return GaussianShortRateModel.hull_white(curve, x[0], x[1:], sigma_times=sigma_times)
         return GaussianShortRateModel.hull_white(curve, x[0], x[1])
     return GaussianShortRateModel.g2pp(curve, x[0], x[1], x[2], x[3], x[4])
 
@@ -119,6 +132,9 @@ def calibrate_gaussian_short_rate(
     swaption_generator: Optional[SwaptionGenerator] = None,
     swaptions: Optional[Sequence[tuple]] = None,
     swaption_offsets: Sequence[float] = (0.0,),
+    swaption_method: str = "approx",
+    sigma_times=None,
+    fixed: Optional[dict] = None,
 ):
     """Calibrate Hull-White (``factors=1``) or G2++ (``factors=2``) to caplet and / or swaption vols.
 
@@ -129,7 +145,13 @@ def calibrate_gaussian_short_rate(
       closed form :meth:`GaussianShortRateModel.caplet`;
     - swaptions ``(expiry, tenor)`` of *swaptions* (``swaption_generator`` conventions) at the forward swap
       rate plus each of *swaption_offsets*: market Bachelier on the cube vols, model Gaussian swap-rate
-      approximation :meth:`GaussianShortRateModel.swaption`.
+      approximation (``swaption_method="approx"``) or exact formula (``"exact"``: Jamshidian /
+      Brigo-Mercurio), :meth:`GaussianShortRateModel.swaption`.
+
+    Hull-White with a piecewise constant vol: ``sigma_times`` = breakpoints, or ``"caplets"`` for the fixing
+    times of the calibration caplets (one vol per caplet: the ATM caplet term structure is matched exactly);
+    the parameters are then ``a, sigma_1..sigma_P``. Caplets alone do not determine ``a`` with a free
+    ``sigma(t)``: hold it with ``fixed={"a": ...}`` (or add swaptions).
 
     The model lives on the discount curve, the index curve through a deterministic basis. Least squares on
     vega-scaled price residuals (≈ normal vol errors), Jacobian by AAD compiled with ``tf.function``,
@@ -146,6 +168,9 @@ def calibrate_gaussian_short_rate(
         swaption_generator: Swaption conventions (needed with *swaptions*).
         swaptions: ``[(expiry, tenor), ...]`` terms, e.g. ``[("1Y", "5Y"), ("5Y", "10Y")]``.
         swaption_offsets: Strike offsets from the forward swap rate (default ATM only).
+        swaption_method: ``"approx"`` (Gaussian swap rate, default) or ``"exact"`` model swaptions.
+        sigma_times: Hull-White vol breakpoints (year fractions) or ``"caplets"`` (``factors=1`` only).
+        fixed: Parameters held at the given values, e.g. ``{"a": 0.03}``.
 
     Returns:
         tuple: ``(model, params, report)``: the calibrated :class:`GaussianShortRateModel` on the market
@@ -153,10 +178,15 @@ def calibrate_gaussian_short_rate(
             strike, market and model normal vols, error in bp).
 
     Raises:
-        ValueError: If *factors* is not 1 or 2, there are no instruments, or the vols are not normal.
+        ValueError: If *factors* is not 1 or 2, there are no instruments, the vols are not normal, or
+            *sigma_times* / *fixed* / *swaption_method* are invalid.
     """
     if factors not in (1, 2):
         raise ValueError("factors must be 1 (Hull-White) or 2 (G2++)")
+    if swaption_method not in ("approx", "exact"):
+        raise ValueError(f"swaption_method must be 'approx' or 'exact', got '{swaption_method}'")
+    if sigma_times is not None and factors != 1:
+        raise ValueError("sigma_times is for Hull-White (factors=1)")
     index = (generator.index if generator is not None else swaption_generator.swap_generator.index)
     ccy_str, _ = index.name.split(":")
     curve = market_env.get_ir_curve(Currency[ccy_str])
@@ -164,6 +194,15 @@ def calibrate_gaussian_short_rate(
     swpts = _swaption_instruments(market_env, swaption_generator, swaptions, swaption_offsets) if swaptions else []
     if not caps and not swpts:
         raise ValueError("no calibration instruments")
+    if isinstance(sigma_times, str):
+        if sigma_times != "caplets" or not caps:
+            raise ValueError("sigma_times must be breakpoints or 'caplets' (with caplets)")
+        sigma_times = sorted({r["t"] for r in caps})[:-1]
+    names = _names(factors, sigma_times)
+    fixed = dict(fixed or {})
+    if any(n not in names for n in fixed):
+        raise ValueError(f"fixed parameters must be among {names}")
+    free = [n for n in names if n not in fixed]
     market = np.array([r["market_price"] for r in caps] + [r["market_price"] for r in swpts])
     vega = np.array([r["vega"] for r in caps] + [r["vega"] for r in swpts])
 
@@ -191,12 +230,19 @@ def calibrate_gaussian_short_rate(
         sw_strike = np.array([r["K"] for r in swpts])
         sw_t = np.array([r["t"] for r in swpts])
 
+    def full_vector(x: tf.Tensor) -> tf.Tensor:
+        """Free parameters ``x`` (``free`` order) + the fixed ones, in ``names`` order."""
+        it = iter(range(len(free)))
+        return tf.stack([tf.constant(np.float64(fixed[n]), DTYPE) if n in fixed else x[next(it)] for n in names])
+
     def model_prices(x: tf.Tensor) -> tf.Tensor:
-        m = _model(curve, factors, x)
+        m = _model(curve, factors, full_vector(x), sigma_times)
         parts = []
         if caps:
             parts.append(m.exchange_option_values(t_fix, t_s, t_e, leg_a, leg_b))
-        if swpts:
+        if swpts and swaption_method == "exact":
+            parts.append(m.swaption_exact_values(strike=sw_strike, payer=True, **sw_arrays))
+        elif swpts:
             std = m.swaption_normal_vols(**sw_arrays) * np.sqrt(sw_t)
             d = (sw_forward - sw_strike) / std
             cdf = 0.5 * (1.0 + tf.math.erf(d / np.sqrt(2.0)))
@@ -209,7 +255,8 @@ def calibrate_gaussian_short_rate(
         with tf.GradientTape() as tape:
             tape.watch(x)
             p = model_prices(x)
-        return p, tape.jacobian(p, x)
+        # one backward pass per instrument in a while loop: the graph builds ~2x faster than with pfor
+        return p, tape.jacobian(p, x, experimental_use_pfor=False)
 
     cache = {}
 
@@ -221,16 +268,20 @@ def calibrate_gaussian_short_rate(
             cache[key] = (p.numpy(), (p.numpy() - market) / vega, j.numpy() / vega[:, None])
         return cache[key]
 
-    names = NAMES[factors]
-    start = initial or DEFAULT_START[factors]
-    x0 = np.array([start[n] for n in names], dtype=float)
-    lower, upper = (np.array([BOUNDS[n][i] for n in names]) for i in (0, 1))
+    start = dict(DEFAULT_START[factors])
+    start.update({n: start["sigma"] for n in names if n.startswith("sigma_")})
+    start.update(initial or {})
+    x0 = np.array([start[n] for n in free], dtype=float)
+    lower, upper = (np.array([_bounds(n)[i] for n in free]) for i in (0, 1))
     fit = least_squares(lambda x: evaluate(x)[1], np.clip(x0, lower, upper), jac=lambda x: evaluate(x)[2],
                         bounds=(lower, upper), method="trf", x_scale="jac", xtol=1e-10, ftol=1e-10, gtol=1e-10)
-    params = {n: float(v) for n, v in zip(names, fit.x)}
-    params["at_bound"] = [n for n, v in zip(names, fit.x) if np.isclose(v, BOUNDS[n][0]) or np.isclose(v, BOUNDS[n][1])]
+    full = full_vector(tf.constant(fit.x, DTYPE))
+    params = {n: float(v) for n, v in zip(names, full.numpy())}
+    params["at_bound"] = [n for n, v in zip(free, fit.x) if np.isclose(v, _bounds(n)[0]) or np.isclose(v, _bounds(n)[1])]
     params["evaluations"] = int(fit.nfev)
-    model = _model(curve, factors, tf.constant(fit.x, DTYPE))
+    if sigma_times is not None:
+        params["sigma_times"] = [float(t) for t in sigma_times]
+    model = _model(curve, factors, full, sigma_times)
 
     prices = evaluate(fit.x)[0]
     report = []

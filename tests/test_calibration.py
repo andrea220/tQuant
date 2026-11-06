@@ -174,17 +174,44 @@ class TestShortRateCalibration(unittest.TestCase):
         _, _, report = calibrate_gaussian_short_rate(self.mkt, generator(), 2, strikes=strikes)
         self.assertLess(report.error_bp.abs().max(), 0.05)
 
-    def test_atm_fit_on_the_synthetic_sabr_market(self):
+    def test_atm_fit_on_the_synthetic_market(self):
+        """Synthetic ATM caplet vols come from a G2++: G2++ fits them, constant Hull-White only roughly."""
         _, hw, rep_hw = calibrate_gaussian_short_rate(self.mkt, generator(), 1)
         _, g2, rep_g2 = calibrate_gaussian_short_rate(self.mkt, generator(), 2)
         self.assertLess(np.sqrt((rep_hw.error_bp ** 2).mean()), 10.0)   # 2 constant params: term structure only
-        self.assertLess(rep_g2.error_bp.abs().max(), 1.0)
+        self.assertLess(rep_g2.error_bp.abs().max(), 0.3)
         self.assertEqual(len(rep_hw), 19)
         self.assertIn("at_bound", hw)
+
+    def test_hull_white_piecewise_sigma_fits_the_atm_caplets_exactly(self):
+        """One vol per caplet (breakpoints at the fixings), mean reversion held: every ATM caplet repriced."""
+        _, params, report = calibrate_gaussian_short_rate(self.mkt, generator(), 1, sigma_times="caplets",
+                                                          fixed={"a": 0.03})
+        self.assertLess(report.error_bp.abs().max(), 1e-3)                  # solver tolerance
+        self.assertEqual(params["a"], 0.03)
+        self.assertEqual(len(params["sigma_times"]), 18)
+        self.assertEqual(sum(k.startswith("sigma_") and k != "sigma_times" for k in params), 19)
+
+    def test_recovers_piecewise_hull_white_vols(self):
+        strikes = [0.02, 0.03]
+        knots, sigmas = [2.0, 5.0], [0.007, 0.010, 0.008]
+        truth = tq.GaussianShortRateModel.hull_white(self.mkt.get_ir_curve(tq.Currency.EUR), 0.04, sigmas, sigma_times=knots)
+        self.mkt.set_ir_vol_surface(tq.Currency.EUR, "6M", model_implied_surface(self.mkt, truth, strikes))
+        _, params, report = calibrate_gaussian_short_rate(self.mkt, generator(), 1, strikes=strikes, sigma_times=knots,
+                                                          fixed={"a": 0.04})
+        for k, s in enumerate(sigmas):
+            self.assertAlmostEqual(params[f"sigma_{k + 1}"], s, delta=1e-8)
+        self.assertLess(report.error_bp.abs().max(), 1e-4)
 
     def test_invalid_inputs(self):
         with self.assertRaises(ValueError):
             calibrate_gaussian_short_rate(self.mkt, generator(), 3)
+        with self.assertRaises(ValueError):
+            calibrate_gaussian_short_rate(self.mkt, generator(), 2, sigma_times=[1.0])     # sigma(t): Hull-White only
+        with self.assertRaises(ValueError):
+            calibrate_gaussian_short_rate(self.mkt, generator(), 1, sigma_times="swaptions")
+        with self.assertRaises(ValueError):
+            calibrate_gaussian_short_rate(self.mkt, generator(), 1, fixed={"kappa": 0.1})
         lognormal = VolatilitySurface(EVAL_DATE, None, DayCounter(DayCounterConvention.Actual365), [0.01, 0.03],
                                       [1.0, 5.0], [[0.3, 0.3], [0.3, 0.3]], vol_type="lognormal")
         self.mkt.set_ir_vol_surface(tq.Currency.EUR, "6M", lognormal)

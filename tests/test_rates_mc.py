@@ -78,6 +78,72 @@ class TestClosedForms(RatesTestCase):
         for (x, y), bond in self.G2_BONDS.items():
             self.assertAlmostEqual(float(m.zero_bond(2.0, 6.0, tf.constant([[x, y]], tf.float64))[0]), bond, places=9)
 
+class TestPiecewiseVol(RatesTestCase):
+    """Hull-White with sigma(t) piecewise constant (exact integrals over the pieces)."""
+    KNOTS = [1.0, 3.0, 6.0]
+    SIGMAS = [0.006, 0.009, 0.012, 0.008]
+
+    def piecewise(self):
+        return tq.GaussianShortRateModel.hull_white(self.curve, HW["a"], self.SIGMAS, sigma_times=self.KNOTS)
+
+    def test_equal_pieces_are_the_constant_model(self):
+        const = self.models()["HW"]
+        flat = tq.GaussianShortRateModel.hull_white(self.curve, HW["a"], [HW["sigma"]] * 4, sigma_times=self.KNOTS)
+        x = tf.constant([[0.01], [-0.02]], tf.float64)
+        for t, T in ((0.0, 2.0), (0.5, 4.0), (2.5, 12.0)):
+            self.assertAlmostEqual(float(flat.variance(t, T)) / float(const.variance(t, T)), 1.0, places=13)
+            np.testing.assert_allclose(flat.zero_bond(t, T, x).numpy(), const.zero_bond(t, T, x).numpy(), rtol=1e-14)
+        self.assertAlmostEqual(float(flat.caplet(4.0, 4.0, 4.5, 0.03, 0.5)), float(const.caplet(4.0, 4.0, 4.5, 0.03, 0.5)),
+                               places=15)
+        np.testing.assert_allclose(flat.simulate([0.5, 2.0, 7.0], 500, seed=2)[1].numpy(),
+                                   const.simulate([0.5, 2.0, 7.0], 500, seed=2)[1].numpy(), rtol=1e-12)
+
+    def test_variance_against_quadrature(self):
+        """Var(x(t)) and V(t, T) vs numerical integrals of sigma(v)^2 e^{-2a(t-v)} and sigma(v)^2 B(T-v)^2."""
+        m, a = self.piecewise(), HW["a"]
+        sig = lambda v: np.select([v < 1.0, v < 3.0, v < 6.0], self.SIGMAS[:3], self.SIGMAS[3])
+        v = np.linspace(0.0, 10.0, 2_000_001)
+        dv = v[1] - v[0]
+        trap = lambda f: float(np.sum(0.5 * (f[1:] + f[:-1])) * dv)
+        for t in (0.7, 4.0, 10.0):
+            f = np.where(v <= t, sig(v) ** 2 * np.exp(-2 * a * (t - v)), 0.0)
+            self.assertAlmostEqual(float(m.factor_covariance(t)[0, 0]) / trap(f), 1.0, places=5)
+        t, T = 2.0, 8.0
+        f = np.where((v >= t) & (v <= T), sig(v) ** 2 * ((1 - np.exp(-a * (T - v))) / a) ** 2, 0.0)
+        self.assertAlmostEqual(float(m.variance(t, T)) / trap(f), 1.0, places=5)
+
+    def test_monte_carlo(self):
+        """Exact simulation over the pieces: martingales, Var(x(t)) and the caplet closed form."""
+        m, n = self.piecewise(), 100_000
+        times = [0.5, 2.0, 4.0, 8.0]
+        xs, D = m.simulate(times, n, seed=21)
+        for k, t in enumerate(times):
+            d = D[:, k].numpy()
+            v = (D[:, k] * m.zero_bond(t, 12.0, xs[:, k])).numpy()
+            with self.subTest(t=t):
+                self.assertLess(abs(d.mean() - float(self.curve.discount(t))), 4 * d.std() / np.sqrt(n))
+                self.assertLess(abs(v.mean() - float(self.curve.discount(12.0))), 4 * v.std() / np.sqrt(n))
+                self.assertAlmostEqual(xs[:, k, 0].numpy().var() / float(m.factor_covariance(t)[0, 0]), 1.0, delta=0.03)
+        ps, pe = m.zero_bond(4.0, 4.0, xs[:, 2]), m.zero_bond(4.0, 4.5, xs[:, 2])
+        payoff = (D[:, 2] * tf.maximum(ps - (1 + 0.5 * 0.03) * pe, 0.0)).numpy()
+        self.assertLess(abs(payoff.mean() - float(m.caplet(4.0, 4.0, 4.5, 0.03, 0.5))), 4 * payoff.std() / np.sqrt(n))
+
+    def test_gradient_to_a_piece_and_validation(self):
+        sig = tf.Variable(np.array(self.SIGMAS))
+        with tf.GradientTape() as tape:
+            m = tq.GaussianShortRateModel.hull_white(self.curve, HW["a"], sig, sigma_times=self.KNOTS)
+            v = m.caplet(2.0, 2.0, 2.5, 0.03, 0.5)
+        g = tape.gradient(v, sig).numpy()
+        self.assertGreater(g[0], 0.0)
+        self.assertGreater(g[1], 0.0)
+        np.testing.assert_array_equal(g[2:], 0.0)                     # the 2Y caplet does not see the vol after 2Y
+        self.assertEqual(m.sigma_times, self.KNOTS)
+        with self.assertRaises(ValueError):
+            tq.GaussianShortRateModel.hull_white(self.curve, 0.05, [0.01, 0.01], sigma_times=[1.0, 2.0])
+        with self.assertRaises(ValueError):
+            tq.GaussianShortRateModel.hull_white(self.curve, 0.05, [0.01, 0.01, 0.01], sigma_times=[2.0, 1.0])
+
+
 class TestSimulation(RatesTestCase):
     N = 50_000
 

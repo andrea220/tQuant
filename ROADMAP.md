@@ -8,12 +8,10 @@ Open and future developments (moved from `CLAUDE.md`). Completed work: `DEVELOPM
 
 ## 4. Stochastic processes & Monte Carlo (`models/`, MC pricers, `analytics/`)
 
-- [ ] Synthetic caplet vols and swaption cube are generated independently (two SABR blocks), not from one model: the
-      joint G2++ calibration on the snapshot leaves 3-9bp errors with rho at the bound (-0.99, nearly offsetting
-      factors). Generate both from one consistent model if the joint fit should be exact.
-- [ ] G2++ swaptions by the Gaussian swap-rate approximation (frozen weights: flat normal smile, ≤ 0.4bp ATM / 0.8bp
-      at ±1% vs MC); the exact Brigo-Mercurio 1D-integral formula if needed. Hull-White with constant (a, sigma) fits
-      only the ATM caplet term structure (±6.5bp): time-dependent sigma(t) would fit it exactly.
+- [ ] Gaussian models give a (nearly) flat normal smile: the synthetic SABR smile on top of the G2++ ATM vols is not
+      fitted (only ATM). A smile needs another model (e.g. SABR / Cheyette with local vol), not planned.
+- [ ] Exact swaptions for one or two factors only (Jamshidian / Brigo-Mercurio); piecewise sigma(t) for Hull-White only
+      in the calibration (the model accepts it for any number of factors).
 - [ ] Swaptions: physical settlement only (EUR market swaptions are cash-settled with the IRR annuity); no Bermudans.
       Cap quotes are not part of the snapshot (only caplet vols); a market data file for them if needed.
 - [ ] Local vol MC noise is large in the wings and at long maturities (OTM call at 170%, 3Y: ±1 vol point with

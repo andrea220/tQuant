@@ -63,6 +63,26 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       `calibrate_gaussian_short_rate` (batched, 50 s → 5 s); recovers the G2++ parameters (rho included) from
       model-generated caplet + swaption vols.
 
+- [x] Synthetic EUR 6M caplet vols and swaption cube from one G2++ (parameters drawn per seed): ATM caplets by the
+      closed form, ATM swaptions by the exact formula, normal SABR smile on top (vol(K) = ATM · sabr(K)/sabr(ATM));
+      caplet expiries every 6M (on the fixings of the caplets). Joint calibration on the snapshot: caplets and
+      swaptions within 0.1bp (exact) / 0.3bp (approx), the generating parameters back within ~5% (seed 42: a
+      0.0210 vs 0.0207, rho -0.621 vs -0.624; the residue is conventions: dates, lags). Snapshot `20261105/2240`:
+      only `ir_vol.csv` and `ir_swaption_vol.csv` rewritten.
+- [x] Exact swaptions in `GaussianShortRateModel` (`swaption(..., method="exact")`, batched `swaption_exact_values`):
+      bond portfolio at expiry under the expiry-forward measure, Jamshidian for one factor, Brigo-Mercurio
+      (Gauss-Hermite on the first factor, closed form on the second) for G2++; roots by bisection outside the tape
+      (the value is stationary in the root, so AAD stays exact: gradient = FD to 1e-10). Vs MC (400k paths) within
+      2.6 SE at -1%/ATM/+1%, parity exact; `swaption_method="exact"` in the calibration (≈ 5 s for 19 caplets + 12
+      swaptions, ~3 s of it the one-off graph build; Jacobian by a while loop of backward passes, 2x faster to
+      build than pfor). Generator and exposures kept fast: swaptions batched in one call, discount factors cached
+      per date, variance kernels computed only when needed (`generate_market` 0.5 s, exposure tests 38 → 27 s).
+- [x] Piecewise constant vols (`sigma_times`) in `GaussianShortRateModel`: every variance / covariance as exact
+      integrals over the pieces (expm1, more accurate than before for small speeds: 2.5e-5 → 7e-8 relative at
+      a = 1e-4); constant case unchanged (1e-16). Hull-White sigma(t) in `calibrate_gaussian_short_rate`
+      (`sigma_times="caplets"`: one vol per caplet, `fixed={"a": ...}`): every ATM caplet repriced (< 0.001bp,
+      constant HW: rms 3bp).
+
 ## 4. Stochastic processes & Monte Carlo (`models/`, MC pricers, `analytics/`)
 
 - [x] dtype policy: **float64 everywhere** (decided; no float32 casts): GBM/ABM, `LocalVolatilityModel`,

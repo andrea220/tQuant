@@ -21,6 +21,7 @@ SSVI (Gatheral-Jacquier): ``w(k, T) = theta/2 (1 + rho phi k + sqrt((phi k + rho
 from __future__ import annotations
 
 from datetime import date, timedelta
+from functools import lru_cache
 from typing import Sequence
 
 import numpy as np
@@ -31,7 +32,7 @@ CURVES = {"EUR": ("ESTR", 0.028, 0.020), "GBP": ("SONIA", 0.042, 0.040), "USD": 
 CURVE_TENORS_M = [1, 3, 6, 12, 24, 36, 60, 84, 120, 180, 240, 360]
 FX_SPOTS = [("EUR", "USD", 1.0850), ("GBP", "USD", 1.2700)]   # 1 base = spot quote
 EUR6M_SPREAD = ((0.0020, 0.0030), (0.0030, 0.0045))          # short, long spread ranges over ESTR
-CAPLET_EXPIRIES_M = [6, 12, 18, 24, 36, 48, 60, 84, 120]
+CAPLET_EXPIRIES_M = list(range(6, 121, 6))                       # every 6M: on the fixings of the caplets
 CAPLET_STRIKES = [round(k, 4) for k in np.arange(-0.005, 0.0601, 0.005)]
 SWAPTION_EXPIRIES_M = [6, 12, 24, 36, 60, 84, 120]
 SWAPTION_TENORS = ["1Y", "2Y", "5Y", "10Y", "20Y"]
@@ -102,43 +103,107 @@ def sabr_normal_vol(F: float, K: np.ndarray, T: float, alpha: float, rho: float,
     return alpha * ratio * (1.0 + (2.0 - 3.0 * rho ** 2) / 24.0 * nu ** 2 * T)
 
 
-def caplet_vol_table(evaluation_date: date, curves: pd.DataFrame, rng) -> pd.DataFrame:
-    """EUR 6M caplet normal vols on (fixing expiry x absolute strike), normal SABR around the 6M forward."""
+def _rate_model_parameters(rng) -> dict:
+    """G2++ parameters behind the synthetic EUR 6M caplet vols and swaption cube (first draws of the stream)."""
+    return dict(a=rng.uniform(0.02, 0.06), b=rng.uniform(0.40, 0.90), sigma=rng.uniform(0.008, 0.011),
+                eta=rng.uniform(0.007, 0.010), rho=rng.uniform(-0.85, -0.60))
+
+
+def _rate_model(evaluation_date: date, curves: pd.DataFrame, params: dict):
+    """The G2++ on the ESTR curve and the discount functions (date -> float) of ESTR and EUR 6M."""
     from .ircurve import RateCurve
+    from ..models.gaussianshortrate import GaussianShortRateModel
+    from ..timehandles.daycounter import DayCounterConvention
+
+    def curve(name):
+        grp = curves[(curves.ccy == "EUR") & (curves.curve == name)]
+        return RateCurve(evaluation_date, list(grp["pillar"]), list(grp["value"]), "LINEAR", DayCounterConvention.Actual365)
+
+    disc, fwd = curve("ESTR"), curve("6M")
+    # discount factors as numbers, cached per date (the node schedules share most of their dates)
+    p_disc = lru_cache(maxsize=None)(lambda d: float(disc.discount(d)))
+    p_fwd = lru_cache(maxsize=None)(lambda d: float(fwd.discount(d)))
+    return GaussianShortRateModel.g2pp(disc, **params), p_disc, p_fwd
+
+
+def caplet_vol_table(evaluation_date: date, curves: pd.DataFrame, params: dict, rng) -> pd.DataFrame:
+    """EUR 6M caplet normal vols on (fixing expiry x absolute strike).
+
+    ATM vols from the G2++ *params* on the ESTR curve (closed-form caplets on ``[expiry, expiry + 6M]`` with the 6M basis,
+    the same model as :func:`swaption_vol_table`), smile from a normal SABR around the 6M forward:
+    ``vol(K) = atm * sabr(F, K) / sabr(F, F)``.
+    """
     from ..timehandles.daycounter import DayCounter, DayCounterConvention
 
-    grp = curves[(curves.ccy == "EUR") & (curves.curve == "6M")]
-    curve = RateCurve(evaluation_date, list(grp["pillar"]), list(grp["value"]), "LINEAR", DayCounterConvention.Actual365)
-    a360 = DayCounter(DayCounterConvention.Actual360)
-    a_short, a_long = rng.uniform(0.0070, 0.0095), rng.uniform(0.0055, 0.0075)   # ATM normal vol, short / long
+    model, disc, fwd = _rate_model(evaluation_date, curves, params)
+    a360, a365 = DayCounter(DayCounterConvention.Actual360), DayCounter(DayCounterConvention.Actual365)
     rho, nu = rng.uniform(-0.20, 0.20), rng.uniform(0.25, 0.45)
-    rows = []
+    nodes = []
     for m in CAPLET_EXPIRIES_M:
         expiry, end = add_months(evaluation_date, m), add_months(evaluation_date, m + 6)
-        t = (expiry - evaluation_date).days / 365.0
-        F = (float(curve.discount(expiry)) / float(curve.discount(end)) - 1.0) / a360.year_fraction(expiry, end)
-        alpha = a_long + (a_short - a_long) * np.exp(-t / 3.0)
-        vols = sabr_normal_vol(F, CAPLET_STRIKES, t, alpha, rho, nu)
+        tau = a360.year_fraction(expiry, end)
+        F = (fwd(expiry) / fwd(end) - 1.0) / tau
+        basis = (fwd(expiry) / fwd(end)) / (disc(expiry) / disc(end))
+        nodes.append((expiry, a365.year_fraction(evaluation_date, expiry), a365.year_fraction(evaluation_date, end),
+                      tau, F, basis * disc(expiry), (1.0 + tau * F) * disc(end), disc(end)))
+    # all the ATM caplets at once: E[D (basis P(t, t) - (1 + tau F) P(t, end))^+]
+    t = np.array([n[1] for n in nodes])
+    prices = model.exchange_option_values(t, t, [n[2] for n in nodes], [n[5] for n in nodes], [n[6] for n in nodes]).numpy()
+    rows = []
+    for (expiry, t, _, tau, F, _, _, p_end), price in zip(nodes, prices):
+        atm = price / (tau * p_end) * np.sqrt(2.0 * np.pi / t)                          # ATM Bachelier inverted
+        smile = sabr_normal_vol(F, CAPLET_STRIKES, t, atm, rho, nu) / sabr_normal_vol(F, [F], t, atm, rho, nu)[0]
         rows += [{"ccy": "EUR", "curve": "6M", "expiry": expiry, "strike": k, "vol": round(float(v), 8),
-                  "vol_type": "normal"} for k, v in zip(CAPLET_STRIKES, vols)]
+                  "vol_type": "normal"} for k, v in zip(CAPLET_STRIKES, atm * smile)]
     return pd.DataFrame(rows)
 
 
-def swaption_vol_table(evaluation_date: date, rng) -> pd.DataFrame:
-    """EUR 6M swaption normal vols: ATM level with expiry / tenor shape, normal SABR smile in K - F (beta = 0
-    makes the smile depend on K - F only, so no forward swap rate is needed)."""
-    level = rng.uniform(0.0075, 0.0095)
+def swaption_vol_table(evaluation_date: date, curves: pd.DataFrame, params: dict, rng) -> pd.DataFrame:
+    """EUR 6M swaption normal vols on (expiry x tenor x strike offset).
+
+    ATM vols from the G2++ *params* (the model of :func:`caplet_vol_table`), exact formula
+    (Brigo-Mercurio) on swaps starting at expiry (fixed annual Act/360, floating 6M Act/360 with the 6M basis);
+    smile from a normal SABR in ``K - F`` (beta = 0: depends on ``K - F`` only).
+    """
+    from ..timehandles.daycounter import DayCounter, DayCounterConvention
+
+    model, disc, fwd = _rate_model(evaluation_date, curves, params)
+    a360, a365 = DayCounter(DayCounterConvention.Actual360), DayCounter(DayCounterConvention.Actual365)
+    yf = lambda d: a365.year_fraction(evaluation_date, d)
     rho, nu = rng.uniform(-0.20, 0.20), rng.uniform(0.25, 0.40)
-    rows = []
+    p0 = disc
+    nodes, arrays = [], {k: [] for k in ("te", "p0_te", "pay_t", "pay_w", "p0_pay", "st_t", "st_w", "p0_st",
+                                         "en_t", "en_w", "p0_en")}
     for m in SWAPTION_EXPIRIES_M:
         expiry = add_months(evaluation_date, m)
-        t = (expiry - evaluation_date).days / 365.0
         for tenor in SWAPTION_TENORS:
-            years = float(tenor[:-1])
-            alpha = level * (0.85 + 0.25 * np.exp(-t / 3.0)) * (0.80 + 0.30 * np.exp(-years / 7.0))
-            vols = sabr_normal_vol(0.0, np.asarray(SWAPTION_OFFSETS), t, alpha, rho, nu / np.sqrt(1.0 + years / 10.0))
-            rows += [{"ccy": "EUR", "curve": "6M", "expiry": expiry, "tenor": tenor, "strike_offset": k,
-                      "vol": round(float(v), 8), "vol_type": "normal"} for k, v in zip(SWAPTION_OFFSETS, vols)]
+            years = int(tenor[:-1])
+            pay = [add_months(expiry, 12 * k) for k in range(1, years + 1)]
+            starts = [add_months(expiry, 6 * k) for k in range(2 * years)]
+            ends = [add_months(expiry, 6 * k + 6) for k in range(2 * years)]
+            basis = [(fwd(st) / fwd(en)) / (p0(st) / p0(en)) for st, en in zip(starts, ends)]
+            row = dict(te=yf(expiry), p0_te=p0(expiry), pay_t=[yf(d) for d in pay],
+                       pay_w=[a360.year_fraction(add_months(d, -12), d) for d in pay], p0_pay=[p0(d) for d in pay],
+                       st_t=[yf(d) for d in starts], st_w=basis, p0_st=[p0(d) for d in starts],
+                       en_t=[yf(d) for d in ends], en_w=[1.0] * len(ends), p0_en=[p0(d) for d in ends])
+            for k, v in row.items():
+                arrays[k].append(v)
+            annuity = float(np.dot(row["pay_w"], row["p0_pay"]))
+            nodes.append((expiry, tenor, years, row["te"], annuity,
+                          (float(np.dot(row["st_w"], row["p0_st"])) - float(np.dot(row["en_w"], row["p0_en"]))) / annuity))
+    # all the ATM swaptions in one batched exact call (flows padded with zero weights, last time repeated)
+    width = max(len(v) for v in arrays["pay_t"] + arrays["st_t"])
+    pad = lambda rows, times: np.array([r + [r[-1] if times else 0.0] * (width - len(r)) for r in rows])
+    batch = {k: (np.array(v) if k in ("te", "p0_te") else pad(v, k.endswith("_t") or k.startswith("p0_")))
+             for k, v in arrays.items()}
+    prices = model.swaption_exact_values(strike=np.array([n[5] for n in nodes]), **batch).numpy()
+    rows = []
+    for (expiry, tenor, years, t, annuity, _), price in zip(nodes, prices):
+        atm = price / annuity * np.sqrt(2.0 * np.pi / t)                               # ATM Bachelier inverted
+        nu_t = nu / np.sqrt(1.0 + years / 10.0)
+        smile = sabr_normal_vol(0.0, np.asarray(SWAPTION_OFFSETS), t, atm, rho, nu_t) /             sabr_normal_vol(0.0, [0.0], t, atm, rho, nu_t)[0]
+        rows += [{"ccy": "EUR", "curve": "6M", "expiry": expiry, "tenor": tenor, "strike_offset": k,
+                  "vol": round(float(v), 8), "vol_type": "normal"} for k, v in zip(SWAPTION_OFFSETS, atm * smile)]
     return pd.DataFrame(rows)
 
 
@@ -165,8 +230,9 @@ def generate_market_data(
     currencies = [ccy for ccy, n in tickers_per_currency for _ in range(n)]
     tickers = [f"TICKER{i}" for i in range(1, len(currencies) + 1)]
     curves = curve_table(evaluation_date, rng["curves"])
-    ir_vol = caplet_vol_table(evaluation_date, curves, rng["rate_vols"])
-    sw_vol = swaption_vol_table(evaluation_date, rng["swaption_vols"])
+    rate_model = _rate_model_parameters(rng["rate_vols"])          # one G2++ behind caplets and swaptions
+    ir_vol = caplet_vol_table(evaluation_date, curves, rate_model, rng["rate_vols"])
+    sw_vol = swaption_vol_table(evaluation_date, curves, rate_model, rng["swaption_vols"])
     fx_spot = pd.DataFrame(FX_SPOTS, columns=["base", "quote", "spot"])
 
     # equities: spots, repos, dividends, SSVI parameters
