@@ -35,7 +35,18 @@ product (Market data, The Equity view). \nb{black\_scholes.ipynb}
 \code{StochasticProcess} (\code{size}, \code{initial\_values}, \code{noise\_size}, \code{evolve}) and the
 \code{from\_equity} factories used by the Monte Carlo pricers.
 
-\pending
+\code{StochasticProcess} (\code{models/stochasticprocess.py}) is the common interface: \code{size()} (state
+dimension), \code{initial\_values()}, \code{noise\_size()} (normals per path and step, default 1) and
+\code{evolve(t\_grid, dw, observation\_times=None)}, which maps pre-drawn normals \code{dw}
+($[n_{\text{paths}}, n_{\text{steps}}]$, or with a trailing axis of size \code{noise\_size()}) to paths on the increasing grid
+\code{t\_grid} (no 0), returning only the \code{observation\_times} columns when given. The caller draws the normals
+(\code{tf.random.stateless\_normal} with a seed), which makes the paths reproducible and the bumps common-random-number
+ones. Equity models have a \code{from\_equity(equity, maturity, strike)} factory that builds them from the market
+variables, so the simulation is differentiable w.r.t.\ them. They are the GBM (\code{GeometricBrownianMotion},
+exact steps), local vol, displaced diffusion, Heston and Heston SLV.
+\code{VanillaMCPricer(model, n\_paths, n\_steps, seed, digital\_smoothing)} takes the model \emph{class}, calls
+\code{from\_equity} at each price, simulates on a uniform grid ending at the expiry and leaves
+\code{standard\_error}, \code{discount\_factor} and \code{time\_to\_maturity} on the product. \nb{monte\_carlo\_gbm.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Calibration}\label{sec:arch-calibration}

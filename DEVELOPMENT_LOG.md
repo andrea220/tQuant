@@ -37,6 +37,11 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       a hedging error std x sqrt(n) ~ 23 constant; gamma trading, mean P&L = vega x (realised - implied) (±4.5 for ±5
       vol points), path by path P&L vs realised vol. Docs: Delta hedging and gamma trading (Models and Pricing), 2
       questions (Exercises).
+- [x] Guided review, notebook `monte_carlo_gbm`: GBM from the market (= BS discrete), convergence 1/sqrt(N) (20 seeds),
+      stateless seeds, steps irrelevant for the exact GBM (the 252-step default of `VanillaMCPricer` costs 35x a 1-step
+      run for the same law), antithetic (s.e. 0.151 -> 0.124) and forward control variate (-> 0.064) on `model.evolve`,
+      AAD greeks vs BS (delta 0.5591 / 0.5593), CRN vs independent-seed bumps. Docs: Monte Carlo framework (Models and
+      Pricing), Models (Architecture), 3 questions (Exercises, incl. the empty "greeks via AD").
 
 - [x] Guided review, notebook 02 (dividends): Bjerksund-Stensland 1993 trigger fixed in `pricers/black.py`
       (`h(T) = -(bT + 2 sigma sqrt T) B_0 / (B_inf - B_0)`; it was `B_0 B_inf / ((B_inf - B_0) K)`): the early-exercise

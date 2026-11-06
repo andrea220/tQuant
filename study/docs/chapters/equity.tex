@@ -268,8 +268,32 @@ $\mathrm{SE} = \hat\sigma/\sqrt{N}$: halving the error requires $4\times$ the pa
 \end{answer}
 
 \begin{question}{\Practice \diff{2}}{Greeks via automatic differentiation}
-% TODO: tf.GradientTape on the MC price
+Price a 1Y call with \texttt{VanillaMCPricer} and get delta, vega per node, rho per pillar and the dividend
+sensitivities in one go. Compare with Black--Scholes. \nb{monte\_carlo\_gbm.ipynb}
 \end{question}
 \begin{answer}
-% TODO
+Price with \texttt{autodiff=True}, then take \texttt{pricer.tape.gradient} of the price with respect to
+\texttt{eq.risk\_factors()}: a dict keyed by market key with the gradient of every variable (spot, vol matrix, curve
+pillars, dividend amounts). One backward pass costs a few prices, whatever the
+number of greeks. With 200k paths the MC greeks match Black--Scholes to the MC noise (delta 0.5591 vs 0.5593).
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Common random numbers}
+Why does a bump-and-reprice delta of a Monte Carlo price need the same random numbers in the two prices?
+\nb{monte\_carlo\_gbm.ipynb}
+\end{question}
+\begin{answer}
+$(V(S+h) - V(S-h))/2h$: with independent draws each price carries noise of size s.e., so the estimate has noise
+$\sim \text{s.e.}/h$, exploding as $h \to 0$ (0.1 bump: 1.41 instead of 0.56). With the same draws the noise is common and
+cancels: the difference is the change of the payoff on the same paths, close to the pathwise derivative.
+\end{answer}
+
+\begin{question}{\Practice \diff{2}}{Variance reduction}
+Reduce the standard error of a Monte Carlo call with antithetic variates and with a control variate. Which works
+better here, and why? \nb{monte\_carlo\_gbm.ipynb}
+\end{question}
+\begin{answer}
+Antithetic ($Z$, $-Z$) helps where the payoff is close to linear in $Z$: on an ATM call 0.151 $\to$ 0.124. The control
+variate $S_T$ (mean = forward, known exactly) is highly correlated with the call payoff: 0.151 $\to$ 0.064, a factor
+of about 5 in paths. The best control is the most correlated quantity with a known expectation.
 \end{answer}

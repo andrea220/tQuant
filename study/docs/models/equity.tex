@@ -151,7 +151,24 @@ price bias of second order in the width (0.002 at $\varepsilon = 1\%$ on a 0.43 
 Time grid, stateless draws and common random numbers, pathwise AAD greeks, martingale correction.
 \nb{monte\_carlo\_gbm.ipynb}
 
-\pending
+The price is the mean of $N$ discounted payoffs on simulated paths, with standard error
+$\mathrm{std}(\text{payoff})/\sqrt N$: the error falls as $1/\sqrt N$ whatever the dimension (TICKER1 1Y ATM call, 256k paths:
+s.e.\ 0.09 on 27.06). A model simulates on a time grid ending at the payoff dates; the GBM (escrowed spot, carry = repo,
+vol at $(K,T)$, the same model as Black--Scholes discrete) is simulated exactly, so one step suffices for a European
+payoff; models with state-dependent vol (local vol, Heston) need small steps.
+
+\emph{Random numbers.} Draws are stateless and seeded: the same seed gives the same paths. A bump repriced with the
+same seed uses common random numbers, so the noise of the two prices cancels in the difference; with independent
+seeds the finite-difference greek is dominated by noise ($\propto 1/h$: delta 1.41 instead of 0.56 with a 0.1 bump).
+
+\emph{Variance reduction} (not in the pricers yet): antithetic variates ($Z$ and $-Z$; s.e.\ 0.151 $\to$ 0.124 at equal
+cost) and the control variate on $S_T$, whose mean is the forward ($\hat C = \overline{C} - \beta(\overline{S_T} - F)$; s.e.\
+$\to$ 0.064).
+
+\emph{Greeks by AAD.} The tape over the simulation gives the pathwise derivative of the mean payoff w.r.t.\ every
+market variable the model was built from: delta, vega per node, rho per pillar, dividend sensitivities, in one
+backward pass (MC vs Black--Scholes: delta 0.5591 / 0.5593, rho 103.29 / 103.24). Pathwise derivatives need a
+Lipschitz payoff (calls, puts); for digitals and barriers the payoff is smoothed (\S\ref{sec:mp-digital}).
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Local volatility}\label{sec:mp-lv}
