@@ -114,7 +114,9 @@ def _bs1993_call(
     r_minus_b = tf.maximum(r - b, tf.constant(1e-7, dtype=r.dtype))
     B_0 = tf.maximum(K, r * K / r_minus_b)
 
-    ht = -(b * T + 2.0 * sigma * tf.sqrt(T)) * B_0 * B_inf / ((B_inf - B_0) * K)
+    # Trigger price of the 1993 approximation: h(T) = -(b T + 2 sigma sqrt(T)) B_0 / (B_inf - B_0)
+    # (was B_0 B_inf / ((B_inf - B_0) K): wrong trigger, early-exercise premium 3-4x too small)
+    ht = -(b * T + 2.0 * sigma * tf.sqrt(T)) * B_0 / (B_inf - B_0)
     I = B_0 + (B_inf - B_0) * (1.0 - tf.exp(ht))
 
     alpha = (I - K) * tf.pow(I, -beta)

@@ -17,7 +17,7 @@ $P(0,T) = e^{-r(T)\,T}$ and, by no-arbitrage,
 \begin{question}{\Practice \diff{1}}{Reading a curve from the MarketEnvironment}
 How do you get discount factors, zero rates and 1Y forwards from the EUR curves in tQuant, and which curve
 discounts?
-\nb{01\_market\_handles.ipynb}
+\nb{market\_handles.ipynb}
 \end{question}
 \begin{answer}
 \begin{itemize}[nosep]
@@ -39,7 +39,7 @@ on zero rates $\Rightarrow$ discontinuous forwards at the pillars).
 
 \begin{question}{\Practice \diff{2}}{The jump of the forward at a pillar}
 With zero rates linear between pillars, how large is the jump of $f(0,T)$ at a pillar $T_i$? Measure it on the
-ESTR curve and check $f \approx r + T\,r'$ away from the pillars. \nb{01\_market\_handles.ipynb}
+ESTR curve and check $f \approx r + T\,r'$ away from the pillars. \nb{market\_handles.ipynb}
 \end{question}
 \begin{answer}
 $\Delta f(T_i) = T_i\,(r'_{i+} - r'_{i-})$ (slopes of the two segments): it grows with $T_i$ for the same change of

@@ -42,7 +42,7 @@ notebook and updates the three documents together.
 
 ## notebooks/
 
-- Name: `NN_topic.ipynb` (`01_market_handles`, `02_forwards`, ...).
+- Name: `topic.ipynb` (`market_handles`, `dividends`, ...), no number prefix.
 - Straight to the point: one-line markdown per section, the code does the talking.
   Only the key formula where it helps; no prose recaps.
 - Structure: title + one line on scope and related Q/A chapter -> imports -> market -> one

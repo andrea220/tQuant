@@ -30,7 +30,7 @@ from the tables, \code{to\_frames} / \code{to\_folder} write it back (exact roun
 come from \code{tq.generate\_market\_data} (tables) / \code{tq.generate\_market} (in memory), seeded:
 Nelson--Siegel OIS curves (EUR, GBP, USD) and EUR 6M as ESTR + spread, SSVI equity and FX smiles, caplet vols and
 swaption cube from one G2++, 50 tickers with discrete dividends, correlations.
-\nb{01\_market\_handles.ipynb}
+\nb{market\_handles.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{MarketEnvironment and keys}\label{sec:arch-market-env}
@@ -62,7 +62,7 @@ Key & Value & Accessor \\
 
 \code{get\_ir\_curve(ccy)} without a ticker returns the overnight curve of the currency (ESTR, SOFR, SONIA), the
 discount curve of everything in that currency; projection curves (e.g.\ EUR 6M) are asked by ticker.
-\nb{01\_market\_handles.ipynb}
+\nb{market\_handles.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Market objects and risk factors}\label{sec:arch-risk-factors}
@@ -83,7 +83,7 @@ sensitivity at once.
         into a variable.
   \item \code{SwaptionVolCube}, \code{CorrelationMatrix}: one variable each (cube; $[n, n]$ matrix).
 \end{itemize}
-\nb{01\_market\_handles.ipynb}
+\nb{market\_handles.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{The Equity view}\label{sec:arch-equity}
@@ -92,4 +92,14 @@ yield, dividends, vol surface and the discount curve of the currency, plus \code
 the single place for the forward (\code{forward}, \code{pv\_dividends}, \code{implied\_div\_yield}) and the entry
 point of the model factories (\code{from\_equity}). Dividend model from the data: \code{DIV} present $\Rightarrow$
 \code{"discrete"} (\code{DIVYIELD} ignored), otherwise \code{"continuous"}.
-\nb{01\_market\_handles.ipynb} \nb{03\_equity\_underlying.ipynb}
+\nb{market\_handles.ipynb} \nb{equity\_underlying.ipynb}
+
+\emph{How \code{BlackScholesPricer} consumes the dividends.} Two arguments: \code{dividend\_model} (default
+\code{"continuous"}) and \code{use\_implied\_repo} (default \code{True}: the repo enters the carry). With a discrete schedule:
+\code{"discrete"} prices on \code{spot\_net} $= S - $ \code{pv\_dividends(T)} with carry $=$ repo;
+\code{"continuous"} turns the schedule into $q_{\mathrm{eff}}$, computed with the spot under \code{stop\_gradient}, so the
+AAD delta is the sticky-yield one (a bump-and-reprice recomputes $q_{\mathrm{eff}}$ and gives the sticky-cash delta).
+Without a schedule the market \code{DIVYIELD} is used whatever \code{dividend\_model}. The pricer leaves its inputs on
+the product for inspection: \code{spot}, \code{spot\_net}, \code{pv\_discrete\_dividends}, \code{repo\_margin},
+\code{risk\_free\_rate}, \code{discount\_factor}, \code{volatility}, \code{time\_to\_maturity} (a variable: theta),
+\code{forward}. \nb{dividends.ipynb}

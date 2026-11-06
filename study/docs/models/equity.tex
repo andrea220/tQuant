@@ -3,9 +3,32 @@
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Underlying, forward and dividends}\label{sec:mp-forward}
 Forward under discrete (escrowed) and continuous dividends, repo, discount curve; the forward ratio
-$X_t = S_t / F(t)$ used by the Monte Carlo models. \nb{03\_equity\_underlying.ipynb}
+$X_t = S_t / F(t)$ used by the Monte Carlo models. \nb{equity\_underlying.ipynb}
 
 \pending
+
+\paragraph{Dividend models in Black--Scholes.} \nb{dividends.ipynb}
+With cash dividends $D_i$ at ex-dates $t_i \le T$, $\mathrm{PV} = \sum_i D_i\,P(0,t_i)$, repo $q_r$, $r = -\ln P(0,T)/T$:
+\begin{itemize}[nosep]
+  \item \emph{discrete (escrowed)}: lognormal $S^* = S - \mathrm{PV}$, $F = (S_0 - \mathrm{PV})\,e^{(r - q_r)T}$;
+  \item \emph{continuous}: yield $q_{\mathrm{eff}} = -\ln(1 - \mathrm{PV}/S_0)/T$ on the whole $S$,
+        $F = S_0\,e^{(r - q_{\mathrm{eff}} - q_r)T}$: the same forward.
+\end{itemize}
+A European price depends only on $(F, \sigma, T, P(0,T))$: identical in both. What differs:
+\begin{itemize}[nosep]
+  \item \emph{Delta.} Discrete: the cash amounts are fixed (sticky cash), $\partial F/\partial S = e^{(r-q_r)T}$.
+        Continuous with $q_{\mathrm{eff}}$ held (sticky yield): the dividends scale with $S$, so
+        $\Delta_{\mathrm{cont}} = \Delta_{\mathrm{disc}}\,(S_0 - \mathrm{PV})/S_0$.
+  \item \emph{American options} (Bjerksund--Stensland 1993, carry $b = r - q$): discrete, $b = r - q_r \ge r - q_r$, so
+        the call is (almost) never exercised early and the put has the larger premium; continuous with
+        $q_{\mathrm{eff}} > r$, the call has an early-exercise premium and the put almost none. The approximation is
+        within about 1\% of a binomial tree (a lower bound; it keeps less of a small premium far out of the money).
+  \item \emph{Dynamics.} The escrowed model applies $\sigma$ to $S - \mathrm{PV}$, the real stock drops by $D_i$ at
+        $t_i$ with $\sigma$ on the whole $S$: same forward, more variance. Matching vol of $S^*$ period by period,
+        $\sigma^{*2}\,T \approx \sigma^2 \sum_k \big(S_0/(S_0 - \mathrm{PV}_k)\big)^2 \Delta t_k$ ($\mathrm{PV}_k$: dividends still
+        to come in period $k$); the flat $\sigma\,S_0/(S_0 - \mathrm{PV})$ ignores the timing and overshoots
+        (TICKER1 1Y: MC 24.46, time-weighted 24.40, flat 25.16).
+\end{itemize}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Implied volatility surface}\label{sec:mp-vol-surface}
@@ -16,53 +39,53 @@ on the nodes (gradient w.r.t.\ the matrix). The interpolation is not arbitrage-f
 not in total variance); the local vol model builds its own smooth representation in total variance and forward
 moneyness (\S\ref{sec:mp-lv}). In the synthetic data the smiles come from an SSVI parametrisation (arbitrage-free on
 the nodes): steep negative skew at short maturities, flattening with $T$.
-\nb{01\_market\_handles.ipynb}
+\nb{market\_handles.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Black--Scholes}\label{sec:mp-bs}
 European prices on the forward, dividend models, American (Bjerksund--Stensland), greeks by AAD.
-\nb{04\_black\_scholes.ipynb}
+\nb{black\_scholes.ipynb}
 
 \pending
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Monte Carlo framework}\label{sec:mp-mc}
 Time grid, stateless draws and common random numbers, pathwise AAD greeks, martingale correction.
-\nb{05\_monte\_carlo\_gbm.ipynb}
+\nb{monte\_carlo\_gbm.ipynb}
 
 \pending
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Local volatility}\label{sec:mp-lv}
 Gatheral's formula in total variance and forward log-moneyness, spline wings, simulation of $X_t$.
-\nb{06\_local\_vol.ipynb}
+\nb{local\_vol.ipynb}
 
 \pending
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Displaced diffusion}\label{sec:mp-dd}
 Shifted lognormal on the forward, slice calibration, skew averaging, implicit-function greeks, skew limit.
-\nb{07\_displaced\_diffusion.ipynb}
+\nb{displaced\_diffusion.ipynb}
 
 \pending
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Heston}\label{sec:mp-heston}
 Characteristic function, COS prices, calibration to the surface, QE-M Monte Carlo.
-\nb{08\_heston.ipynb}
+\nb{heston.ipynb}
 
 \pending
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Heston stochastic local volatility}\label{sec:mp-slv}
 Leverage $L^2 = \sigma_{LV}^2 / \E[v \mid X]$, particle method, mixing fraction, risk convention.
-\nb{09\_heston\_slv.ipynb}
+\nb{heston\_slv.ipynb}
 
 \pending
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Autocallable}\label{sec:mp-autocallable}
 Payoff (coupons, memory, autocall, knock-in put), investor's side, barrier smoothing, model comparison.
-\nb{10\_autocallable.ipynb}
+\nb{autocallable.ipynb}
 
 \pending

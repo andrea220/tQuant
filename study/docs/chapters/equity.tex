@@ -13,7 +13,7 @@ $C - P = S_0 - \mathrm{PV}(\text{div}) - K\,P(0,T)$.
 \begin{question}{\Theory \diff{2}}{Discrete vs continuous dividends}
 How do you model discrete cash dividends and a continuous dividend yield in
 Black--Scholes, and what actually changes between the two?
-\nb{02\_dividends.ipynb}
+\nb{dividends.ipynb}
 \end{question}
 \begin{answer}
 \textbf{Models.}
@@ -37,13 +37,50 @@ forward $F$, and a European price depends only on $(F,\sigma,T,P(0,T))$:
         so $\Delta_{\text{cont}} \approx \Delta_{\text{disc}}\,(S_0-\mathrm{PV})/S_0$.
   \item \emph{Volatility}: in the escrowed model $\sigma$ acts only on $S^*$.
         If $\sigma$ is the vol of the whole $S$ (stock drops by $D_i$ at each
-        ex-date), the price is higher: $\sigma^* \approx \sigma\,S_0/(S_0-\mathrm{PV})$.
+        ex-date), the price is higher: until each ex-date the vol of $S^*$ is
+        $\sigma\,S/(S-\mathrm{PV}_t)$, so
+        $\sigma^{*2} T \approx \sigma^2 \sum_k \big(S_0/(S_0-\mathrm{PV}_k)\big)^2 \Delta t_k$
+        (the flat $\sigma\,S_0/(S_0-\mathrm{PV})$ overshoots when the dividends are late).
   \item \emph{American options}: early exercise of a call is optimal just before
         an ex-date; a yield smears the dividends over time and misses
         this timing.
   \item \emph{Long maturities}: yields are proportional and never push $S$
         below zero; cash dividends can be large relative to a low $S$.
 \end{itemize}
+\end{answer}
+
+\begin{question}{\Practice \diff{2}}{Sticky yield: AAD delta vs bump}
+Price a 1Y call with \texttt{BlackScholesPricer(dividend\_model="continuous")} on an underlying with discrete
+dividends. Compare the AAD delta with a bump-and-reprice of the spot. Why do they differ?
+\nb{dividends.ipynb}
+\end{question}
+\begin{answer}
+The pricer computes $q_{\text{eff}} = -\ln(1 - \mathrm{PV}/S)/T$ with $S$ under \texttt{stop\_gradient}: the AAD delta
+holds the yield (sticky yield, $\Delta_{\text{disc}}(S_0-\mathrm{PV})/S_0$). A bump moves $S$ in $q_{\text{eff}}$ too, the
+cash amounts stay fixed: it gives the discrete (sticky cash) delta. Same price, two conventions.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Early exercise and the dividend model}
+In the escrowed model the American call is worth the European one; with the equivalent yield it has a premium. Which
+is right for a stock paying a cash dividend?
+\nb{dividends.ipynb}
+\end{question}
+\begin{answer}
+Neither exactly. A call is exercised early only just before an ex-date, to capture the dividend. The escrowed model
+has carry $r - q_{\text{repo}} \ge 0$ and no drop at all, so it never exercises; the yield spreads the dividend over
+time and exercises at the wrong moments. The real premium needs the cash drop in the dynamics (tree or PDE with jumps
+of the stock at the ex-dates). For puts it is the opposite: the escrowed model has the premium (carry $\approx r$), the
+yield model almost none.
+\end{answer}
+
+\begin{question}{\Practice \diff{2}}{Checking an American approximation}
+How do you check the Bjerksund--Stensland price of \texttt{BlackScholesPricer} on American options?
+\end{question}
+\begin{answer}
+Against a binomial tree (CRR, a few thousand steps) on the same inputs read from the priced product:
+\texttt{spot\_net}, \texttt{risk\_free\_rate}, \texttt{volatility}, \texttt{time\_to\_maturity} and the carry
+$q = r - \ln(F/S_{\text{net}})/T$ from \texttt{forward}. The approximation is a lower bound within about 1\%; the
+check found a wrong trigger price in the implementation (early-exercise premium 3--4 times too small).
 \end{answer}
 
 % ─────────────────────────────────────────────────────────────────────────────
@@ -113,7 +150,7 @@ $\Nc(d_1)$ (times $e^{-qT}$) is the delta.
 
 \begin{question}{\Practice \diff{1}}{Which nodes carry the vega?}
 A price uses the vol surface at one $(K, T)$ between the nodes. Which nodes of \texttt{volatility\_matrix} does it
-depend on? Check it by bumping one node with \texttt{assign}. \nb{01\_market\_handles.ipynb}
+depend on? Check it by bumping one node with \texttt{assign}. \nb{market\_handles.ipynb}
 \end{question}
 \begin{answer}
 \texttt{volatility(K, T)} is bilinear and flat outside: only the 4 nodes around $(K, T)$ (2 on an edge, 1 at a

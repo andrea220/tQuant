@@ -11,11 +11,11 @@ Current focus: equity.
       (`study/`, rules in `study/CLAUDE.md`): one notebook on the `marketdata/` snapshot, `\Theory` / `\Practice` Q/A
       in `study/docs/chapters/equity.tex`, 1-3 exercises, and the matching sections of the *Models and Pricing*
       (functional) and *Architecture* (technical) documents (`study/docs/models/`, `study/docs/architecture/`).
-      Proposed order (notebooks after `04_black_scholes`):
-      `05_monte_carlo_gbm` (`VanillaMCPricer`, AAD greeks, common random numbers), `06_local_vol` (Gatheral, SSVI,
-      forward mode), `07_displaced_diffusion` (slice fit, skew averaging, implicit-function greeks, skew limit),
-      `08_heston` (characteristic function, COS, calibration, QE-M), `09_heston_slv` (leverage, particle method,
-      risk convention), `10_autocallable` (payoff, barrier smoothing, model comparison).
+      Proposed order (after `black_scholes`):
+      `monte_carlo_gbm` (`VanillaMCPricer`, AAD greeks, common random numbers), `local_vol` (Gatheral, SSVI,
+      forward mode), `displaced_diffusion` (slice fit, skew averaging, implicit-function greeks, skew limit),
+      `heston` (characteristic function, COS, calibration, QE-M), `heston_slv` (leverage, particle method,
+      risk convention), `autocallable` (payoff, barrier smoothing, model comparison).
 - [ ] **Barrier options**: `BarrierOption(Product)` (up/down, in/out, rebate, discrete monitoring dates or
       continuous), priced by the MC pricers with a Brownian-bridge crossing probability between steps (continuous
       monitoring, smooth: AAD-friendly) or on the monitoring dates; closed form under Black-Scholes (Reiner-Rubinstein,

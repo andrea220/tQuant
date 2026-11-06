@@ -8,6 +8,7 @@ import unittest
 from datetime import date
 from math import erf, exp, log, sqrt
 
+import numpy as np
 import tensorflow as tf
 
 import tensorquant as tq
@@ -77,6 +78,8 @@ def black(F: float, K: float, sigma: float, T: float, DF: float, call: bool) -> 
     return DF * (K * norm_cdf(-d2) - F * norm_cdf(-d1))
 
 
+# European values pinned from the float32 version; American values repinned after the fix of the Bjerksund-Stensland
+# trigger h(T) (the old one gave an early-exercise premium 3-4x too small; checked against a binomial tree below).
 PRICES = {
     ('1Y', 'discrete', 'European', 'Call', 80.0): 22.36396026611328,
     ('1Y', 'discrete', 'European', 'Call', 95.0): 11.49752426147461,
@@ -88,16 +91,16 @@ PRICES = {
     ('1Y', 'discrete', 'European', 'Put', 100.0): 7.753730773925781,
     ('1Y', 'discrete', 'European', 'Put', 110.0): 13.546703338623047,
     ('1Y', 'discrete', 'European', 'Put', 125.0): 25.046157836914062,
-    ('1Y', 'discrete', 'American', 'Call', 80.0): 22.36396026611328,
-    ('1Y', 'discrete', 'American', 'Call', 95.0): 11.49752426147461,
-    ('1Y', 'discrete', 'American', 'Call', 100.0): 8.593135833740234,
-    ('1Y', 'discrete', 'American', 'Call', 110.0): 4.662223815917969,
-    ('1Y', 'discrete', 'American', 'Call', 125.0): 1.5758552551269531,
-    ('1Y', 'discrete', 'American', 'Put', 80.0): 2.0794830322265625,
-    ('1Y', 'discrete', 'American', 'Put', 95.0): 5.838886260986328,
-    ('1Y', 'discrete', 'American', 'Put', 100.0): 7.852787017822266,
-    ('1Y', 'discrete', 'American', 'Put', 110.0): 13.913063049316406,
-    ('1Y', 'discrete', 'American', 'Put', 125.0): 26.696258544921875,
+    ('1Y', 'discrete', 'American', 'Call', 80.0): 22.363968662953553,
+    ('1Y', 'discrete', 'American', 'Call', 95.0): 11.49752814592373,
+    ('1Y', 'discrete', 'American', 'Call', 100.0): 8.593137117565249,
+    ('1Y', 'discrete', 'American', 'Call', 110.0): 4.662227274349654,
+    ('1Y', 'discrete', 'American', 'Call', 125.0): 1.5758545555539545,
+    ('1Y', 'discrete', 'American', 'Put', 80.0): 2.097477134970461,
+    ('1Y', 'discrete', 'American', 'Put', 95.0): 5.941662466572424,
+    ('1Y', 'discrete', 'American', 'Put', 100.0): 8.019010310050085,
+    ('1Y', 'discrete', 'American', 'Put', 110.0): 14.291366894350212,
+    ('1Y', 'discrete', 'American', 'Put', 125.0): 27.410919087199545,
     ('1Y', 'continuous', 'European', 'Call', 80.0): 22.363971710205078,
     ('1Y', 'continuous', 'European', 'Call', 95.0): 11.49752426147461,
     ('1Y', 'continuous', 'European', 'Call', 100.0): 8.593135833740234,
@@ -108,16 +111,16 @@ PRICES = {
     ('1Y', 'continuous', 'European', 'Put', 100.0): 7.753730773925781,
     ('1Y', 'continuous', 'European', 'Put', 110.0): 13.546703338623047,
     ('1Y', 'continuous', 'European', 'Put', 125.0): 25.046157836914062,
-    ('1Y', 'continuous', 'American', 'Call', 80.0): 22.36404800415039,
-    ('1Y', 'continuous', 'American', 'Call', 95.0): 11.497550964355469,
-    ('1Y', 'continuous', 'American', 'Call', 100.0): 8.593147277832031,
-    ('1Y', 'continuous', 'American', 'Call', 110.0): 4.662208557128906,
-    ('1Y', 'continuous', 'American', 'Call', 125.0): 1.5758590698242188,
-    ('1Y', 'continuous', 'American', 'Put', 80.0): 2.076995849609375,
-    ('1Y', 'continuous', 'American', 'Put', 95.0): 5.799549102783203,
-    ('1Y', 'continuous', 'American', 'Put', 100.0): 7.762073516845703,
-    ('1Y', 'continuous', 'American', 'Put', 110.0): 13.584186553955078,
-    ('1Y', 'continuous', 'American', 'Put', 125.0): 25.269269943237305,
+    ('1Y', 'continuous', 'American', 'Call', 80.0): 22.372756018673684,
+    ('1Y', 'continuous', 'American', 'Call', 95.0): 11.498021696460462,
+    ('1Y', 'continuous', 'American', 'Call', 100.0): 8.593285198988085,
+    ('1Y', 'continuous', 'American', 'Call', 110.0): 4.662246014362495,
+    ('1Y', 'continuous', 'American', 'Call', 125.0): 1.5758553252695577,
+    ('1Y', 'continuous', 'American', 'Put', 80.0): 2.082632833513685,
+    ('1Y', 'continuous', 'American', 'Put', 95.0): 5.834317503942657,
+    ('1Y', 'continuous', 'American', 'Put', 100.0): 7.821535083841155,
+    ('1Y', 'continuous', 'American', 'Put', 110.0): 13.738539568098645,
+    ('1Y', 'continuous', 'American', 'Put', 125.0): 25.640445409834435,
     ('6M', 'discrete', 'European', 'Call', 80.0): 20.99669647216797,
     ('6M', 'discrete', 'European', 'Call', 95.0): 9.30013656616211,
     ('6M', 'discrete', 'European', 'Call', 100.0): 6.359889984130859,
@@ -128,16 +131,16 @@ PRICES = {
     ('6M', 'discrete', 'European', 'Put', 100.0): 5.947620391845703,
     ('6M', 'discrete', 'European', 'Put', 110.0): 12.128669738769531,
     ('6M', 'discrete', 'European', 'Put', 125.0): 24.766311645507812,
-    ('6M', 'discrete', 'American', 'Call', 80.0): 20.99669647216797,
-    ('6M', 'discrete', 'American', 'Call', 95.0): 9.30013656616211,
-    ('6M', 'discrete', 'American', 'Call', 100.0): 6.359889984130859,
-    ('6M', 'discrete', 'American', 'Call', 110.0): 2.6761722564697266,
-    ('6M', 'discrete', 'American', 'Call', 125.0): 0.5166506767272949,
-    ('6M', 'discrete', 'American', 'Put', 80.0): 0.8549270629882812,
-    ('6M', 'discrete', 'American', 'Put', 95.0): 3.959644317626953,
-    ('6M', 'discrete', 'American', 'Put', 100.0): 5.9621734619140625,
-    ('6M', 'discrete', 'American', 'Put', 110.0): 12.226358413696289,
-    ('6M', 'discrete', 'American', 'Put', 125.0): 25.55814552307129,
+    ('6M', 'discrete', 'American', 'Call', 80.0): 20.99668261661502,
+    ('6M', 'discrete', 'American', 'Call', 95.0): 9.300129734669824,
+    ('6M', 'discrete', 'American', 'Call', 100.0): 6.359884226158002,
+    ('6M', 'discrete', 'American', 'Call', 110.0): 2.67616925234568,
+    ('6M', 'discrete', 'American', 'Call', 125.0): 0.5166541389150776,
+    ('6M', 'discrete', 'American', 'Put', 80.0): 0.857037941044112,
+    ('6M', 'discrete', 'American', 'Put', 95.0): 3.9931296041616307,
+    ('6M', 'discrete', 'American', 'Put', 100.0): 6.034875224972986,
+    ('6M', 'discrete', 'American', 'Put', 110.0): 12.482538754885873,
+    ('6M', 'discrete', 'American', 'Put', 125.0): 26.189392485275732,
     ('6M', 'continuous', 'European', 'Call', 80.0): 20.996688842773438,
     ('6M', 'continuous', 'European', 'Call', 95.0): 9.300132751464844,
     ('6M', 'continuous', 'European', 'Call', 100.0): 6.359889984130859,
@@ -148,34 +151,34 @@ PRICES = {
     ('6M', 'continuous', 'European', 'Put', 100.0): 5.947620391845703,
     ('6M', 'continuous', 'European', 'Put', 110.0): 12.128669738769531,
     ('6M', 'continuous', 'European', 'Put', 125.0): 24.766311645507812,
-    ('6M', 'continuous', 'American', 'Call', 80.0): 20.996702194213867,
-    ('6M', 'continuous', 'American', 'Call', 95.0): 9.30013656616211,
-    ('6M', 'continuous', 'American', 'Call', 100.0): 6.359889984130859,
-    ('6M', 'continuous', 'American', 'Call', 110.0): 2.6761703491210938,
-    ('6M', 'continuous', 'American', 'Call', 125.0): 0.51666259765625,
-    ('6M', 'continuous', 'American', 'Put', 80.0): 0.854888916015625,
-    ('6M', 'continuous', 'American', 'Put', 95.0): 3.955677032470703,
-    ('6M', 'continuous', 'American', 'Put', 100.0): 5.948421478271484,
-    ('6M', 'continuous', 'American', 'Put', 110.0): 12.13587760925293,
-    ('6M', 'continuous', 'American', 'Put', 125.0): 24.85438346862793,
+    ('6M', 'continuous', 'American', 'Call', 80.0): 20.997934911285398,
+    ('6M', 'continuous', 'American', 'Call', 95.0): 9.300146619198372,
+    ('6M', 'continuous', 'American', 'Call', 100.0): 6.359886906347228,
+    ('6M', 'continuous', 'American', 'Call', 110.0): 2.6761693545771976,
+    ('6M', 'continuous', 'American', 'Call', 125.0): 0.5166541395117292,
+    ('6M', 'continuous', 'American', 'Put', 80.0): 0.8554829277042586,
+    ('6M', 'continuous', 'American', 'Put', 95.0): 3.9654059723789175,
+    ('6M', 'continuous', 'American', 'Put', 100.0): 5.9700583617381895,
+    ('6M', 'continuous', 'American', 'Put', 110.0): 12.21767933672561,
+    ('6M', 'continuous', 'American', 'Put', 125.0): 25.062846900778133,
 }
 GREEKS = {  # (delta, vega = sum over surface nodes, dPrice/dT)
     ('1Y', 'discrete', 'European', 'Call'): (0.5608089566230774, 38.7131462097168, 5.6303229331970215),
     ('1Y', 'discrete', 'European', 'Put'): (-0.44420358538627625, 38.7131462097168, 2.417246103286743),
-    ('1Y', 'discrete', 'American', 'Call'): (0.5608089566230774, 38.7131462097168, 5.6303229331970215),
-    ('1Y', 'discrete', 'American', 'Put'): (-0.4570416212081909, 37.32555389404297, 2.6102218627929688),
+    ('1Y', 'discrete', 'American', 'Call'): (0.5608089575596196, 38.713145081669694, 5.630323808568491),
+    ('1Y', 'discrete', 'American', 'Put'): (-0.47238953713044585, 38.144393134637426, 2.754177885222372),
     ('1Y', 'continuous', 'European', 'Call'): (0.5472882986068726, 38.7131462097168, 4.294689655303955),
     ('1Y', 'continuous', 'European', 'Put'): (-0.4334942102432251, 38.7131462097168, 3.4751698970794678),
-    ('1Y', 'continuous', 'American', 'Call'): (0.5472884774208069, 38.71328353881836, 4.294700622558594),
-    ('1Y', 'continuous', 'American', 'Put'): (-0.4347325563430786, 38.62875747680664, 3.499122381210327),
+    ('1Y', 'continuous', 'American', 'Call'): (0.5473164961224056, 38.718759603159405, 4.295516718996044),
+    ('1Y', 'continuous', 'American', 'Put'): (-0.4407830400875242, 38.86966285816565, 3.58289388377689),
     ('6M', 'discrete', 'European', 'Call'): (0.5430927872657776, 27.905302047729492, 7.632745742797852),
     ('6M', 'discrete', 'European', 'Put'): (-0.459430992603302, 27.905302047729492, 4.473140716552734),
-    ('6M', 'discrete', 'American', 'Call'): (0.5430927872657776, 27.905302047729492, 7.632745742797852),
-    ('6M', 'discrete', 'American', 'Put'): (-0.4622631072998047, 27.609243392944336, 4.536881446838379),
+    ('6M', 'discrete', 'American', 'Call'): (0.5430921997080964, 27.905301703199665, 7.632740500926569),
+    ('6M', 'discrete', 'American', 'Put'): (-0.47264082020113474, 27.767465508909066, 4.702547892459194),
     ('6M', 'continuous', 'European', 'Call'): (0.5366332530975342, 27.905302047729492, 6.359026908874512),
     ('6M', 'continuous', 'European', 'Put'): (-0.45396655797958374, 27.905302047729492, 5.550647258758545),
-    ('6M', 'continuous', 'American', 'Call'): (0.5366333723068237, 27.905319213867188, 6.359025955200195),
-    ('6M', 'continuous', 'American', 'Put'): (-0.45414477586746216, 27.891075134277344, 5.555542945861816),
+    ('6M', 'continuous', 'American', 'Call'): (0.5366334933952065, 27.905446587701917, 6.359063211983699),
+    ('6M', 'continuous', 'American', 'Put'): (-0.45736380494019724, 27.950231395287446, 5.619769045254007),
 }
 
 
@@ -224,7 +227,42 @@ class TestPinnedValues(BSTestCase):
                 self.assertAlmostEqual(float(g_t), theta, delta=2e-3 + 1e-4 * abs(theta))
 
 
+def crr_american(S, K, r, q, sigma, T, call, n=2000):
+    """American option on a CRR binomial tree (continuous carry q): independent reference."""
+    dt = T / n
+    u = np.exp(sigma * np.sqrt(dt))
+    d = 1.0 / u
+    p = (np.exp((r - q) * dt) - d) / (u - d)
+    phi = 1.0 if call else -1.0
+    s = S * u ** np.arange(n, -1, -1) * d ** np.arange(0, n + 1)
+    v = np.maximum(phi * (s - K), 0.0)
+    for _ in range(n):
+        s = s[:-1] * d
+        v = np.maximum(np.exp(-r * dt) * (p * v[:-1] + (1.0 - p) * v[1:]), phi * (s - K))
+    return v[0]
+
+
 class TestIndependentChecks(BSTestCase):
+    def test_american_vs_binomial_tree(self):
+        """Bjerksund-Stensland 1993 within 1.5% of a 2000-step CRR tree on the same inputs (spot net, rate, carry,
+        surface vol), both dividend models; at the money the early-exercise premium is at least half the tree's
+        (far out of the money the approximation keeps less of a small premium: put K=80, 0.021 vs 0.052)."""
+        expiry = EXPIRIES["1Y"]
+        for model in ("discrete", "continuous"):
+            for ot in ("Call", "Put"):
+                for K in (80.0, 100.0, 125.0):
+                    am, eu = make_option(expiry, ot, K, "American"), make_option(expiry, ot, K)
+                    self.price(am, model)
+                    self.price(eu, model)
+                    S, r, sigma, T = (float(am.spot_net), float(am.risk_free_rate), float(am.volatility),
+                                      float(am.time_to_maturity))
+                    q = r - np.log(float(am.forward) / S) / T
+                    tree = crr_american(S, K, r, q, sigma, T, ot == "Call")
+                    with self.subTest(model=model, type=ot, K=K):
+                        self.assertAlmostEqual(float(am.price) / tree, 1.0, delta=0.015)
+                        if K == 100.0 and tree - float(eu.price) > 0.05:
+                            self.assertGreater(float(am.price) - float(eu.price), 0.5 * (tree - float(eu.price)))
+
     def test_european_vs_closed_form(self):
         for ticker in ("DISC", "CONT"):
             eq = self.mkt.get_equity(ticker)

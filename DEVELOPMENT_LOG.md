@@ -24,11 +24,20 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
 
 ## 2. Equity (analytic pricers)
 
+- [x] Guided review, notebook 02 (dividends): Bjerksund-Stensland 1993 trigger fixed in `pricers/black.py`
+      (`h(T) = -(bT + 2 sigma sqrt T) B_0 / (B_inf - B_0)`; it was `B_0 B_inf / ((B_inf - B_0) K)`): the early-exercise
+      premium was 3-4x too small (TICKER1 1Y ATM: discrete put 0.022 → 0.435, continuous call 0.184 → 0.614; CRR tree
+      0.615 / 0.818). Now within 1.2% of a 2000-step CRR tree on all strikes, = Haug's example (5.2704); American pins
+      repinned, new test vs the tree. Notebook 02: time-weighted sigma* for the escrowed vs cash-drop comparison (24.40 vs
+      MC 24.46; the flat rule gave 25.16). Study docs: dividend models in Models and Pricing, how the pricer consumes
+      the dividends in Architecture, 3 questions in Exercises. `examples/3_options.py`, `option_pricing.py` price
+      Americans: not rerun.
+
 - [x] `Equity` underlying view (`MarketEnvironment.get_equity`) with forward, PV dividends, implied yield, risk
-      factors; example `study/notebooks/03_equity_underlying.ipynb`.
+      factors; example `study/notebooks/equity_underlying.ipynb`.
 - [x] `BlackScholesPricer` on `Equity` and market risk factors, float64 (kernels dtype-generic; fixed a float32
       `sqrt(2)` in `_norm_cdf`); no pricer-local market variables; `examples/3_options.py` greeks via AAD;
-      example `study/notebooks/04_black_scholes.ipynb`.
+      example `study/notebooks/black_scholes.ipynb`.
 - [x] `DividendCurve` amounts as risk factors (`EQ:<ccy>:<ticker>:DIV` in `risk_factors()`, dense gradient);
       notebook 03 shows dF/dD_i.
 - [x] Examples 2-4 default to `TICKER1` (marketdata/ snapshot).
@@ -223,7 +232,7 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       columns. Reader `from_folder` / `from_frames`, writer `to_frames` / `to_folder` (default overnight curve per ccy:
       ESTR, SOFR, SONIA). Also `fx_vol.csv  base, quote, expiry, strike, vol`.
 - [x] Examples (`1_market_handles`, `2_forwards`, `3_options`, `4_montecarlo`, `local_vol_mdm`) and `study/`
-      notebooks 01-04 load `marketdata/` via `from_folder` (no date: latest snapshot; `env.evaluation_date`).
+      the study notebooks load `marketdata/` via `from_folder` (no date: latest snapshot; `env.evaluation_date`).
 - [x] Removed `examples/market_data.py` and `MarketEnvironment.from_data_path` (old MDM layout).
 - [x] FX spots and `CorrelationMatrix` in `MarketEnvironment` (keys, validation, risk factors, accessors).
 - [x] Unit tests for FX and `CorrelationMatrix` (`tests/test_market_data.py`); `submatrix` now has a dense gradient
