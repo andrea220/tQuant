@@ -92,6 +92,19 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       `tape.gradient` gives pathwise delta, vega per node, rho, dividend sensitivities. Grid ends exactly at maturity
       (was the nearest point of a grid up to the last vol maturity), stateless Gaussian draws (CRN bumps),
       `product.standard_error`. Discrete dividends: escrowed `S − PV`, carry repo (as BS discrete).
+- [x] `HestonSLVModel` (`models/hestonslv.py`): `dX / X = L(t, X) sqrt(v) dW_1`, Heston variance from
+      `HestonModel.from_equity` (vol of vol x `mixing` in (0, 1]), `L = sigma_LV / sqrt(E[v | X])` with the local vol of
+      `LocalVolatilityModel.from_equity`. Particle method in one pass inside `evolve` (as Oosterlee-Grzelak ch. 10):
+      `E[v | ln X]` per step by a tent-kernel smoother on 100 nodes over the 0.1-99.9% quantiles (sparse nodes shrunk
+      to the mean, floor 1e-4); QE variance step, log step with the leverage frozen on the step and the exact
+      martingale correction per particle. Smile repriced within 0.6 vol pts (LV-grid / time-step bias, the local vol
+      model alone is ~0.3 off); on a Heston smile the leverage is 1 (median within 3%). Greeks: Heston parameters
+      held (SLV risk convention), leverage moving through the local vol and the forward: vanilla delta / vega =
+      CRN bumps (Heston held) within 1%, = Black-Scholes sticky strike within 3%. Rejected: AAD through E[v | X] and
+      the Heston calibration: equal-count bins miss the membership change (vanilla delta +4%); with the smoother, the
+      derivative w.r.t. a particle's own position (slope between noisy nodes) blew up over 260 steps (5Y autocallable
+      delta 1e18); freezing E alone left the Heston channel uncompensated (vanilla delta 16% off). Autocallable
+      (synthetic, 5Y): SLV mixing 1 ~ Heston (0.034) far from local vol (0.019), mixing 0.05 = local vol.
 - [x] `HestonModel` (`models/heston.py`) on the market forward (`S = F(t) X`, discrete dividends as proportional
       drops). Closed form: characteristic function in the stable form, COS (1024 terms, ±30 sd; the variance
       cumulant from the CF: the Fang-Oosterlee c2 formula was 5-7% off) = Lewis quadrature to 1e-12 from 1W to 10Y

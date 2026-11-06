@@ -277,6 +277,11 @@ class LocalVolatilityModel(StochasticProcess):
             )
         return cls(equity, sigma_ty, lv_t, y_grid, martingale_correction, diagnostics)
 
+    @property
+    def local_vol_grid(self) -> tuple:
+        """``(sigma [nT, nY], t [nT], y [nY])``: the local vol on its (time, forward log-moneyness) grid."""
+        return self._sigma_ty, self._lv_t, self._lv_y
+
     def _forward(self, t) -> tf.Tensor:
         """Market forward ``F(t)`` (forward mode), ``t`` in years."""
         return tf.cast(self._equity.forward(float(t)), DTYPE)

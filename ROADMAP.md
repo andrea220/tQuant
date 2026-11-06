@@ -4,15 +4,6 @@ Open and future developments (moved from `CLAUDE.md`). Completed work: `DEVELOPM
 
 Current focus: equity.
 
-## Equity models (next)
-
-- [ ] **Heston SLV** (stochastic local vol): `dX / X = L(t, X) sqrt(v) dW_1` with the Heston variance (vol of vol
-      possibly scaled by a mixing fraction) and the leverage `L^2(t, x) = sigma_LV^2(t, x) / E[v | X = x]`
-      (`sigma_LV` from `gatheral_local_vol`, conditional expectation by binning / regression in a calibration MC
-      pass, leverage on the local vol grid). Reprices the vanilla smile like local vol, Heston dynamics for
-      forward-start / path-dependent payoffs. Tests: smile repriced by MC, limits (L = 1 → Heston, xi → 0 → local
-      vol), autocallable vs local vol / Heston.
-
 ## Future development (not prioritised)
 
 Equity:
