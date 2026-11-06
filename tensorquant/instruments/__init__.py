@@ -7,3 +7,4 @@ from .option import *
 from .autocallable import *
 from .capfloor import *
 from .swaption import *
+from .digital import *

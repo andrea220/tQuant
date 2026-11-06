@@ -1,16 +1,17 @@
 import tensorflow as tf
 
 from .pricer import Pricer
+from ..instruments.digital import DigitalOption
 from ..instruments.option import VanillaOption
 from ..markethandles.marketenvironment import MarketEnvironment
-from ..markethandles.utils import ExerciseType
+from ..markethandles.utils import ExerciseType, PayoffType
 from ..models.brownian import GeometricBrownianMotion
 from ..numericalhandles.dtypes import DTYPE
 from ..timehandles.utils import Settings
 
 
 class VanillaMCPricer(Pricer):
-    """Monte Carlo pricer for European :class:`VanillaOption` (float64).
+    """Monte Carlo pricer for European :class:`VanillaOption` and :class:`DigitalOption` (float64).
 
     The model is built from the market at every pricing call:
     ``model.from_equity(market_env.get_equity(...), maturity, strike)``, so the
@@ -30,6 +31,9 @@ class VanillaMCPricer(Pricer):
         n_paths: Number of Monte Carlo paths.
         n_steps: Number of time steps up to maturity.
         seed: Seed of the stateless Gaussian draws.
+        digital_smoothing: Digitals only: width of the sigmoid replacing the indicator, as a fraction of the
+            strike (0 = hard indicator: unbiased price, but zero pathwise delta and vega; > 0 = smooth payoff with
+            AAD greeks, at the cost of a small bias, second order in the width).
 
     Example::
 
@@ -44,6 +48,7 @@ class VanillaMCPricer(Pricer):
         n_paths: int = 50_000,
         n_steps: int = 252,
         seed: int = 42,
+        digital_smoothing: float = 0.01,
     ) -> None:
         super().__init__()
         if not hasattr(model, "from_equity"):
@@ -54,28 +59,31 @@ class VanillaMCPricer(Pricer):
         self._n_paths = n_paths
         self._n_steps = n_steps
         self._seed = seed
+        self._digital_smoothing = float(digital_smoothing)
 
     def calculate_price(
-        self, product: VanillaOption, market_env: MarketEnvironment
+        self, product, market_env: MarketEnvironment
     ) -> tf.Tensor:
-        """Price a European :class:`VanillaOption` by Monte Carlo.
+        """Price a European :class:`VanillaOption` or :class:`DigitalOption` by Monte Carlo.
 
-        ``NPV = P(0, T) * mean(max(phi (S_T - K), 0))``. The Monte Carlo standard
-        error is stored on ``product.standard_error``.
+        ``NPV = P(0, T) * mean(payoff(S_T))``: ``max(phi (S_T - K), 0)`` for a vanilla, ``A * w`` or ``S_T * w`` for a
+        cash- / asset-or-nothing digital with ``w = 1{phi (S_T - K) > 0}`` or, with ``digital_smoothing = eps > 0``,
+        ``w = sigmoid(phi (S_T - K) / (eps K))``. The Monte Carlo standard error is stored on
+        ``product.standard_error``.
 
         Args:
-            product: The vanilla option (European exercise).
+            product: The option (European exercise).
             market_env: Market data (underlying via ``get_equity``).
 
         Returns:
             tf.Tensor: float64 NPV, differentiable w.r.t. the market risk factors.
 
         Raises:
-            ValueError: If *product* is not a European :class:`VanillaOption`, or the
+            ValueError: If *product* is not a European :class:`VanillaOption` or a :class:`DigitalOption`, or the
                 underlying has no vol surface.
         """
-        if not isinstance(product, VanillaOption):
-            raise ValueError("VanillaMCPricer only supports VanillaOption")
+        if not isinstance(product, (VanillaOption, DigitalOption)):
+            raise ValueError("VanillaMCPricer only supports VanillaOption and DigitalOption")
         if product.exercise_type != ExerciseType.European:
             raise ValueError("VanillaMCPricer only supports European exercise")
 
@@ -94,7 +102,18 @@ class VanillaMCPricer(Pricer):
         k = tf.cast(product.strike, DTYPE)
         phi = tf.constant(float(product.option_type.value), dtype=DTYPE)
         discount_factor = tf.cast(eq.discount_curve.discount(product.end_date), DTYPE)
-        payoff = discount_factor * tf.maximum(phi * (s_t - k), 0.0)
+        if isinstance(product, DigitalOption):
+            if self._digital_smoothing > 0.0:
+                in_the_money = tf.sigmoid(phi * (s_t - k) / (self._digital_smoothing * k))
+            else:
+                in_the_money = tf.cast(phi * (s_t - k) > 0.0, DTYPE)
+            if product.payoff_type == PayoffType.AssetOrNothing:
+                amount = s_t
+            else:
+                amount = tf.constant(product.cash_amount, DTYPE)
+            payoff = discount_factor * amount * in_the_money
+        else:
+            payoff = discount_factor * tf.maximum(phi * (s_t - k), 0.0)
 
         price = tf.reduce_mean(payoff)
         product.standard_error = tf.math.reduce_std(tf.stop_gradient(payoff)) / self._n_paths ** 0.5

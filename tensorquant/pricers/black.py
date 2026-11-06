@@ -1,6 +1,7 @@
 from .pricer import Pricer
+from ..instruments.digital import DigitalOption
 from ..instruments.option import VanillaOption
-from ..markethandles.utils import ExerciseType, OptionType
+from ..markethandles.utils import ExerciseType, OptionType, PayoffType
 from ..markethandles.marketenvironment import MarketEnvironment
 from ..timehandles.utils import Settings
 from ..numericalhandles.dtypes import DTYPE
@@ -57,6 +58,47 @@ def blackscholes_calc(
         spot_price * tf.exp(-dividend_yield * time_to_maturity) * _norm_cdf(phi * d1)
         - strike * tf.exp(-riskfree_rate * time_to_maturity) * _norm_cdf(phi * d2)
     )
+
+
+def digital_calc(
+    spot_price: tf.Tensor,
+    strike: tf.Tensor,
+    riskfree_rate: tf.Tensor,
+    volatility: tf.Tensor,
+    time_to_maturity: tf.Tensor,
+    dividend_yield: tf.Tensor,
+    option_type: OptionType,
+    payoff_type: PayoffType,
+    cash_amount: float = 1.0,
+) -> tf.Tensor:
+    """European digital price under Black-Scholes, ``phi = +1`` (call) or ``-1`` (put).
+
+    - cash-or-nothing: ``A e^{-rT} N(phi d2)`` (``N(phi d2)``: risk-neutral probability of finishing in the money);
+    - asset-or-nothing: ``S e^{-qT} N(phi d1)``.
+
+    Asset-or-nothing minus ``K`` times the unit cash-or-nothing is the vanilla. The vol is the one at the strike:
+    the smile slope is not in the formula (a call spread on the smile includes it).
+
+    Args:
+        spot_price, strike, riskfree_rate, volatility, time_to_maturity, dividend_yield: As
+            :func:`blackscholes_calc`.
+        option_type: :class:`OptionType`.
+        payoff_type: ``CashOrNothing`` or ``AssetOrNothing``.
+        cash_amount: Amount of a cash-or-nothing digital.
+
+    Returns:
+        tf.Tensor: Digital price.
+    """
+    phi = tf.constant(float(option_type.value), dtype=spot_price.dtype)
+    sqrt_t = tf.sqrt(time_to_maturity)
+    d1 = (
+        tf.math.log(spot_price / strike)
+        + (riskfree_rate - dividend_yield + (volatility**2) / 2) * time_to_maturity
+    ) / (volatility * sqrt_t)
+    d2 = d1 - volatility * sqrt_t
+    if payoff_type == PayoffType.AssetOrNothing:
+        return spot_price * tf.exp(-dividend_yield * time_to_maturity) * _norm_cdf(phi * d1)
+    return cash_amount * tf.exp(-riskfree_rate * time_to_maturity) * _norm_cdf(phi * d2)
 
 
 def _phi(
@@ -172,7 +214,7 @@ def bjerksund_stensland_calc(
 
 
 class BlackScholesPricer(Pricer):
-    """European Black-Scholes and American Bjerksund-Stensland (1993) pricer for vanilla options.
+    """Black-Scholes pricer: vanilla options (European, American by Bjerksund-Stensland 1993) and European digitals.
 
     All market inputs come from the underlying's :class:`Equity` view
     (``market_env.get_equity``), i.e. from the market risk factors: the price
@@ -222,12 +264,12 @@ class BlackScholesPricer(Pricer):
         self._use_implied_repo = use_implied_repo
 
     def _build_inputs(
-        self, product: VanillaOption, market_env: MarketEnvironment
+        self, product, market_env: MarketEnvironment
     ) -> tuple:
         """Black-Scholes inputs from the underlying's market data.
 
         Args:
-            product (VanillaOption): The option to be priced.
+            product (VanillaOption | DigitalOption): The option to be priced.
             market_env (MarketEnvironment): Market data.
 
         Returns:
@@ -236,11 +278,11 @@ class BlackScholesPricer(Pricer):
                 ``q`` the continuous carry deduction.
 
         Raises:
-            ValueError: If the product is not a VanillaOption, if Bermudan
+            ValueError: If the product is not a VanillaOption or DigitalOption, if Bermudan
                 exercise is requested, or if the underlying has no vol surface.
         """
-        if not isinstance(product, VanillaOption):
-            raise ValueError("product must be a VanillaOption")
+        if not isinstance(product, (VanillaOption, DigitalOption)):
+            raise ValueError("product must be a VanillaOption or a DigitalOption")
         if product.exercise_type == ExerciseType.Bermudan:
             raise ValueError("Bermudan exercise is not supported")
 
@@ -291,17 +333,19 @@ class BlackScholesPricer(Pricer):
 
         return s_net, k, r, q, sigma, t
 
-    def calculate_price(self, product: VanillaOption, market_env: MarketEnvironment) -> tf.Tensor:
-        """Price a VanillaOption: Black-Scholes (European) or Bjerksund-Stensland 1993 (American).
+    def calculate_price(self, product, market_env: MarketEnvironment) -> tf.Tensor:
+        """Price a VanillaOption (Black-Scholes European, Bjerksund-Stensland 1993 American) or a DigitalOption.
 
         Args:
-            product (VanillaOption): The option to be priced.
+            product (VanillaOption | DigitalOption): The option to be priced.
             market_env (MarketEnvironment): Market data.
 
         Returns:
             tf.Tensor: Scalar float64 NPV.
         """
         s_net, k, r, q, sigma, t = self._build_inputs(product, market_env)
+        if isinstance(product, DigitalOption):
+            return digital_calc(s_net, k, r, sigma, t, q, product.option_type, product.payoff_type, product.cash_amount)
         if product.exercise_type == ExerciseType.European:
             return blackscholes_calc(s_net, k, r, sigma, t, q, product.option_type)
         return bjerksund_stensland_calc(s_net, k, r, sigma, t, q, product.option_type)

@@ -171,6 +171,61 @@ PDE ($\theta \approx -\tfrac12 \sigma^2 S^2 \Gamma$), explodes too. OTM (or ITM)
 $n(d_1)$ vanishes faster than $1/\sqrt T$ grows. Near expiry the risk concentrates on the strike.
 \end{answer}
 
+\begin{question}{\Theory \diff{2}}{Gamma trading}
+You buy a 1Y ATM call at 30\% implied vol and delta-hedge it daily. What is your P\&L if the stock realises 25\%,
+30\%, 35\%? What are you betting on? \nb{vanilla\_options.ipynb}
+\end{question}
+\begin{answer}
+$\text{P\&L} \approx \tfrac12\int \Gamma S^2(\sigma_r^2 - \sigma_i^2)\,\dd t \approx \mathcal{V}(\sigma_r - \sigma_i)$: about $-4.5$, $0$, $+4.5$
+on a 27 premium (vega 0.90 per vol point). Long gamma is long realised vol against the implied: you pay theta at
+$\sigma_i$ and earn gamma on the realised moves. The P\&L is path dependent (vol near the strike counts most).
+\end{answer}
+
+\begin{question}{\Practice \diff{2}}{Hedging error and rebalancing}
+With realised = implied vol, how does the dispersion of the delta-hedged P\&L depend on the number of rebalances?
+\nb{vanilla\_options.ipynb}
+\end{question}
+\begin{answer}
+The mean stays at zero (the hedge replicates the option); the standard deviation falls as $1/\sqrt n$ (TICKER1:
+6.5, 3.2, 1.5, 0.73 for 12, 52, 252, 1000 rebalances): halving the error costs four times the trades, which in practice
+sets the hedging frequency against transaction costs.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Digital options and the skew}
+Why is a digital call worth more on a market with negative skew than its Black--Scholes price at the vol of the
+strike? How do you price it consistently with the smile? \nb{digital\_options.ipynb}
+\end{question}
+\begin{answer}
+A digital is minus the strike derivative of the call: $D = -\partial C/\partial K = P(0,T)N(d_2) - \mathcal{V}\,\partial\sigma/\partial K$.
+With $\partial\sigma/\partial K < 0$ the second term adds value (TICKER1 1Y ATM: $+0.07$ on 0.43). Consistent price: a tight
+call spread on the market vols, or a model that reprices the smile (local vol); it depends on how the smile is
+interpolated between the quoted strikes, because it is its slope that matters.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{The vega flip of a digital}
+Why does the vega of a long digital call change sign, and how do you hedge a short digital near expiry?
+\nb{digital\_options.ipynb}
+\end{question}
+\begin{answer}
+$\mathcal{V} = -P(0,T)\,n(d_2)\,d_1/\sigma$: out of the money ($d_1 < 0$) more vol raises the chance of finishing above $K$,
+in the money it raises the chance of falling below; the sign flips at $d_1 = 0$, near the strike, like the gamma.
+Near expiry the delta is a spike of height $\sim 1/(S\sigma\sqrt T)$ at the strike: delta-hedging the digital alone
+means huge trades on small moves (pin risk). Hedge statically with the over-replicating call spread
+(long $1/h$ calls at $K-h$, short $1/h$ at $K$): it matches delta, gamma and vega with bounded greeks and pays at least
+the digital.
+\end{answer}
+
+\begin{question}{\Practice \diff{2}}{Monte Carlo greeks of a digital}
+Price a digital call by Monte Carlo and take its AAD delta, first with the hard indicator
+(\texttt{digital\_smoothing} $= 0$), then with a smoothing of $0.01$. Why does the first give nothing? \nb{digital\_options.ipynb}
+\end{question}
+\begin{answer}
+The hard payoff is an indicator: on each path its derivative w.r.t.\ the spot is zero (and TF has no gradient
+through the boolean), while the price moves by the probability mass crossing $K$. A sigmoid of width $\varepsilon K$
+makes the payoff smooth: the pathwise delta becomes the Black--Scholes one up to noise, at the cost of a small
+price bias (second order in $\varepsilon$). Alternatives: likelihood-ratio weights, or a call-spread payoff.
+\end{answer}
+
 \begin{question}{\Practice \diff{2}}{European vs American}
 For TICKER1 at 1Y, which options have an early-exercise premium in the escrowed and in the equivalent-yield model,
 and how does it move with the maturity? \nb{black\_scholes.ipynb}

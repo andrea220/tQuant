@@ -24,6 +24,20 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
 
 ## 2. Equity (analytic pricers)
 
+- [x] `DigitalOption` (`instruments/digital.py`, European cash- / asset-or-nothing, `PayoffType`, `cash_amount`): Black-Scholes
+      closed form in `BlackScholesPricer` (`digital_calc`, vol at the strike), factory entry; `VanillaMCPricer` prices it
+      too, `digital_smoothing` (sigmoid of width eps K, default 1%, 0 = hard: unbiased, no AAD delta). Tests vs closed
+      form, parities, call-spread limit (flat: = digital; skewed: = digital - vega dsigma/dK), MC. Notebook
+      `digital_options`: TICKER1 1Y ATM BS 0.431, call spread on the smile 0.500 (skew term +0.070), local vol MC 0.493
+      (smooth spline smile vs the piecewise-linear surface: the call-spread digital jumps at the strike nodes);
+      super / sub replication bounds; smoothing vs price bias and delta; greeks against the spot at 1M / 3M / 1Y (delta
+      spike, gamma and vega flip near the strike) and how to hedge (static over-replicating call spread).
+- [x] Notebook `vanilla_options`: BS vs MC (GBM, local vol) prices, greeks against the spot (delta, gamma, vega, theta),
+      delta-hedging simulation (vectorised AAD delta through `blackscholes_calc`): realised = implied gives mean P&L ~0 and
+      a hedging error std x sqrt(n) ~ 23 constant; gamma trading, mean P&L = vega x (realised - implied) (±4.5 for ±5
+      vol points), path by path P&L vs realised vol. Docs: Delta hedging and gamma trading (Models and Pricing), 2
+      questions (Exercises).
+
 - [x] Guided review, notebook 02 (dividends): Bjerksund-Stensland 1993 trigger fixed in `pricers/black.py`
       (`h(T) = -(bT + 2 sigma sqrt T) B_0 / (B_inf - B_0)`; it was `B_0 B_inf / ((B_inf - B_0) K)`): the early-exercise
       premium was 3-4x too small (TICKER1 1Y ATM: discrete put 0.022 → 0.435, continuous call 0.184 → 0.614; CRR tree

@@ -13,6 +13,7 @@ from ..instruments.swap import Swap
 from .swapdiscounting import SwapPricer
 
 from ..instruments.option import VanillaOption
+from ..instruments.digital import DigitalOption
 from .black import BlackScholesPricer
 
 from ..instruments.capfloor import CapFloor, Collar
@@ -31,6 +32,7 @@ class PricerAssignment:
         (Fra, FraPricer),
         (Swap, SwapPricer),
         (VanillaOption, BlackScholesPricer),
+        (DigitalOption, BlackScholesPricer),
         (CapFloor, CapFloorPricer),
         (Collar, CapFloorPricer),
         (Swaption, SwaptionPricer),
@@ -41,7 +43,7 @@ class PricerAssignment:
         """Return a new default pricer for *product* (``isinstance``, so subclasses are covered).
 
         Args:
-            product (Product): Deposit, Ois, Fra, Swap, VanillaOption, CapFloor, Collar or Swaption.
+            product (Product): Deposit, Ois, Fra, Swap, VanillaOption, DigitalOption, CapFloor, Collar or Swaption.
 
         Returns:
             Pricer: ``DepositPricer``, ``OisPricer``, ``FraPricer``, ``SwapPricer`` or

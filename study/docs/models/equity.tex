@@ -90,6 +90,63 @@ maturity and jumps at each ex-date entering the option life; below the boundary 
 and its delta is $-1$.
 
 % ─────────────────────────────────────────────────────────────────────────────
+\subsection{Delta hedging and gamma trading}\label{sec:mp-hedging}
+Long a vanilla bought at the implied vol $\sigma_i$, short $\Delta$ shares (Black--Scholes delta at $\sigma_i$), rebalanced at
+each step, cash at $r$, carry $q$ paid on the short stock. Over a step the hedged position earns
+\[
+  \tfrac12\,\Gamma S^2\Big(\big(\tfrac{\Delta S}{S}\big)^2 - \sigma_i^2\,\Delta t\Big)
+  \quad\Longrightarrow\quad
+  \text{P\&L}_T \approx \tfrac12 \int_0^T \Gamma_t S_t^2\,\big(\sigma_r^2 - \sigma_i^2\big)\,\dd t,
+\]
+the gamma gain on the realised moves minus the theta paid at the implied vol. Consequences (TICKER1 1Y ATM call,
+$\sigma_i = 30\%$, 4000 GBM paths):
+\begin{itemize}[nosep]
+  \item \emph{Realised = implied}: the hedge replicates the option, mean P\&L $\approx 0$; the residual is the discrete
+        rebalancing error, std $\propto 1/\sqrt n$ for $n$ rebalances (std $\times \sqrt n \approx 23$ from 12 to 1000).
+  \item \emph{Long gamma = long realised vol}: mean P\&L $\approx \mathcal{V}\,(\sigma_r - \sigma_i)$ ($\pm 4.5$ for $\pm 5$ vol points,
+        vega 0.90 per point); short gamma the opposite. A delta-hedged option is a bet on realised against implied vol.
+  \item \emph{Path dependence}: the weight $\Gamma S^2$ makes vol realised near the strike count most; the same realised
+        vol gives different P\&L on different paths.
+\end{itemize}
+\nb{vanilla\_options.ipynb}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Digital options}\label{sec:mp-digital}
+European digitals on $\phi(S_T - K) > 0$ ($\phi = \pm 1$), paid at $T$: cash-or-nothing (amount $A$) and asset-or-nothing
+($S_T$). Under Black--Scholes, with the vol at the strike:
+\[
+  D^{\mathrm{cash}} = A\,P(0,T)\,N(\phi d_2),\qquad D^{\mathrm{asset}} = P(0,T)\,F\,N(\phi d_1);
+\]
+$N(\phi d_2)$ is the risk-neutral probability of finishing in the money. Model-free parities: cash call + cash put
+$= A\,P(0,T)$, asset call + asset put $= P(0,T)\,F$, asset-or-nothing $- K\times$ unit cash-or-nothing $=$ vanilla.
+
+\emph{Replication and skew.} The digital call is the limit of a call spread, $D(K) = -\partial C/\partial K$. With a smile
+$\sigma(K)$ the vanilla price moves with the strike also through its vol:
+\[
+  -\frac{\partial C}{\partial K} = P(0,T)\,N(d_2) - \mathcal{V}\,\frac{\partial\sigma}{\partial K},
+\]
+so a negative skew makes the market digital call dearer than the Black--Scholes one (TICKER1 1Y ATM: 0.431 vs 0.500)
+and the digital put cheaper. A digital is priced off the \emph{slope} of the smile: with vols linear between strike
+nodes the slope is piecewise constant and the call-spread digital jumps at the nodes; a model with a smooth smile
+(local vol, spline in total variance) gives a slightly different value (0.493). A finite spread $h$ brackets the digital,
+$\frac{C(K) - C(K+h)}{h} \le D(K) \le \frac{C(K-h) - C(K)}{h}$, at the cost of $1/h$ vanillas per unit of payoff.
+
+\emph{Greeks} (cash-or-nothing call, unit amount):
+$\Delta = P(0,T)\,n(d_2)/(S\sigma\sqrt T)$, a bump centred on the strike that sharpens as $T \to 0$ (TICKER1: peak 0.017 at
+1M, 0.005 at 1Y); $\Gamma = -P(0,T)\,n(d_2)\,d_1/(S^2\sigma^2 T)$ and $\mathcal{V} = -P(0,T)\,n(d_2)\,d_1/\sigma$ change sign at
+$d_1 = 0$, close to the strike: long gamma and long vega out of the money, short both in the money (the vega flip).
+\emph{Hedging}: not with the underlying alone near expiry (the delta spike and the gamma flip at the strike: pin
+risk), but statically with a call spread of width $h$, which carries the digital's delta, gamma and vega (flip and skew
+term included) with greeks bounded by $1/h$; the seller buys the over-replicating spread $[K - h, K]$ (the difference is a
+reserve), $h$ set by the vanilla liquidity and the gamma the book can hold; only the spread-vs-digital residual is
+hedged dynamically, on the smile.
+
+\emph{Monte Carlo.} The payoff is an indicator: its pathwise derivative is zero almost everywhere, so AAD gives no
+delta or vega. A sigmoid of width $\varepsilon K$ replaces it (\code{digital\_smoothing}): smooth payoff, AAD greeks, a
+price bias of second order in the width (0.002 at $\varepsilon = 1\%$ on a 0.43 digital).
+\nb{digital\_options.ipynb}
+
+% ─────────────────────────────────────────────────────────────────────────────
 \subsection{Monte Carlo framework}\label{sec:mp-mc}
 Time grid, stateless draws and common random numbers, pathwise AAD greeks, martingale correction.
 \nb{monte\_carlo\_gbm.ipynb}
