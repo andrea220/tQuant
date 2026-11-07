@@ -1,0 +1,98 @@
+\section{Market Environment}\label{sec:arch-market-environment}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{MarketEnvironment and keys}\label{sec:arch-market-env}
+\code{MarketEnvironment} is the only access point to market data (pricers never read files or hold their own
+copies). It is a flat dictionary with keys \code{RISKFACTOR:CCY:TICKER:TYPE}:
+\code{RISKFACTOR} $\in$ \{\code{IR}, \code{EQ}, \code{FX}, \code{CORR}\} (enum \code{RiskFactor}),
+\code{TYPE} $\in$ \{\code{SPOT}, \code{VOL}, \code{SWVOL}, \code{REPO}, \code{DIVYIELD}, \code{DIV}\} (enum
+\code{MarketDataType}); \code{MarketMapValidator} checks the format and the type of each value.
+
+\begin{center}
+\small
+\begin{tabular}{@{}L{4.4cm}L{4.3cm}L{6.1cm}@{}}
+\toprule
+Key & Value & Accessor \\
+\midrule
+\code{IR:EUR:ESTR:SPOT} & \code{RateCurve} & \code{get\_ir\_curve(ccy, ticker=None)} (default: OIS) \\
+\code{IR:EUR:6M:VOL} / \code{:SWVOL} & caplet \code{VolatilitySurface} / \code{SwaptionVolCube} & \code{get\_ir\_vol\_surface},
+  \code{get\_swaption\_vol\_cube} \\
+\code{EQ:EUR:X:SPOT}, \code{:REPO}, \code{:DIVYIELD} & float64 \code{tf.Variable} & \code{get\_eq\_spot},
+  \code{get\_eq\_repo}, \code{get\_eq\_div\_yield} \\
+\code{EQ:EUR:X:DIV} & \code{DividendCurve} & \code{get\_eq\_dividends} \\
+\code{EQ:EUR:X:VOL} & \code{VolatilitySurface} & \code{get\_eq\_vol\_surface}; all of them: \code{get\_equity} \\
+\code{FX:USD:EURUSD:SPOT} / \code{:VOL} & \code{tf.Variable} (1 EUR = $x$ USD) / surface & \code{get\_fx\_spot},
+  \code{get\_fx\_forward}, \code{get\_fx\_vol\_surface} \\
+\code{CORR:ALL:GLOBAL:SPOT} & \code{CorrelationMatrix} & \code{get\_correlation(names)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{get\_ir\_curve(ccy)} without a ticker returns the overnight curve of the currency (ESTR, SOFR, SONIA), the
+discount curve of everything in that currency; projection curves (e.g.\ EUR 6M) are asked by ticker.
+\nb{market\_handles.ipynb}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Market objects and risk factors}\label{sec:arch-risk-factors}
+Every market input is a float64 \code{tf.Variable} owned by a market object, with a stable identity (updates by
+\code{assign}, so tapes and references stay valid). \code{market\_env.risk\_factors()} returns
+\code{\{key: [variables]\}}: one \code{tape.gradient(price, market\_env.risk\_factors())} gives every bucketed
+sensitivity at once.
+\begin{itemize}[nosep]
+  \item \code{RateCurve}: pillars (dates or year fractions, Act/365 in the snapshots), one variable per pillar zero
+        rate (\code{rates}, \code{variables}); \code{discount}, \code{zero\_rate}, \code{forward\_rate},
+        \code{inst\_fwd} (definitions: Models and Pricing, Curves). Interpolation \code{LINEAR} through
+        \code{numericalhandles.LinearInterp}.
+  \item \code{VolatilitySurface}: a grid of absolute strikes (\code{strike}) and maturities in years
+        (\code{maturity}); the vols are one variable, \code{volatility\_matrix} of shape $[n_T, n_K]$, read by
+        \code{volatility(strike, tenor)}; \code{vol\_type} is lognormal (equity, FX) or normal (caplets).
+  \item \code{DividendCurve}: fixed ex-dates and payment dates, the amounts as one variable; PV with a discount curve.
+  \item Scalars (spot, repo, dividend yield, FX spot): one variable each; \code{MarketEnvironment} wraps a float
+        into a variable.
+  \item \code{SwaptionVolCube}, \code{CorrelationMatrix}: one variable each (cube; $[n, n]$ matrix).
+\end{itemize}
+\nb{market\_handles.ipynb}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{The Equity view}\label{sec:arch-equity}
+\code{market\_env.get\_equity(ticker)} returns an \code{Equity}: references (not copies) to spot, repo, dividend
+yield, dividends, vol surface and the discount curve of the currency, plus \code{currency} and \code{ticker}. It is
+the single place for the forward (\code{forward}, \code{pv\_dividends}, \code{implied\_div\_yield}) and the entry
+point of the model factories (\code{from\_equity}). Dividend model from the data: \code{DIV} present $\Rightarrow$
+\code{"discrete"} (\code{DIVYIELD} ignored), otherwise \code{"continuous"}.
+\nb{market\_handles.ipynb} \nb{equity\_underlying.ipynb}
+
+\begin{center}
+\small
+\begin{tabular}{@{}L{4.2cm}L{11.0cm}@{}}
+\toprule
+Member & What it is \\
+\midrule
+\code{spot}, \code{repo}, \code{div\_yield} & the market variables (\code{div\_yield} is \code{None} with a cash schedule;
+  \code{repo} is a constant 0 when the market has none) \\
+\code{dividends} & the \code{DividendCurve}: \code{ex\_dates}, \code{payment\_dates}, \code{amounts} (one variable),
+  \code{dividends\_before(T)}, \code{to\_dataframe()} \\
+\code{vol\_surface}, \code{discount\_curve} & the market \code{VolatilitySurface} and the OIS curve of the currency \\
+\code{year\_fraction(T)} & time to a date with the discount-curve day count (Act/365 in the snapshots) \\
+\code{forward(T)}, \code{pv\_dividends(T)}, \code{implied\_div\_yield(T)} & float64 tensors, differentiable w.r.t.\ the
+  variables above \\
+\code{risk\_factors()} & \code{\{key: [variables]\}} restricted to the underlying (spot, repo, dividend yield or
+  amounts, vol, discount curve) \\
+\code{summary(T)} & table of the data, plus PV of dividends, implied yield, forward and ATM-forward vol at $T$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{DividendCurve.pv\_dividends(T, curve)} sums the amounts with ex-date in $(t_0, T]$, each discounted at its
+\emph{payment date} (the ex-date when the schedule has no payment dates), with dense weights (a dense gradient on the
+amounts vector). In the synthetic data the payment is 14 days after the ex-date.
+
+\emph{How \code{BlackScholesPricer} consumes the dividends.} Two arguments: \code{dividend\_model} (default
+\code{"continuous"}) and \code{use\_implied\_repo} (default \code{True}: the repo enters the carry). With a discrete schedule:
+\code{"discrete"} prices on \code{spot\_net} $= S - $ \code{pv\_dividends(T)} with carry $=$ repo;
+\code{"continuous"} turns the schedule into $q_{\mathrm{eff}}$, computed with the spot under \code{stop\_gradient}, so the
+AAD delta is the sticky-yield one (a bump-and-reprice recomputes $q_{\mathrm{eff}}$ and gives the sticky-cash delta).
+Without a schedule the market \code{DIVYIELD} is used whatever \code{dividend\_model}. The pricer leaves its inputs on
+the product for inspection: \code{spot}, \code{spot\_net}, \code{pv\_discrete\_dividends}, \code{repo\_margin},
+\code{risk\_free\_rate}, \code{discount\_factor}, \code{volatility}, \code{time\_to\_maturity} (a variable: theta),
+\code{forward}. \nb{dividends.ipynb}

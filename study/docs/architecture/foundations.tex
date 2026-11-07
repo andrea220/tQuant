@@ -1,15 +1,16 @@
-\section{Numerics}\label{sec:arch-numerics}
+\section{Foundations}\label{sec:arch-foundations}
+\code{timehandles} and \code{numericalhandles}, used by every package; AAD is in \S\ref{sec:arch-aad-principle}.
 
 % ─────────────────────────────────────────────────────────────────────────────
-\subsection{Float64 and dtypes}\label{sec:arch-dtypes}
-\code{DTYPE}, \code{as\_variable}, the float32 round trip of \code{tf.cast} on Python numbers.
+\subsection{Dates and conventions}\label{sec:arch-timehandles}
+The global evaluation date (\code{Settings.evaluation\_date}), day counts (\code{DayCounter}), calendars
+(\code{Calendar}, \code{TARGET}), schedules (\code{ScheduleGenerator}) and the enums of the conventions.
 
 \pending
 
 % ─────────────────────────────────────────────────────────────────────────────
-\subsection{AAD in practice}\label{sec:arch-aad}
-\code{GradientTape}, dense gradients (no \code{IndexedSlices}), \code{tf.function} and loops,
-\code{stop\_gradient} where a derivative must not flow.
+\subsection{Float64 and dtypes}\label{sec:arch-dtypes}
+\code{DTYPE}, \code{as\_variable}, the float32 round trip of \code{tf.cast} on Python numbers.
 
 \pending
 

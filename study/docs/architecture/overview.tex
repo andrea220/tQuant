@@ -10,6 +10,59 @@ one access point to market data.
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Package layout}\label{sec:arch-layout}
 \code{timehandles}, \code{numericalhandles}, \code{markethandles}, \code{index}, \code{flows},
-\code{instruments}, \code{models}, \code{pricers}, \code{analytics}, \code{calibration}.
+\code{instruments}, \code{models}, \code{pricers}, \code{analytics}, \code{calibration}
+(Figure~\ref{fig:arch-layout}).
 
-\pending
+\input{architecture/layout_diagram}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Automatic differentiation}\label{sec:arch-aad-principle}
+\paragraph{Reverse mode.} A price is a composition of elementary operations $v_k = \phi_k(v_{j}, j \prec k)$ from the
+inputs $x$ (the risk factors) to the output $y$. The \emph{forward pass} evaluates them and records each operation with
+the values it needs for its local derivatives (the \emph{tape}). The \emph{backward pass} walks the tape in reverse and
+propagates the adjoints $\bar v_j = \partial y/\partial v_j$, starting from $\bar y = 1$:
+\[
+  \bar v_j = \sum_{k:\, j \prec k} \bar v_k\,\frac{\partial \phi_k}{\partial v_j},
+  \qquad \frac{\partial y}{\partial x_i} = \bar x_i .
+\]
+One backward pass gives the gradient w.r.t.\ \emph{all} inputs, at a cost of a small multiple of the forward pass (2--5
+in practice), whatever their number; bump-and-reprice needs one or two repricings per input. The price is memory: the
+tape keeps the intermediate values (for a Monte Carlo price, of the order of paths $\times$ steps $\times$ state). Forward
+mode (one directional derivative per pass) is the opposite trade-off, fit for few inputs and many outputs. The result is
+the exact derivative of the computed function (up to rounding), not an approximation: where the code has a kink or a
+jump, AAD differentiates the code as written.
+
+\paragraph{TensorFlow.} The tape is \code{tf.GradientTape}: it records the operations on the watched tensors, and the
+trainable variables (\code{tf.Variable}) are watched automatically. The call \code{tape.gradient(target, sources)} runs
+the backward pass and returns the gradients with the structure of \code{sources} (a dict of lists, as \code{market\_env.risk\_factors()}). Mechanics that matter in the library:
+\begin{itemize}[nosep]
+  \item a tape is released after one \code{gradient} call (\code{persistent=True} for several); a tape inside another
+        gives second derivatives (gamma); \code{tape.jacobian} gives the full Jacobian (calibration residuals);
+  \item a source not connected to the target gets \code{None}, not 0: a value passed through \code{.numpy()},
+        \code{float()}, a comparison or a cast to an integer leaves the graph;
+  \item \code{tf.gather} on a variable returns sparse \code{IndexedSlices}: gathers are written to give dense gradients;
+  \item \code{tf.stop\_gradient(v)} keeps the value and cuts the derivative;
+  \item \code{tf.function} compiles the Python code into a graph, traced once per input signature and differentiable
+        like eager code; the first call pays the tracing.
+\end{itemize}
+
+\paragraph{In tQuant.} Every market input is a float64 \code{tf.Variable} with a stable identity in the market objects
+(bumps by \code{assign}), so a gradient w.r.t.\ \code{market\_env.risk\_factors()} is the full bucketed risk.
+\code{Pricer.price(..., autodiff=True)} runs \code{calculate\_price} under a tape and keeps it on \code{pricer.tape};
+pricers read the market only through its objects and never detach values. Patterns:
+\begin{itemize}[nosep]
+  \item \emph{Locating, not differentiating}: interval searches (interpolation, vol nodes, kernel bins) act on
+        \code{stop\_gradient} copies; the derivative flows through the interpolation weights.
+  \item \emph{Risk conventions}: a quantity deliberately held fixed is wrapped in \code{stop\_gradient} (the sticky
+        implied yield of the continuous dividend model, the Heston parameters and $\E[v \mid X]$ in Heston SLV).
+  \item \emph{Through a calibration}: the optimiser's iterations are not differentiated. At the optimum $\theta^*$ the
+        implicit function theorem gives $\partial\theta/\partial m = -H^{-1}\,\partial^2 L/\partial\theta\,\partial m$; it is injected
+        with a value-preserving step $\theta = \theta^* - (s - \mathrm{stop\_gradient}(s))$, $s = H^{-1}\nabla_\theta L(\theta^*, m)$
+        ($H$ held): the value is $\theta^*$, the derivative the implicit one (Heston, displaced diffusion).
+  \item \emph{Monte Carlo}: the tape over the simulation gives the pathwise derivative of the estimator, valid for
+        Lipschitz payoffs; indicators (digitals, barriers) have no pathwise derivative and are smoothed by a sigmoid,
+        or replaced by a continuous probability (the Brownian bridge of a barrier). Diagnostics such as the standard error
+        are computed on \code{stop\_gradient} values.
+\end{itemize}
+The tests check AAD against central finite differences, with common random numbers for Monte Carlo
+(\S\ref{sec:arch-testing}).

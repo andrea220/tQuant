@@ -1,94 +1,316 @@
 \section{Models}\label{sec:mp-models}
-Simulation models (\code{StochasticProcess}): each maps standard normals drawn by the caller to paths on a time grid.
-The equity models are built from the market by \code{from\_equity} and simulate the forward ratio $X_t = S_t/F(t)$
-($X_0 = 1$, a martingale), returning $S_t = F(t)\,X_t$ with the market forward of \S\ref{sec:mp-forward}; cash
-dividends then act as proportional drops. An optional martingale correction rescales $X_t$ to sample mean 1 at each
-observed date. Greeks are AAD gradients through the construction and the simulation.
+The simulation models. Each one is described by its dynamics, how it is calibrated to the market, its closed-form
+prices when it has them, the simulation scheme and how its sensitivities are defined.
+
+\paragraph{Common conventions.} The equity models are written on the \emph{forward ratio}
+\[
+  X_t = \frac{S_t}{F(t)},\qquad X_0 = 1,\qquad S_t = F(t)\,X_t ,
+\]
+with $F(t)$ the market forward of \S\ref{sec:mp-forward}. Under the risk-neutral measure $X$ is a martingale, so
+every model reproduces the market forward at every date by construction: rates, repo and dividends enter only through
+$F(t)$, and a cash dividend is a drop of $S$ proportional to its level. In Monte Carlo the simulated $X_t$ can optionally
+be rescaled to sample mean one at each date, which removes the noise on the forward.
+
+\paragraph{Sensitivities.} A sensitivity is the derivative of the price w.r.t.\ one market quote, all the other quotes
+held, \emph{with the model recalibrated}: it is the limit of ``bump the quote, recalibrate, reprice with the same random
+numbers''. The quotes are the spot, the repo, the cash dividend amounts, the zero rates at the curve pillars and the
+implied vol at each node $(T_i, K_j)$ of the surface. Holding the other quotes fixes the scenario convention: when the spot
+moves, the implied vols stay at their \emph{absolute} strikes (sticky strike), the dividends stay as cash amounts and the
+curves as zero rates (another convention, e.g.\ vols fixed in moneyness, gives another delta). Through a calibration by
+optimisation the derivative of the parameters comes from the implicit function theorem at the optimum; through an
+explicit construction (local vol) from the chain rule. In Monte Carlo the derivative is taken path by path (pathwise
+estimator, \citealp{giles2006,glasserman2003}), all quotes at once by algorithmic differentiation \citep{savine2018}; it equals
+the bump derivative of the same estimator, and needs a payoff continuous in the path (indicators are smoothed). Units:
+delta per unit of spot, vega per vol point and per node, rho per basis point and per pillar.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Geometric Brownian motion}\label{sec:mp-gbm}
-$\dd S = \mu S\,\dd t + \sigma S\,\dd W$, simulated exactly: $S_{t+\Delta} = S_t\,e^{(\mu - \sigma^2/2)\Delta + \sigma\sqrt\Delta\,Z}$.
-\code{from\_equity(equity, T, K)}: $S_0$ net of $\mathrm{PV}_{\mathrm{div}}(T)$ with $\mu = r - q_r$ (cash dividends) or
-$S_0$ with $\mu = r - q - q_r$ (yield), $r = -\ln P(0,T)/T$, $\sigma$ the surface vol at $(K, T)$: the Black--Scholes model of
-the option, one vol per option.
+\paragraph{Dynamics.} $\dd S_t = \mu S_t\,\dd t + \sigma S_t\,\dd W_t$, with constant drift and vol: the Black--Scholes model
+\citep{black1973,merton1973}. $\ln S_T$ is Gaussian, so a European option has the Black--Scholes price
+(\S\ref{sec:mp-vanilla}).
+
+\paragraph{Calibration.} One model per option $(K, T)$, nothing to optimise:
+\begin{enumerate}[nosep]
+  \item $\sigma$ is the implied vol of the surface at $(K, T)$ (bilinear between the four surrounding nodes);
+  \item $r = -\ln P(0,T)/T$, the zero rate to the expiry;
+  \item with cash dividends the simulated process is the escrowed spot $S^* = S_0 - \mathrm{PV}_{\mathrm{div}}(T)$ with drift $\mu = r - q_r$;
+        with a dividend yield it is the spot with $\mu = r - q - q_r$.
+\end{enumerate}
+The model reprices the option it is built for and nothing else: it is the Monte Carlo counterpart of the Black--Scholes
+formula, not a model of the surface. With cash dividends the escrowed path is the spot only at $T$, so the model is not
+fit for products observed before the expiry.
+
+\paragraph{Simulation.} Exact: $S_{t+\Delta} = S_t\,\exp\big((\mu - \tfrac12\sigma^2)\Delta + \sigma\sqrt\Delta\,Z\big)$, $Z \sim N(0,1)$; one step is
+enough for a European payoff.
+
+\paragraph{Sensitivities.} The chain is short,
+\[
+  \text{quotes} \;\to\; \big(S^*,\ \mu,\ r,\ \sigma(K, T)\big) \;\to\; S_T \;\to\; \text{payoff},
+\]
+and the simulation is exact, so the Monte Carlo sensitivities are the Black--Scholes ones up to the Monte Carlo error:
+\begin{itemize}[nosep]
+  \item \emph{Delta}: $\partial S^*/\partial S_0 = 1$ and the drift does not depend on the spot, so the delta of a call is
+        $e^{-q_r T} N(d_1)$, the Black--Scholes delta of the discrete-dividend model ($e^{-(q + q_r)T} N(d_1)$ with a yield); the vol
+        stays at $(K, T)$ (sticky strike).
+  \item \emph{Vega}: $\sigma$ is the bilinear interpolation of the four nodes around $(K, T)$, so the vega splits on these four
+        nodes with the interpolation weights, and sums to the Black--Scholes vega.
+  \item \emph{Rates}: $r$ enters the drift and the discounting through $P(0,T)$ only (the pillars around $T$), and the
+        present value of the dividends through their payment dates.
+  \item \emph{Dividends}: $\partial S^*/\partial D_i = -P(0,p_i)$ for every ex-date before $T$, so $\partial V/\partial D_i = -\Delta\,P(0, p_i)$.
+\end{itemize}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Displaced diffusion}\label{sec:mp-dd}
+\paragraph{Dynamics.} A mixture of lognormal and normal dynamics \citep{rubinstein1983}:
+\[
+  \dd X_t = \sigma(t)\,\big(\beta(t)\,X_t + 1 - \beta(t)\big)\,\dd W_t ,
+\]
+with $\beta$ and $\sigma$ piecewise constant between the surface maturities. The local vol of $X$ is
+$\sigma(t)\,\big(\beta + (1 - \beta)/X\big)$: $\beta = 1$ is lognormal (flat smile), $\beta \to 0$ normal, with a vol that rises as $X$ falls
+(negative skew). The skew per unit log-moneyness ranges from 0 to about $-\sigma/2$, so the model cannot produce a
+steeper equity skew, and it has no smile curvature. With constant parameters $Y = \beta X + 1 - \beta$ is lognormal with vol
+$\beta\sigma$, which gives calls on $X$ in closed form:
+\[
+  \E\big[(X_T - k)^+\big] = \frac{\mathrm{Black}\big(1,\ \beta k + 1 - \beta,\ \beta\sigma,\ T\big)}{\beta}
+  \qquad\big(1 - k \text{ if } \beta k + 1 - \beta \le 0\big),
+\]
+puts by parity.
+
+\paragraph{Calibration.} Two stages:
+\begin{enumerate}[nosep]
+  \item \emph{Slices}: for each maturity $T_i$, the constant parameters $\theta_i = (\beta_{T_i}, \sigma_{T_i})$ that best fit the smile of $T_i$:
+        least squares on the market calls per unit forward $c_{ij}$ at the strike nodes $k_{ij} = K_j / F(T_i)$,
+        \[
+          \min_{\theta_i}\ L_i = \tfrac12 \sum_j \big(c^{\mathrm{DD}}(k_{ij}, T_i;\ \theta_i) - c_{ij}\big)^2 ,\qquad \beta \in [0.02, 1.5];
+        \]
+        two parameters fit the level and the skew of the slice, not its curvature;
+  \item \emph{Forward pieces}: the time-dependent parameters on $[T_{i-1}, T_i)$ that reproduce the slices. The variance adds
+        up, $\sigma_i^2 (T_i - T_{i-1}) = \sigma_{T_i}^2 T_i - \sigma_{T_{i-1}}^2 T_{i-1}$; the effective $\beta$ of a maturity is an average of
+        the $\beta(t)$ before it, weighted towards the later times \citep{piterbarg2005,andersen2010},
+        \[
+          \beta_{T} = \frac{\sum_j \beta_j W_j}{\sum_j W_j},\qquad W_j = \int_{\text{piece } j} \sigma^2(t)\,v(t)\,\dd t,\quad v(t) = \int_0^t \sigma^2(s)\,\dd s ,
+        \]
+        solved maturity by maturity for the $\beta_j$ (a linear equation each). Slices whose skews are not consistent in
+        time give a forward $\beta$ out of its range.
+\end{enumerate}
+
+\paragraph{Simulation.} Exact on each piece (shifted lognormal step); a step across pieces uses the variance-weighted
+$\beta$ and the summed variance.
+
+\paragraph{Sensitivities.} The chain goes through an optimisation:
+\[
+  \text{quotes} \;\to\; \big(F(T_i),\ k_{ij},\ c_{ij}\big) \;\to\; \theta_i = (\beta_{T_i}, \sigma_{T_i}) \;\to\; (\beta_j, \sigma_j) \;\to\; X_t \;\to\; S_t = F(t)\,X_t \;\to\; \text{payoff}.
+\]
+\begin{itemize}[nosep]
+  \item \emph{Through the slice fit} (implicit function theorem, \citealp{henrard2011}). At the optimum the gradient of $L_i$ is
+        zero, $\nabla_\theta L_i(\theta_i^*, m) = 0$, for every value of the market inputs $m$; differentiating this identity,
+        \[
+          \frac{\partial\theta_i^*}{\partial m} = -H_i^{-1}\,\frac{\partial^2 L_i}{\partial\theta\,\partial m},\qquad H_i = \nabla^2_\theta L_i(\theta_i^*, m),
+        \]
+        the derivative of a re-optimisation without re-optimising (a parameter on a bound stays fixed). The forward
+        pieces are explicit functions of the slices (chain rule).
+  \item \emph{Vega per node}: a node $(T_i, K_j)$ changes only $c_{ij}$, hence only the slice $\theta_i$ (each slice is fitted
+        alone), then the forward pieces from $T_i$ on. A vanilla at $T_i$ gets vega on all the strikes of its slice, in
+        proportion to how much each node pulls the two parameters, not only on the node at its strike as in local vol.
+  \item \emph{Delta}: a higher spot raises the forwards, so the paths scale and, with the vols held at absolute strikes,
+        the nodes move in moneyness $k_{ij}$ and the slices are refitted. A vanilla is repriced only up to the fit
+        residual, so its delta is the Black--Scholes sticky-strike one up to the slope of that residual.
+  \item \emph{Rates, repo, dividends}: through the forwards, as the delta without the move of the spot.
+\end{itemize}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Local volatility}\label{sec:mp-lv}
-$\dd X/X = \sigma_{\mathrm{loc}}(t, y)\,\dd W$, $y = \ln X = \ln(S/F(t))$. Gatheral's formula in total variance
-$w = \sigma_{\mathrm{imp}}^2 T$ and forward log-moneyness $y = \ln(K/F(T))$:
+\paragraph{Dynamics.} The volatility is a deterministic function of time and spot \citep{dupire1994,derman1994}:
+\[
+  \frac{\dd S_t}{S_t} = \mu_t\,\dd t + \sigma_{\mathrm{loc}}(t, S_t)\,\dd W_t
+  \qquad\Longleftrightarrow\qquad
+  \frac{\dd X_t}{X_t} = \sigma_{\mathrm{loc}}(t, y_t)\,\dd W_t,\quad y_t = \ln X_t .
+\]
+There is one source of randomness; the instantaneous vol of the stock is known once the spot is known. The function
+$\sigma_{\mathrm{loc}}$ is not chosen: it is \emph{implied} by the market, as the only diffusion of this form whose distribution of
+$S_T$ at every maturity is the one of the market option prices.
+
+\paragraph{From option prices to local vol.} With $C(K, T)$ the undiscounted call on the forward, Dupire's equation
+gives the local variance in terms of the time decay and the convexity in strike of the calls:
+\[
+  \sigma_{\mathrm{loc}}^2(K, T) = \frac{\partial_T C}{\tfrac12 K^2\,\partial_{KK} C} .
+\]
+Equivalently, for any model of a stochastic instantaneous vol $\sigma_t$ that reprices the same calls,
+$\sigma_{\mathrm{loc}}^2(K, T) = \E[\sigma_T^2 \mid S_T = K]$ \citep{gyongy1986,derman1994}: the local variance is the expected instantaneous
+variance on the paths through $(T, K)$. In implied total variance $w(y, T) = \sigma_{\mathrm{imp}}^2(y, T)\,T$, with forward
+log-moneyness $y = \ln(K/F(T))$ \citep[eq.~1.10]{gatheral2006}:
 \[
   \sigma_{\mathrm{loc}}^2 = \frac{\partial_T w}{g},\qquad
   g = 1 - \frac{y}{w}\,\partial_y w + \frac14\Big(-\frac14 - \frac1w + \frac{y^2}{w^2}\Big)(\partial_y w)^2 + \frac12\,\partial_{yy} w .
 \]
-Per surface maturity $w$ is a natural cubic spline in $y$ through the strike nodes, continued linearly outside with
-the slope clipped to $1.9$; in $T$ it is linear between nodes at fixed $y$. The grid: time step $1/96$, 300 points of
-$y$ in $[\ln 0.05, \ln 5]$; $g$ floored at $10^{-3}$, $\sigma_{\mathrm{loc}}$ capped at 2. Cells with $g$ below the floor or
-$\partial_T w \le 0$ where the surface has data are reported (static arbitrage, with a warning). Simulation: log-Euler on
-$\ln X$ with $\sigma_{\mathrm{loc}}$ bilinear in $(t, y)$, rows of the grid at each step start. Differentiable w.r.t.\ the vol nodes
-and the forwards.
+The numerator is the calendar term (the variance added between two maturities), the denominator the butterfly term
+(proportional to the risk-neutral density). The surface is free of static arbitrage when $\partial_T w \ge 0$ at fixed $y$ and
+$g > 0$. Without skew ($\partial_y w = 0$), $g = 1$ and the local variance is the forward implied variance $\partial_T w$; a flat
+surface gives a flat local vol equal to it.
 
-% ─────────────────────────────────────────────────────────────────────────────
-\subsection{Displaced diffusion}\label{sec:mp-dd}
-$\dd X = \sigma(t)\,\big(\beta(t)\,X + 1 - \beta(t)\big)\,\dd W$, with $\beta$, $\sigma$ piecewise constant between the surface
-maturities. For constant parameters $Y = \beta X + 1 - \beta$ is lognormal with vol $\beta\sigma$:
+\paragraph{Calibration.} The local vol is built from the implied vol nodes $\sigma_{ij}$ (maturities $T_i$, strikes $K_j$); there is
+no optimisation, the fit is exact at the nodes by construction:
+\begin{enumerate}[nosep]
+  \item each node is placed in forward log-moneyness, $y_{ij} = \ln(K_j / F(T_i))$, with its total variance $w_{ij} = \sigma_{ij}^2 T_i$;
+  \item per maturity, $w(\cdot, T_i)$ is a natural cubic spline in $y$ through the nodes, so $\partial_y w$ and $\partial_{yy} w$ are
+        analytic (no finite differences of option prices, which are tiny at short maturities and in the wings);
+        outside the nodes it continues linearly with the slope capped at $1.9$, below the bound $2$ of
+        \citet{lee2004} on the wings of the total variance;
+  \item in time, $w$ is linear between maturities at fixed $y$, and linear from $w = 0$ at $t = 0$ to the first maturity, so
+        $\partial_T w$ is constant on each interval;
+  \item $\sigma_{\mathrm{loc}}$ follows from the formula above on a grid of time step $1/96$ year and 300 points of $y \in [\ln 0.05, \ln 5]$,
+        with $g$ floored at $10^{-3}$ and $\sigma_{\mathrm{loc}}$ capped at 200\%;
+  \item the cells where the market data imply $g < 10^{-3}$ or $\partial_T w \le 0$ are reported as static arbitrage: there no
+        local vol can reprice the surface.
+\end{enumerate}
+Between the nodes this representation (spline in total variance) is not the bilinear interpolation in vol used by the
+closed-form pricers of \S\ref{sec:mp-vol-surface}: the two agree at the nodes only.
+
+\paragraph{How implied and local vol relate.} The implied variance of $(K, T)$ is approximately the time average of the
+local variance over the paths that end at the strike \citep[eqs.~3.8--3.11]{gatheral2006}, concentrated around the
+straight line from the spot to the strike in log-moneyness:
 \[
-  \E\big[(X_T - k)^+\big] = \frac{\mathrm{Black}(1,\ \beta k + 1 - \beta,\ \beta\sigma,\ T)}{\beta}
-  \qquad(\text{$1 - k$ if } \beta k + 1 - \beta \le 0),
+  \sigma_{\mathrm{imp}}^2(K, T) \approx \frac1T\int_0^T \sigma_{\mathrm{loc}}^2\big(t, \tfrac tT\,y_K\big)\,\dd t .
 \]
-puts by parity. Calibration (\code{from\_equity}): per maturity, slice parameters $(\beta_T, \sigma_T)$ by least squares on the
-call prices per unit forward, $\beta \in [0.02, 1.5]$; forward parameters by inverting the skew averaging
-$\beta_T = \sum_j \beta_j W_j/\sum_j W_j$, $W_j = \int_{\text{piece } j} \sigma^2(t)\,v(t)\,\dd t$, $v(t) = \int_0^t \sigma^2$, and
-$\sigma_j^2 \Delta t_j = \sigma_{T_j}^2 T_j - \sigma_{T_{j-1}}^2 T_{j-1}$. Sensitivities to the market through the calibration:
-$\theta(m) = \theta^* - H^{-1}\nabla_\theta L(\theta^*, m)$ with the exact Hessian $H$ held (implicit function theorem).
-Simulation: exact shifted-lognormal step on each piece (a step across pieces: variance-weighted $\beta$, summed
-variance). The steepest skew is the normal one ($\beta \to 0$, about $-\sigma/2$ per unit log-moneyness).
+Hence: near the money and at short maturity the implied skew is about half the local skew (the path gets only half-way
+to the strike on average); a steep short-dated implied wing requires a much higher local vol there; with a convex smile
+the local vol at the money is below the implied vol (the paths also visit the higher-vol wings). The local skew decays
+with the maturity, so the \emph{forward} smile of the model (the smile of $S_{T_2}/S_{T_1}$) is flatter than today's smile of
+the same length: the model fits the distributions at each date, not the dynamics of the smile
+\citep[ch.~3 and 8]{gatheral2006}; see also \citet{derman2016}.
+
+\paragraph{Simulation.} Log-Euler on $\ln X$ with the local vol at the start of each step:
+\[
+  \ln X_{t+\Delta} = \ln X_t - \tfrac12\,\sigma^2\Delta + \sigma\sqrt\Delta\,Z,\qquad \sigma = \sigma_{\mathrm{loc}}(t, \ln X_t),
+\]
+$\sigma_{\mathrm{loc}}$ bilinear on its grid. The scheme has a bias of first order in the step: the repriced smile is about $0.3$
+vol points high with 50 steps a year.
+
+\paragraph{Sensitivities.} The local vol is rebuilt from the quotes for every price, so each sensitivity runs through
+the construction above (chain rule), then through the paths:
+\begin{align*}
+  \text{quotes} \;&\to\; \big(F(T_i),\ y_{ij},\ w_{ij}\big) \;\to\; \big(w,\ \partial_y w,\ \partial_{yy} w,\ \partial_T w\big)(y, T)\\
+  &\to\; \sigma_{\mathrm{loc}}(t, y) \;\to\; X_t \;\to\; S_t = F(t)\,X_t \;\to\; \text{payoff}.
+\end{align*}
+\begin{itemize}[nosep]
+  \item \emph{Delta.} A higher spot raises every forward ($\partial F/\partial S_0 = e^{-q_r T}/P(0,T)$ with cash dividends), so the paths
+        scale with it; with the implied vols held at their absolute strikes, every node moves to a lower log-moneyness
+        $y_{ij} = \ln(K_j/F(T_i))$, so the local vol seen by a path at a given spot changes too (the smile is re-read relative
+        to the new forward). For a vanilla the two effects add up to a simple result: the model reprices every vanilla,
+        so its price as a function of the spot is the Black--Scholes price at the fixed market vol $\sigma(K, T)$, and the delta
+        is the Black--Scholes sticky-strike delta (with the same dividend model). For a path-dependent product the delta
+        also contains the shift of the local vol along the paths, which a single Black--Scholes vol cannot represent.
+  \item \emph{Vega per node.} A bump of the node $(T_i, K_j)$ raises $w$ at $T_i$ around $y_{ij}$ (through the spline, with small
+        ripples on the neighbouring strikes) and changes $\partial_T w$ on the two adjacent time intervals: the local vol rises
+        before $T_i$ and falls after it, around that log-moneyness. A vanilla on the node has the market vega on that node
+        and almost nothing elsewhere (its price is the Black--Scholes price at that vol); a path-dependent product
+        collects vega on all the nodes whose region $(t, y)$ its paths cross, with signs that can differ by maturity.
+  \item \emph{Rates, repo, dividends.} They enter through the forwards (and the discounting of the payoff): the same
+        chain as the delta, without the move of the spot.
+\end{itemize}
+For vanillas these sensitivities match the closed-form Black--Scholes sticky-strike ones up to the Monte Carlo and
+discretisation errors, which is the check of the construction; the information the model adds is in the exotics.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Heston}\label{sec:mp-heston}
-$\dd X/X = \sqrt v\,\dd W_1$, $\dd v = \kappa(\theta - v)\,\dd t + \xi\sqrt v\,\dd W_2$, $\dd\langle W_1, W_2\rangle = \rho\,\dd t$, $v_0$;
-constant parameters. Closed form: characteristic function of $\ln X_T$ in the stable form,
-$b = \kappa - \rho\xi iu$, $d = \sqrt{b^2 + \xi^2(iu + u^2)}$, $g = (b-d)/(b+d)$,
+\paragraph{Dynamics.} The variance is a mean-reverting square-root process correlated with the spot \citep{heston1993}:
+\[
+  \frac{\dd X_t}{X_t} = \sqrt{v_t}\,\dd W^1_t,\qquad
+  \dd v_t = \kappa(\theta - v_t)\,\dd t + \xi\sqrt{v_t}\,\dd W^2_t,\qquad \dd\langle W^1, W^2\rangle_t = \rho\,\dd t ,
+\]
+five constant parameters: initial variance $v_0$, long-run variance $\theta$, mean reversion $\kappa$, vol of vol $\xi$, correlation $\rho$.
+$\rho < 0$ gives the negative skew, $\xi$ the curvature, $\kappa$ how fast both fade with the maturity. The variance stays
+positive when $2\kappa\theta \ge \xi^2$ (Feller); otherwise it touches zero.
+
+\paragraph{Closed form.} The characteristic function of $\ln X_T$ is known; in the form that is continuous in $u$
+\citep{albrecher2007}, with $b = \kappa - \rho\xi iu$, $d = \sqrt{b^2 + \xi^2(iu + u^2)}$, $g = (b-d)/(b+d)$,
 \[
   \varphi(u) = \exp\Big(\frac{\kappa\theta}{\xi^2}\Big[(b-d)T - 2\ln\frac{1 - g e^{-dT}}{1-g}\Big]
-  + \frac{b-d}{\xi^2}\,\frac{1 - e^{-dT}}{1 - g e^{-dT}}\,v_0\Big);
+  + \frac{b-d}{\xi^2}\,\frac{1 - e^{-dT}}{1 - g e^{-dT}}\,v_0\Big).
 \]
-European prices by the COS method (puts on $[a, 0]$, calls by parity; 1024 terms, range $c_1 \pm 30\sqrt{c_2}$ of $\ln X_T$).
-Calibration (\code{from\_equity}): least squares on the call prices of all the surface nodes, each maturity scaled by
-its ATM vega; bounds $v_0, \theta \in [10^{-4}, 1]$, $\kappa \in [0.01, 20]$, $\xi \in [0.01, 5]$, $\rho \in [-0.99, 0.99]$;
-sensitivities to the market by the implicit function theorem at the optimum. Simulation: Andersen's QE scheme for $v$
-(quadratic / exponential branch at $\psi = 1.5$) and the log step with central weights and the exact martingale
-correction of $X$; two normals per step.
+European options by the COS method \citep{fang2008}: the density of $\ln X_T$ is expanded in a cosine series on a range of
+$\pm 30$ standard deviations around its mean (1024 terms); puts are integrated, calls follow by parity.
+
+\paragraph{Calibration.} The five parameters are fitted to the whole surface at once:
+\[
+  \min_{v_0, \kappa, \theta, \xi, \rho}\ \sum_{i,j} \left(\frac{C^{\mathrm{Heston}}(k_{ij}, T_i) - C^{\mathrm{mkt}}(k_{ij}, T_i)}{\mathcal V^{\mathrm{ATM}}_{T_i}}\right)^2 ,
+\]
+calls per unit forward at the strike nodes $k_{ij} = K_j/F(T_i)$, each maturity divided by its ATM Black vega so that the
+residuals are close to implied vol errors and all maturities weigh alike. Bounds: $v_0, \theta \in [10^{-4}, 1]$,
+$\kappa \in [0.01, 20]$, $\xi \in [0.01, 5]$, $\rho \in [-0.99, 0.99]$; start from the short ATM variance for $v_0$, the average ATM variance
+for $\theta$, $\kappa = 1.5$, $\xi = 0.5$, $\rho = -0.6$. Five parameters cannot fit a steep short-dated smile: the errors are
+largest at the first maturities and in the wings. The sensitivities of the parameters to the market quotes come from
+the implicit function theorem at the optimum, as for the displaced diffusion.
+
+\paragraph{Simulation.} The quadratic-exponential scheme of \citet{andersen2008}. Given $v_t$, the next variance has mean
+$m = \theta + (v_t - \theta)e^{-\kappa\Delta}$ and variance
+$s^2 = v_t\,\xi^2 e^{-\kappa\Delta}(1 - e^{-\kappa\Delta})/\kappa + \theta\,\xi^2 (1 - e^{-\kappa\Delta})^2/(2\kappa)$; with $\psi = s^2/m^2$, it is drawn as
+$a(b + Z)^2$ when $\psi \le 1.5$ (moments matched) and from a mass at zero plus an exponential tail otherwise, which keeps it
+non-negative without truncation. $\ln X$ is then stepped with the time integral of $v$ approximated by the average of
+the two ends and the drift chosen so that $X$ stays an exact martingale. Two normals per step.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Heston stochastic local volatility}\label{sec:mp-slv}
-$\dd X/X = L(t, X)\sqrt v\,\dd W_1$, $v$ the Heston variance of the calibrated \code{HestonModel} with vol of vol
-$\eta\,\xi$ (\code{mixing} $\eta \in (0, 1]$), and the leverage
+\paragraph{Dynamics.} The Heston variance multiplied by a leverage function of time and spot:
 \[
-  L^2(t, x) = \frac{\sigma_{\mathrm{loc}}^2(t, x)}{\E[v_t \mid X_t = x]},
+  \frac{\dd X_t}{X_t} = L(t, X_t)\,\sqrt{v_t}\,\dd W^1_t ,
 \]
-$\sigma_{\mathrm{loc}}$ the local vol of \S\ref{sec:mp-lv}, so that the marginals are those of the local vol model.
-$\E[v \mid X]$ is estimated at each step on the simulated paths (particle method): a tent-kernel smoother on 100 nodes
-spanning the 0.1\%--99.9\% quantiles of $\ln X$, sparse nodes shrunk to the mean, floored at $10^{-4}$; $L$ capped at 10.
-Step: QE for $v$, log step with $L$ frozen on the step and the martingale correction per path. Greeks: the Heston
-parameters and $\E[v \mid X]$ are held; the leverage moves with the market through the local vol and the forward.
+$v$ the calibrated Heston variance with the vol of vol scaled by a mixing factor $\eta \in (0, 1]$ ($\eta\,\xi$). The stochastic
+variance gives the smile dynamics (forward smile); the leverage corrects the marginals.
+
+\paragraph{Calibration of the leverage.} By Gyöngy's theorem the model has the local vol marginals if its local variance
+$L^2(t, x)\,\E[v_t \mid X_t = x]$ equals the market one, which gives
+\[
+  L^2(t, x) = \frac{\sigma_{\mathrm{loc}}^2(t, x)}{\E[v_t \mid X_t = x]} ,
+\]
+$\sigma_{\mathrm{loc}}$ the local vol of \S\ref{sec:mp-lv} (\citealp{vanderstoep2014,oosterlee2019}). The conditional expectation depends on the
+leverage itself, so it is estimated on the simulated paths while they are generated (particle method,
+\citealp{guyon2012}): at each step
+\begin{enumerate}[nosep]
+  \item 100 nodes span the 0.1\%--99.9\% quantiles of $\ln X_t$ over the paths;
+  \item $\E[v_t \mid \ln X_t]$ at the nodes is the regression of $v_t$ on $\ln X_t$ with tent (piecewise linear) kernels; nodes
+        with few paths are shrunk to the overall mean of $v_t$, and the result is floored at $10^{-4}$;
+  \item each path gets $L = \sigma_{\mathrm{loc}}/\sqrt{\E[v \mid X]}$ at its own $\ln X_t$ (capped at 10), and the step is taken.
+\end{enumerate}
+Small $\eta$ gives back the local vol model, $\eta = 1$ the most stochastic vol the Heston calibration allows.
+
+\paragraph{Simulation.} QE step for $v$, log step of $X$ with $L$ frozen over the step, martingale correction per path.
+
+\paragraph{Sensitivities.} By convention the Heston parameters and the conditional expectation $\E[v \mid X]$ are held
+fixed; the leverage moves with the market through the local vol and the forward.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Gaussian short-rate models}\label{sec:mp-gsr}
-$r(t) = \sum_i x_i(t) + \varphi(t)$, $\dd x_i = -\kappa_i x_i\,\dd t + \sigma_i(t)\,\dd W_i$, $x_i(0) = 0$, correlated Brownians; $\varphi$ fits
-the market discount curve exactly. One factor: Hull--White (G1++), two: G2++. Vols constant or piecewise constant.
-With $V(t,T) = \mathrm{Var}\big(\int_t^T \sum_i x_i\big)$ (exact integrals over the vol pieces):
+\paragraph{Dynamics.} The short rate is a sum of Gaussian factors plus a deterministic shift:
+\[
+  r(t) = \sum_i x_i(t) + \varphi(t),\qquad \dd x_i = -\kappa_i\,x_i\,\dd t + \sigma_i(t)\,\dd W^i_t,\qquad x_i(0) = 0 ,
+\]
+with correlated Brownians; one factor is Hull--White \citep{hull1990} (G1++), two factors G2++ \citep[ch.~3--4]{brigo2006}.
+The vols are constant or piecewise constant in time. The shift $\varphi$ is chosen so that the model reproduces the market
+discount curve exactly, so only the vol parameters are calibrated. With $V(t,T) = \mathrm{Var}\big(\int_t^T \sum_i x_i\big)$ (exact
+integrals over the vol pieces) the zero-coupon bonds are
 \[
   P(t,T) = \frac{P(0,T)}{P(0,t)}\exp\Big(\tfrac12\big[V(t,T) - V(0,T) + V(0,t)\big] - \sum_i B_i(T-t)\,x_i(t)\Big),\quad
   B_i(\tau) = \frac{1 - e^{-\kappa_i\tau}}{\kappa_i}.
 \]
+
+\paragraph{Closed forms.}
 \begin{itemize}[nosep]
-  \item \emph{Caplets}: exchange option between two bonds (Margrabe on the Gaussian log ratio), the index curve
-        through a deterministic multiplicative basis.
-  \item \emph{Swaptions}: Gaussian swap-rate approximation (swap rate linearised in the factors at $x = 0$, normal vol
-        from $g^\top \mathrm{Cov}(x(T))\,g$), or exact: the swap as a bond portfolio under the expiry-forward measure,
-        Jamshidian (one factor) or Brigo--Mercurio (Gauss--Hermite on the first factor, closed form on the second).
-  \item \emph{Calibration} (\code{calibrate\_gaussian\_short\_rate}): least squares on vega-scaled caplet and / or
-        swaption prices, bounded parameters, AAD Jacobian; Hull--White with $\sigma(t)$ piecewise on the caplet fixings.
-  \item \emph{Simulation}: exact joint Gaussian transition of the factors and their integrals; bank-account discount
-        $D(0,t) = P(0,t)\,e^{-\int_0^t \sum_i x_i - V(0,t)/2}$. Used by \code{SwapExposureGenerator} (swap MtM, EE, ENE, PFE).
+  \item \emph{Caplets}: an option to exchange two zero-coupon bonds, whose log ratio is Gaussian (\citealp{margrabe1978});
+        the index curve enters through a deterministic multiplicative basis to the discount curve.
+  \item \emph{Swaptions}: either the Gaussian swap-rate approximation (the swap rate linearised in the factors around
+        zero, normal vol from its variance), or exact: the swap as a portfolio of bonds under the forward measure of the
+        expiry, by \citet{jamshidian1989} with one factor, or with two by \citet{brigo2006} (Gauss--Hermite on the first
+        factor, closed form on the second).
 \end{itemize}
+
+\paragraph{Calibration.} Least squares on caplets and / or swaptions: ATM (or given strikes) caplets up to a term, from
+the normal caplet vols, and swaptions from the cube. Each residual is the model minus market price divided by the
+normal vega, close to a normal vol error. Parameters inside bounds; a parameter can be held fixed. Hull--White with a
+piecewise constant $\sigma(t)$ on the caplet fixings matches the ATM caplets exactly, with the mean reversion held (caplets
+alone do not determine it). With two factors, swaptions of several tenors are needed to pin the correlation, which
+caplets leave undetermined.
+
+\paragraph{Simulation.} Exact joint Gaussian transition of the factors and of their time integrals; the bank-account
+discount is $D(0,t) = P(0,t)\,e^{-\int_0^t \sum_i x_i - V(0,t)/2}$. Swap exposures (mark-to-market, expected positive and negative
+exposure, potential future exposure) are computed on these paths.

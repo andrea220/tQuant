@@ -1,112 +1,117 @@
 \section{Products}\label{sec:mp-products}
-Each product with its payoff and its pricers: analytic (closed form on the market handles of \S\ref{sec:mp-market})
-or Monte Carlo (on a model of \S\ref{sec:mp-models}). Greeks are AAD gradients of the price w.r.t.\ the market
-variables: delta and gamma on the spot, vega per vol node, rho per curve pillar, dividend amounts; theta on the time to
-maturity, the only pricer-local variable.
+Each product with its payoff and how it is priced: in closed form on the market data of \S\ref{sec:mp-market}, or by
+Monte Carlo on a model of \S\ref{sec:mp-models}. Sensitivities are derivatives of the price w.r.t.\ the market quotes:
+delta and gamma on the spot, vega per vol node, rho per curve pillar, sensitivities to the dividend amounts; theta is
+the derivative w.r.t.\ the time to maturity with rates and dividend inputs held.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Linear rate products}\label{sec:mp-linear}
 Notation: $P_d$ the discount (overnight) curve of the currency, $P_f$ the projection curve of the index, $N$ the
 notional, $\tau$ the accrual fraction.
 \begin{itemize}[nosep]
-  \item \emph{Deposit} (\code{DepositPricer}): $\mathrm{NPV} = N\,P_d(0,s) - N(1 + r\tau)\,P_d(0,e)$.
-  \item \emph{FRA} (\code{FraPricer}): $\mathrm{NPV} = \pm N\tau\,(F - K)\,P_d(0,T_1)/(1 + F\tau)$, $F$ the forward of the index
-        on $P_f$, settled at the start; zero once started.
+  \item \emph{Deposit}: $\mathrm{NPV} = N\,P_d(0,s) - N(1 + r\tau)\,P_d(0,e)$.
+  \item \emph{FRA}: $\mathrm{NPV} = \pm N\tau\,(F - K)\,P_d(0,T_1)/(1 + F\tau)$, $F$ the forward of the index on $P_f$, settled at the
+        start; zero once started.
   \item \emph{Fixed leg}: $\sum_i N K \tau_i\,P_d(0,p_i)$.
   \item \emph{Floating leg} (Ibor): coupon $N(g\,F_i + m)\,\tau_i$ discounted at $P_d(0,p_i)$, gearing $g$, spread $m$,
         forward $F_i = \big(P_f(0,s_i)/P_f(0,e_i) - 1\big)/\tau^{\mathrm{idx}}_i$.
-  \item \emph{Swap} (\code{SwapPricer}): payer $=$ floating $-$ fixed leg; par rate $=$ floating leg$/$annuity.
-  \item \emph{OIS} (\code{OisPricer}): compounded overnight coupon $\big(P_d(0,s_i)/P_d(0,e_i) - 1\big)/\tau_i$ on the discount
-        curve itself, so the floating leg telescopes to $N\big(P_d(0,s) - P_d(0,e)\big)$.
+  \item \emph{Swap}: payer $=$ floating $-$ fixed leg; par rate $=$ floating leg$/$annuity.
+  \item \emph{OIS}: compounded overnight coupon $\big(P_d(0,s_i)/P_d(0,e_i) - 1\big)/\tau_i$ on the discount curve itself, so
+        the floating leg telescopes to $N\big(P_d(0,s) - P_d(0,e)\big)$.
 \end{itemize}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Caps, floors and collars}\label{sec:mp-capfloor}
-A cap (\code{OptionType.Call}) / floor (\code{Put}) is a strip of caplets on the Ibor fixings, the first period excluded.
-\code{CapFloorPricer}:
+A cap (floor) is a strip of calls (puts) on the Ibor fixings, the first period excluded:
 \[
   \mathrm{caplet}_i = N\tau_i\,P_d(0,p_i)\,\mathrm{Opt}(F_i, K, \sigma_i, T^{\mathrm{fix}}_i),
 \]
-$\mathrm{Opt}$ Bachelier on normal caplet vols, Black on lognormal ones, $\sigma_i$ from the caplet surface at
-$(T^{\mathrm{fix}}_i, K)$; a caplet already fixed is the intrinsic on the fixing, a paid one is dropped. Collar $=$ cap $-$ floor.
-Under a Gaussian short-rate model the caplets have their own closed form (\S\ref{sec:mp-gsr}), used in calibration.
+$\mathrm{Opt}$ the formula of \citet{bachelier1900} on normal caplet vols, of \citet{black1976} on lognormal ones, $\sigma_i$ the caplet
+vol at $(T^{\mathrm{fix}}_i, K)$; a caplet already fixed is the intrinsic value on the fixing, a paid one is dropped.
+Collar $=$ cap $-$ floor. Under a Gaussian short-rate model the caplets have their own closed form (\S\ref{sec:mp-gsr}),
+used in its calibration.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Swaptions}\label{sec:mp-swaption}
-European, physically settled, into a fixed-vs-Ibor swap. \code{SwaptionPricer}: with the annuity of the fixed leg
-$A = \sum_i N\tau_i\,P_d(0,p_i)$ and the forward swap rate $F = \mathrm{PV}_{\mathrm{float}}/A$,
+European, physically settled, into a fixed-vs-Ibor swap. With the annuity of the fixed leg $A = \sum_i N\tau_i\,P_d(0,p_i)$ and
+the forward swap rate $F = \mathrm{PV}_{\mathrm{float}}/A$,
 \[
   V = A\,\mathrm{Opt}(F, K, \sigma, T),\qquad \sigma = \sigma_{\mathrm{cube}}(T, \text{tenor}, K - F),
 \]
-Bachelier (normal cube) or Black-76 (lognormal). Model prices under G1++ / G2++: \S\ref{sec:mp-gsr}.
+Bachelier (normal cube) or Black-76 (lognormal); see \citet{brigo2006}. Model prices under G1++ / G2++: \S\ref{sec:mp-gsr}.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Vanilla options}\label{sec:mp-vanilla}
 Calls and puts on an equity, $\phi = \pm 1$, payoff $(\phi(S_T - K))^+$; European or American.
 
-\emph{Black--Scholes} (\code{BlackScholesPricer}). European on the forward $F$ of \S\ref{sec:mp-forward} and the surface vol at
-$(K, T)$:
+\paragraph{Black--Scholes} \citep{black1973,merton1973}. European on the forward $F$ of \S\ref{sec:mp-forward} and the
+surface vol at $(K, T)$:
 \[
   V = P(0,T)\,\phi\,\big(F N(\phi d_1) - K N(\phi d_2)\big),\qquad d_{1,2} = \frac{\ln(F/K) \pm \tfrac12 \sigma^2 T}{\sigma\sqrt T}.
 \]
-Dividend model (\code{dividend\_model}): \emph{discrete} uses the escrowed spot $S_0 - \mathrm{PV}_{\mathrm{div}}(T)$ with
-carry $b = r - q_r$; \emph{continuous} replaces the dividends by the implied yield $q_{\mathrm{eff}}(T)$, held fixed when the spot
-moves (sticky yield), carry $b = r - q_{\mathrm{eff}} - q_r$; with only a yield in the data, $b = r - q - q_r$.
-Theta: the time to maturity moves with $r$ and the dividend inputs held.
+Two dividend models \citep{haug2003}: \emph{discrete}, on the escrowed spot $S_0 - \mathrm{PV}_{\mathrm{div}}(T)$ with carry $b = r - q_r$;
+\emph{continuous}, with the dividends replaced by the equivalent yield $q_{\mathrm{eff}}(T)$, held fixed when the spot moves
+(sticky yield), carry $b = r - q_{\mathrm{eff}} - q_r$. The two give the same price and different deltas. With only a yield in
+the data, $b = r - q - q_r$.
 
-\emph{American}: Bjerksund--Stensland (1993). Call with carry $b$, flat exercise boundary
+\paragraph{American} \citep{bjerksund1993}, see also \citet{haug2007}. A call with carry $b$ is exercised at a flat
+boundary $I$:
 \begin{gather*}
   I = B_0 + (B_\infty - B_0)\big(1 - e^{h(T)}\big),\qquad h(T) = -\big(bT + 2\sigma\sqrt T\big)\frac{B_0}{B_\infty - B_0},\\
   B_\infty = \frac{\beta}{\beta - 1}K,\qquad B_0 = \max\Big(K, \frac{r}{r-b}K\Big),\qquad
   \beta = \tfrac12 - \frac{b}{\sigma^2} + \sqrt{\Big(\frac{b}{\sigma^2} - \tfrac12\Big)^2 + \frac{2r}{\sigma^2}},
 \end{gather*}
-value $\alpha S^\beta - \alpha\,\phi(S,T,\beta,I,I) + \phi(S,T,1,I,I) -
-\phi(S,T,1,K,I) - K\phi(S,T,0,I,I) + K\phi(S,T,0,K,I)$ with $\alpha = (I - K)I^{-\beta}$; $S - K$ above $I$; European when
-$b \ge r$. Puts by the transformation $P(S, K, r, b) = C(K, S, r - b, -b)$.
+value $\alpha S^\beta - \alpha\,\phi(S,T,\beta,I,I) + \phi(S,T,1,I,I) - \phi(S,T,1,K,I) - K\phi(S,T,0,I,I) + K\phi(S,T,0,K,I)$ with
+$\alpha = (I - K)I^{-\beta}$; $S - K$ above $I$; the European value when $b \ge r$. Puts by the transformation
+$P(S, K, r, b) = C(K, S, r - b, -b)$.
 
-\emph{Monte Carlo} (\code{VanillaMCPricer}, European): the model class (GBM, local vol, displaced diffusion, Heston,
-Heston SLV) built by \code{from\_equity} at each price, a uniform grid of \code{n\_steps} ending at the expiry,
-\code{noise\_size()} stateless seeded normals per step; price $P(0,T)$ times the mean payoff, with its standard error.
-Pathwise AAD greeks; the same seed gives common random numbers for bumps.
+\paragraph{Monte Carlo} (European). Paths of one of the models of \S\ref{sec:mp-models}, calibrated to the market, on a
+uniform time grid ending at the expiry; price $P(0,T)$ times the mean payoff, with its standard error. The normals are
+drawn from a fixed seed, so a repricing with bumped market data uses the same random numbers.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Digital options}\label{sec:mp-digital}
 European, paid at $T$ on $\phi(S_T - K) > 0$: cash-or-nothing (amount $A$) or asset-or-nothing ($S_T$).
 \emph{Black--Scholes}, vol at the strike: $D^{\mathrm{cash}} = A\,P(0,T)\,N(\phi d_2)$, $D^{\mathrm{asset}} = P(0,T)\,F\,N(\phi d_1)$.
-\emph{Monte Carlo} (\code{VanillaMCPricer}): the indicator replaced by the sigmoid $1/(1 + e^{-\phi(S_T - K)/(\varepsilon K)})$,
-$\varepsilon = $ \code{digital\_smoothing} (default 1\%; 0 gives the hard indicator, which has no pathwise greeks).
+\emph{Monte Carlo}: the indicator has no pathwise derivative, so it is replaced by the sigmoid
+$1/(1 + e^{-\phi(S_T - K)/(\varepsilon K)})$ of width $\varepsilon$ (1\% of the strike by default; $\varepsilon = 0$ is the exact indicator, with
+no pathwise delta or vega).
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Barrier options}\label{sec:mp-barrier}
-\code{BarrierOption}: European call or put, knocked in or out when the spot reaches $H$ from above (down) or below (up);
-continuous monitoring or on dates (\code{monitoring\_dates}; \code{[expiry]} = observed at expiry only); no rebate.
-Knock-out $=$ vanilla $-$ knock-in.
+European call or put, knocked in or out when the spot reaches the barrier $H$ from above (down) or from below (up);
+the barrier is monitored continuously or on given dates (a single date at expiry is the barrier observed at expiry
+only); no rebate. Knock-out $=$ vanilla $-$ knock-in.
 
-\emph{Black--Scholes} (\code{BlackScholesPricer}, one vol: the surface vol at $(K, T)$):
+\paragraph{Black--Scholes} (one vol: the surface vol at $(K, T)$):
 \begin{itemize}[nosep]
-  \item continuous: Reiner--Rubinstein closed form with carry $b$;
-  \item at expiry only: exact by vanillas and cash digitals struck at $H$, e.g.\ down-and-in put
-        $= \mathrm{Put}(H) + (K - H)\,\mathrm{DigitalPut}(H)$ for $K > H$;
-  \item $n$ dates: the continuous formula at the Broadie--Glasserman--Kou barrier $H\,e^{\pm 0.5826\,\sigma\sqrt{T/n}}$ (away from
-        the spot).
+  \item continuous monitoring: the closed form of \citet{reiner1991} with carry $b$ \citep{haug2007};
+  \item at expiry only: exact by vanillas and cash digitals struck at $H$, e.g.\ the down-and-in put is
+        $\mathrm{Put}(H) + (K - H)\,\mathrm{DigitalPut}(H)$ for $K > H$;
+  \item $n$ dates: the continuous formula at the shifted barrier $H\,e^{\pm 0.5826\,\sigma\sqrt{T/n}}$ of \citet{broadie1997} (moved away
+        from the spot).
 \end{itemize}
-\emph{Monte Carlo} (\code{VanillaMCPricer}): continuous monitoring by the Brownian-bridge survival on each step,
+
+\paragraph{Monte Carlo.} Continuous monitoring by the Brownian-bridge probability of not crossing the barrier between
+two simulated points \citep{beaglehole1997,glasserman2003}, multiplied over the steps:
 \[
-  \prod_i \Big(1 - e^{-2\,\ln(S_i/H)^+ \ln(S_{i+1}/H)^+/(\sigma_H^2\,\Delta t_i)}\Big)\quad(\text{down; } \ln(H/S) \text{ up}),
+  \prod_i \Big(1 - e^{-2\,\ln(S_i/H)^+ \ln(S_{i+1}/H)^+/(\sigma_H^2\,\Delta t_i)}\Big)\quad(\text{down; } \ln(H/S) \text{ for up}),
 \]
-$\sigma_H$ the surface vol at $(H, T)$, continuous in the path (pathwise greeks); dates on the simulation grid, the
-indicator smoothed by \code{digital\_smoothing}.
+$\sigma_H$ the surface vol at $(H, T)$: exact for a lognormal model with that vol, and continuous in the path (pathwise
+sensitivities). Discrete monitoring checks the barrier on the dates, the indicator smoothed as for the digitals.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Autocallable}\label{sec:mp-autocallable}
-\code{AutocallableOption}: strike $K$ (barriers in \% of it), coupon fixings $t_i$ with rates $c_i$, barriers $B^c_i$ and
-payment dates $p_i$, memory flag, autocall fixings $u_j$ with barriers $B^a_j$, and at the last coupon fixing a down-and-in
-put (barrier $B^p$, participation $\pi$). \code{AutocallableMCPricer} values the investor's side, coupons minus put, per
-unit notional; on each path, with $\alpha$ = 1 until the first autocall and $m$ the unpaid coupons:
+A strike $K$ (the barriers in \% of it); coupon fixings $t_i$ with rates $c_i$, barriers $B^c_i$ and payment dates $p_i$, with or
+without memory; autocall fixings $u_j$ with barriers $B^a_j$; at the last coupon fixing a put knocked in below $B^p$ (observed
+at that date only), with participation $\pi$. Valued on the investor's side, coupons minus put, per unit notional; on each
+path, with $\alpha$ = 1 until the first autocall and $m$ the coupons unpaid so far:
 \[
   V = N\,\E\Big[\sum_i \alpha_{t_i}\,\mathbb 1\{S_{t_i} \ge B^c_i\}\,c_i(1 + m_{t_i})\,P(0,p_i)
   \;-\; \alpha_T\,\mathbb 1\{S_T < B^p\}\,\pi\,\frac{(K - S_T)^+}{K}\,P(0,p_n)\Big],
 \]
-$m$ reset when a coupon is paid and $+1$ when it is missed ($m \equiv 0$ without memory); $\alpha$ set to 0 when
-$S_{u_j} \ge B^a_j$. Paths from a model of \S\ref{sec:mp-models} (local vol by default) on the fixings merged with a uniform grid.
-Each indicator is a sigmoid of width $\varepsilon K$ (\code{barrier\_smoothing}) so that delta and vega exist pathwise.
+$m$ reset when a coupon is paid and increased by one when it is missed ($m \equiv 0$ without memory); $\alpha$ set to 0 when
+$S_{u_j} \ge B^a_j$. Monte Carlo on a model of \S\ref{sec:mp-models} (local vol by default), on the fixing dates merged with a
+weekly grid. Each indicator is a sigmoid of width $\varepsilon K$ so that delta and vega exist pathwise. With the autocall out
+of reach and no put, the product is a strip of digitals; with no coupons, a put knocked in at expiry
+(\S\ref{sec:mp-digital}, \S\ref{sec:mp-barrier}).

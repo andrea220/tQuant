@@ -15,14 +15,18 @@
 \clearpage
 
 \section*{Scope}
-How the library is built: the market data (storage, keys, risk factors), the class architecture
-(products, pricers, models, calibration), the numerical conventions (TensorFlow graphs, float64, AAD) and
-the testing approach. The financial content of the models is in \emph{tQuant --- Models and Pricing}.
+How the library is built, one chapter per block of the package layout (Figure~\ref{fig:arch-layout}): the
+market data on disk, the Market Environment (keys, market objects, risk factors), the instruments, the pricers,
+the models and their calibration, the analytics, the foundations (dates, numerics) and the testing approach. The financial content of the models is in \emph{tQuant --- Models and Pricing}.
 
 \input{architecture/overview}
 \input{architecture/market_data}
-\input{architecture/classes}
-\input{architecture/numerics}
+\input{architecture/market_environment}
+\input{architecture/instruments}
+\input{architecture/pricers}
+\input{architecture/models}
+\input{architecture/analytics}
+\input{architecture/foundations}
 \input{architecture/testing}
 
 \end{document}

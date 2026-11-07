@@ -4,6 +4,8 @@
 \documentclass[11pt,a4paper]{article}
 
 \input{preamble}
+\usepackage[round,authoryear]{natbib}
+\hypersetup{citecolor=blue!50!black}
 
 \title{tq --- Models and Pricing}
 \author{Andrea Carapelli}
@@ -23,5 +25,8 @@ data layout) is in the companion document \emph{tQuant --- Architecture}; questi
 \input{models/market_handles}
 \input{models/models}
 \input{models/products}
+
+\bibliographystyle{plainnat}
+\bibliography{refs}
 
 \end{document}

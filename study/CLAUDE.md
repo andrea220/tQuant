@@ -10,7 +10,7 @@ notebook and updates the three documents together.
 |---|---|---|---|
 | Exercises | `exercises.tex` | `chapters/equity.tex`, `chapters/rates.tex` | questions, answers, exercises |
 | Models and Pricing | `models_and_pricing.tex` | `models/market_handles.tex`, `models/models.tex`, `models/products.tex` | definitions as implemented: market handles, simulation models, products (analytic and MC pricing); no teaching material (that goes in Exercises) |
-| Architecture | `architecture.tex` | `architecture/*.tex` | technical: market data (snapshots, keys, risk factors), class architecture, numerics, testing |
+| Architecture | `architecture.tex` | `architecture/*.tex` | technical, one chapter per block of the package-layout diagram (`architecture/layout_diagram.tex`): overview (layout, AAD), market data, market environment, instruments, pricers, models (+ calibration), analytics, foundations (dates, numerics), testing |
 
 - `preamble.tex` is shared: packages, math macros (`\E`, `\Q`, `\dd`, ...), `\nb{...}` (notebook reference),
   `\code{...}` (library names), `\pending` (section still to be written). Macros live only there; the Q/A
@@ -18,9 +18,14 @@ notebook and updates the three documents together.
 - One `\section` per asset class (Q/A), per chapter (Models and Pricing: Market handles, Models, Products) or per
   topic (Architecture); topics are `\subsection`s with a `\label` (`sec:mp-...`, `sec:arch-...`); Q/A and
   Architecture also with a `\nb{...}` to the notebook that shows them.
-- Models and Pricing: what is computed, not how the code is organised; key formulas, the calibration and how
-  the greeks are obtained; short, no long derivations. Architecture: the real classes, methods and files (check the
+- Models and Pricing: purely functional / modelling, **no library references** (no class, method, parameter or
+  key names: those are in Architecture). Per model: dynamics, calibration to the market step by step (what is
+  fitted, to what, with which weights and bounds), closed forms, simulation scheme, sensitivities; key formulas,
+  short, no long derivations. Architecture: the real classes, methods and files (check the
   code), how they connect; no financial derivations. Each fact in one document, cross-referenced from the others.
+- References: `docs/refs.bib` (BibTeX, natbib author-year, `plainnat`; bibliography at the end of Models and
+  Pricing). Cite the source of every model, formula and numerical method (`\citet` / `\citep`, chapter or equation
+  when checked); add only references whose details are certain (books in `resources/`, standard papers).
 - Replace `\pending` when a subsection is written; keep the headings in the review order.
 - After every edit: `latexmk` in `docs/` (builds the three documents into `docs/build/`), fix errors and warnings.
 

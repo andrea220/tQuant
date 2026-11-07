@@ -1,0 +1,77 @@
+% Package layout: how the modules connect, from the market data to prices and greeks.
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+    font=\scriptsize,
+    >={Stealth[length=2.2mm]},
+    box/.style={draw, rounded corners=2pt, align=left, inner sep=4pt, fill=#1},
+    box/.default=white,
+    flow/.style={->, thick},
+    note/.style={font=\tiny\itshape, align=center},
+  ]
+  % ── data ──
+  \node[box=gray!12, text width=2.3cm] (snap) at (-0.1, 0)
+    {\hyperref[sec:arch-market-data]{\textbf{Market Data}}\\ \code{marketdata/}\\ CSV snapshot\\ \code{from\_folder}};
+
+  % ── market ──
+  \node[box=blue!8, text width=4.0cm] (mkt) at (3.9, 0)
+    {\hyperref[sec:arch-market-environment]{\textbf{Market Environment}}\\ (\code{markethandles})\\[3pt]
+     \code{MarketEnvironment}, keys\\ \code{RF:CCY:TICKER:TYPE}\\[3pt]
+     curves, vol surfaces,\\ dividends, swaption cube,\\ correlations, EQ / FX scalars\\[3pt]
+     \code{Equity} view:\\ forward, dividends\\[3pt]
+     \hyperref[sec:arch-risk-factors]{\textbf{risk factors}}:\\ float64 variables};
+
+  % ── products, pricers, models ──
+  \node[box=orange!10, text width=4.4cm] (prod) at (8.75, 3.2)
+    {\hyperref[sec:arch-instruments]{\textbf{Instruments}} (\code{Product})\\
+     options, swaps, caps, swaptions,\\ digitals, barriers, autocallables\\
+     built on \code{flows} and \code{index}};
+  \node[box=green!10, text width=4.4cm] (pricer) at (8.75, 0.25)
+    {\hyperref[sec:arch-pricers-chapter]{\textbf{Pricers}} (\code{Pricer})\\
+     analytic: Black--Scholes,\\ discounting, Bachelier / Black\\
+     Monte Carlo: vanilla,\\ autocallable\\
+     factory: \code{PricerAssignment}};
+  \node[box=violet!10, text width=4.4cm] (model) at (8.75, -3.1)
+    {\hyperref[sec:arch-models-chapter]{\textbf{Models}} (\code{StochasticProcess})\\
+     GBM, local vol, displaced diff.,\\ Heston, Heston SLV,\\ G1++ / G2++\\
+     \code{calibration}};
+
+  % Monte Carlo: model + pricer on the same tape
+  \draw[dashed, thick, green!40!black, rounded corners=4pt]
+    ($(model.south west) + (-0.15, -0.15)$) rectangle ($(pricer.north east) + (0.15, 0.15)$);
+  \node[note, text=green!30!black, anchor=west, align=left] at (7.5, -1.6)
+    {\hyperref[sec:arch-models]{\textbf{Monte Carlo}} = Model + Pricer\\ simulation on the tape:\\ pathwise AAD};
+
+  % ── results ──
+  \node[box=red!8, text width=2.4cm] (price) at (13.0, 1.1)
+    {\hyperref[sec:arch-pricers]{\textbf{Price}}\\ float64 tensor,\\ \code{product.price}};
+  \node[box=red!8, text width=2.4cm] (greeks) at (13.0, -0.9)
+    {\hyperref[sec:arch-aad-principle]{\textbf{Greeks}}\\ \code{pricer.tape}\\ gradient w.r.t.\ the\\ risk factors};
+  \node[box=gray!8, text width=2.4cm] (analytics) at (13.0, -3.1)
+    {\hyperref[sec:arch-analytics]{\textbf{Analytics}}\\ swap exposure\\ (EE, ENE, PFE)};
+
+  % ── foundations ──
+  \node[box=gray!20, minimum width=15.3cm, align=center] (base) at (6.65, -4.9)
+    {\hyperref[sec:arch-foundations]{\code{timehandles}}: dates, calendars, day counts, schedules \qquad
+     \hyperref[sec:arch-foundations]{\code{numericalhandles}}: interpolation, Newton, \code{DTYPE}};
+
+  % ── arrows ──
+  \draw[flow] (snap.east) -- (snap.east -| mkt.west);
+  \draw[flow] (mkt.east |- pricer.west) -- (pricer.west);
+  \draw[flow] (mkt.south) |- node[pos=0.75, above, note] {\code{from\_equity}} (model.west);
+  \draw[flow] (prod.south) -- (pricer.north);
+  \draw[flow] (model.north -| 7.2, 0) -- node[left, note] {paths} (pricer.south -| 7.2, 0);
+  \draw[flow] (pricer.east) -- (price.west);
+  \draw[flow] (pricer.east) -- (greeks.west);
+  \draw[flow] (model.east) -- (analytics.west);
+  \draw[->, thick, dashed, red!60!black]
+    (greeks.east) -- ++(0.25, 0) |- (6.65, 4.7) -| (mkt.north)
+    node[pos=0.25, above, note] {\hyperref[sec:arch-aad-principle]{AAD: one backward pass to every risk factor}};
+\end{tikzpicture}
+\caption{Package layout. Market data enter only through the Market Environment, whose objects hold the risk factors as
+float64 variables. A pricer turns an instrument and the market into a price graph: in closed form, or (Monte Carlo) by
+simulating a model built from the same market variables, so the simulated paths are part of the graph. Either way the
+gradient tape gives the greeks w.r.t.\ every risk factor in one backward pass. Dates, calendars, interpolation and solvers
+sit underneath every package.}
+\label{fig:arch-layout}
+\end{figure}
