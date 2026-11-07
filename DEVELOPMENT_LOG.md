@@ -59,6 +59,20 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       maturity, with jumps at the ex-dates; American put delta). Docs: forward and Black--Scholes in Models and Pricing,
       `Equity` members and pricers in Architecture, 4 questions in Exercises (incl. the empty "gamma close to expiry").
 
+- [x] `BarrierOption(Option)` (`instruments/barrier.py`, `BarrierType` DownIn/DownOut/UpIn/UpOut in
+      `markethandles/utils.py`; continuous or discrete `monitoring_dates`, no rebate). `BlackScholesPricer`
+      (`barrier_calc`): Reiner-Rubinstein for continuous monitoring, exact vanilla + cash digital decomposition for a
+      barrier observed at expiry only, Broadie-Glasserman-Kou shift for n dates; factory maps it to Black-Scholes.
+      `VanillaMCPricer`: continuous monitoring by the Brownian-bridge survival between grid points (surface vol at
+      `(H, T)`; continuous in the path, AAD without smoothing), discrete dates on the grid (indicator smoothed by
+      `digital_smoothing`). Verified (`tests/test_barrier.py`): in + out = vanilla (BS 1e-10, MC path by path), MC GBM
+      = Reiner-Rubinstein within 3 SE in all 8 cases, at-expiry MC = exact, monthly MC = BGK within 3 SE + 1%,
+      ordering at expiry < daily < continuous, AAD delta / vega vs bumps (BS), bridge AAD delta vs CRN bump.
+      Notebooks `digital_strip` (five annual digitals: BS = MC GBM, MC LV = call spread on the surface = the
+      autocallable template with the autocall off, 11.54% vs 11.56% ± 0.03%; BS 10.06% misses the skew) and
+      `down_and_in_put` (autocallable put = `BarrierOption` at expiry, 23.25% vs 23.28% under LV; annual / monthly /
+      continuous monitoring 23.9 / 24.4 / 24.7%, vanilla 24.8%). `autocallable` notebook ported to the library
+      (local vol, funding leg on the pricer paths).
 - [x] `Equity` underlying view (`MarketEnvironment.get_equity`) with forward, PV dividends, implied yield, risk
       factors; example `study/notebooks/equity_underlying.ipynb`.
 - [x] `BlackScholesPricer` on `Equity` and market risk factors, float64 (kernels dtype-generic; fixed a float32

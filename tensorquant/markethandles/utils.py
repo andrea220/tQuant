@@ -88,6 +88,26 @@ class PayoffType(Enum):
         return self.value
 
 
+class BarrierType(Enum):
+    """Barrier direction and effect: the option is knocked in / out when the spot reaches the barrier from above
+    (``Down``) or from below (``Up``)."""
+    DownIn = "DownIn"
+    DownOut = "DownOut"
+    UpIn = "UpIn"
+    UpOut = "UpOut"
+
+    @property
+    def is_down(self) -> bool:
+        return self in (BarrierType.DownIn, BarrierType.DownOut)
+
+    @property
+    def is_in(self) -> bool:
+        return self in (BarrierType.DownIn, BarrierType.UpIn)
+
+    def __str__(self):
+        return self.value
+
+
 class ExerciseType(Enum):
     American = 0
     Bermudan = 1

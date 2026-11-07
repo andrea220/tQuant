@@ -1,0 +1,94 @@
+\section{Models}\label{sec:mp-models}
+Simulation models (\code{StochasticProcess}): each maps standard normals drawn by the caller to paths on a time grid.
+The equity models are built from the market by \code{from\_equity} and simulate the forward ratio $X_t = S_t/F(t)$
+($X_0 = 1$, a martingale), returning $S_t = F(t)\,X_t$ with the market forward of \S\ref{sec:mp-forward}; cash
+dividends then act as proportional drops. An optional martingale correction rescales $X_t$ to sample mean 1 at each
+observed date. Greeks are AAD gradients through the construction and the simulation.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Geometric Brownian motion}\label{sec:mp-gbm}
+$\dd S = \mu S\,\dd t + \sigma S\,\dd W$, simulated exactly: $S_{t+\Delta} = S_t\,e^{(\mu - \sigma^2/2)\Delta + \sigma\sqrt\Delta\,Z}$.
+\code{from\_equity(equity, T, K)}: $S_0$ net of $\mathrm{PV}_{\mathrm{div}}(T)$ with $\mu = r - q_r$ (cash dividends) or
+$S_0$ with $\mu = r - q - q_r$ (yield), $r = -\ln P(0,T)/T$, $\sigma$ the surface vol at $(K, T)$: the Black--Scholes model of
+the option, one vol per option.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Local volatility}\label{sec:mp-lv}
+$\dd X/X = \sigma_{\mathrm{loc}}(t, y)\,\dd W$, $y = \ln X = \ln(S/F(t))$. Gatheral's formula in total variance
+$w = \sigma_{\mathrm{imp}}^2 T$ and forward log-moneyness $y = \ln(K/F(T))$:
+\[
+  \sigma_{\mathrm{loc}}^2 = \frac{\partial_T w}{g},\qquad
+  g = 1 - \frac{y}{w}\,\partial_y w + \frac14\Big(-\frac14 - \frac1w + \frac{y^2}{w^2}\Big)(\partial_y w)^2 + \frac12\,\partial_{yy} w .
+\]
+Per surface maturity $w$ is a natural cubic spline in $y$ through the strike nodes, continued linearly outside with
+the slope clipped to $1.9$; in $T$ it is linear between nodes at fixed $y$. The grid: time step $1/96$, 300 points of
+$y$ in $[\ln 0.05, \ln 5]$; $g$ floored at $10^{-3}$, $\sigma_{\mathrm{loc}}$ capped at 2. Cells with $g$ below the floor or
+$\partial_T w \le 0$ where the surface has data are reported (static arbitrage, with a warning). Simulation: log-Euler on
+$\ln X$ with $\sigma_{\mathrm{loc}}$ bilinear in $(t, y)$, rows of the grid at each step start. Differentiable w.r.t.\ the vol nodes
+and the forwards.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Displaced diffusion}\label{sec:mp-dd}
+$\dd X = \sigma(t)\,\big(\beta(t)\,X + 1 - \beta(t)\big)\,\dd W$, with $\beta$, $\sigma$ piecewise constant between the surface
+maturities. For constant parameters $Y = \beta X + 1 - \beta$ is lognormal with vol $\beta\sigma$:
+\[
+  \E\big[(X_T - k)^+\big] = \frac{\mathrm{Black}(1,\ \beta k + 1 - \beta,\ \beta\sigma,\ T)}{\beta}
+  \qquad(\text{$1 - k$ if } \beta k + 1 - \beta \le 0),
+\]
+puts by parity. Calibration (\code{from\_equity}): per maturity, slice parameters $(\beta_T, \sigma_T)$ by least squares on the
+call prices per unit forward, $\beta \in [0.02, 1.5]$; forward parameters by inverting the skew averaging
+$\beta_T = \sum_j \beta_j W_j/\sum_j W_j$, $W_j = \int_{\text{piece } j} \sigma^2(t)\,v(t)\,\dd t$, $v(t) = \int_0^t \sigma^2$, and
+$\sigma_j^2 \Delta t_j = \sigma_{T_j}^2 T_j - \sigma_{T_{j-1}}^2 T_{j-1}$. Sensitivities to the market through the calibration:
+$\theta(m) = \theta^* - H^{-1}\nabla_\theta L(\theta^*, m)$ with the exact Hessian $H$ held (implicit function theorem).
+Simulation: exact shifted-lognormal step on each piece (a step across pieces: variance-weighted $\beta$, summed
+variance). The steepest skew is the normal one ($\beta \to 0$, about $-\sigma/2$ per unit log-moneyness).
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Heston}\label{sec:mp-heston}
+$\dd X/X = \sqrt v\,\dd W_1$, $\dd v = \kappa(\theta - v)\,\dd t + \xi\sqrt v\,\dd W_2$, $\dd\langle W_1, W_2\rangle = \rho\,\dd t$, $v_0$;
+constant parameters. Closed form: characteristic function of $\ln X_T$ in the stable form,
+$b = \kappa - \rho\xi iu$, $d = \sqrt{b^2 + \xi^2(iu + u^2)}$, $g = (b-d)/(b+d)$,
+\[
+  \varphi(u) = \exp\Big(\frac{\kappa\theta}{\xi^2}\Big[(b-d)T - 2\ln\frac{1 - g e^{-dT}}{1-g}\Big]
+  + \frac{b-d}{\xi^2}\,\frac{1 - e^{-dT}}{1 - g e^{-dT}}\,v_0\Big);
+\]
+European prices by the COS method (puts on $[a, 0]$, calls by parity; 1024 terms, range $c_1 \pm 30\sqrt{c_2}$ of $\ln X_T$).
+Calibration (\code{from\_equity}): least squares on the call prices of all the surface nodes, each maturity scaled by
+its ATM vega; bounds $v_0, \theta \in [10^{-4}, 1]$, $\kappa \in [0.01, 20]$, $\xi \in [0.01, 5]$, $\rho \in [-0.99, 0.99]$;
+sensitivities to the market by the implicit function theorem at the optimum. Simulation: Andersen's QE scheme for $v$
+(quadratic / exponential branch at $\psi = 1.5$) and the log step with central weights and the exact martingale
+correction of $X$; two normals per step.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Heston stochastic local volatility}\label{sec:mp-slv}
+$\dd X/X = L(t, X)\sqrt v\,\dd W_1$, $v$ the Heston variance of the calibrated \code{HestonModel} with vol of vol
+$\eta\,\xi$ (\code{mixing} $\eta \in (0, 1]$), and the leverage
+\[
+  L^2(t, x) = \frac{\sigma_{\mathrm{loc}}^2(t, x)}{\E[v_t \mid X_t = x]},
+\]
+$\sigma_{\mathrm{loc}}$ the local vol of \S\ref{sec:mp-lv}, so that the marginals are those of the local vol model.
+$\E[v \mid X]$ is estimated at each step on the simulated paths (particle method): a tent-kernel smoother on 100 nodes
+spanning the 0.1\%--99.9\% quantiles of $\ln X$, sparse nodes shrunk to the mean, floored at $10^{-4}$; $L$ capped at 10.
+Step: QE for $v$, log step with $L$ frozen on the step and the martingale correction per path. Greeks: the Heston
+parameters and $\E[v \mid X]$ are held; the leverage moves with the market through the local vol and the forward.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Gaussian short-rate models}\label{sec:mp-gsr}
+$r(t) = \sum_i x_i(t) + \varphi(t)$, $\dd x_i = -\kappa_i x_i\,\dd t + \sigma_i(t)\,\dd W_i$, $x_i(0) = 0$, correlated Brownians; $\varphi$ fits
+the market discount curve exactly. One factor: Hull--White (G1++), two: G2++. Vols constant or piecewise constant.
+With $V(t,T) = \mathrm{Var}\big(\int_t^T \sum_i x_i\big)$ (exact integrals over the vol pieces):
+\[
+  P(t,T) = \frac{P(0,T)}{P(0,t)}\exp\Big(\tfrac12\big[V(t,T) - V(0,T) + V(0,t)\big] - \sum_i B_i(T-t)\,x_i(t)\Big),\quad
+  B_i(\tau) = \frac{1 - e^{-\kappa_i\tau}}{\kappa_i}.
+\]
+\begin{itemize}[nosep]
+  \item \emph{Caplets}: exchange option between two bonds (Margrabe on the Gaussian log ratio), the index curve
+        through a deterministic multiplicative basis.
+  \item \emph{Swaptions}: Gaussian swap-rate approximation (swap rate linearised in the factors at $x = 0$, normal vol
+        from $g^\top \mathrm{Cov}(x(T))\,g$), or exact: the swap as a bond portfolio under the expiry-forward measure,
+        Jamshidian (one factor) or Brigo--Mercurio (Gauss--Hermite on the first factor, closed form on the second).
+  \item \emph{Calibration} (\code{calibrate\_gaussian\_short\_rate}): least squares on vega-scaled caplet and / or
+        swaption prices, bounded parameters, AAD Jacobian; Hull--White with $\sigma(t)$ piecewise on the caplet fixings.
+  \item \emph{Simulation}: exact joint Gaussian transition of the factors and their integrals; bank-account discount
+        $D(0,t) = P(0,t)\,e^{-\int_0^t \sum_i x_i - V(0,t)/2}$. Used by \code{SwapExposureGenerator} (swap MtM, EE, ENE, PFE).
+\end{itemize}

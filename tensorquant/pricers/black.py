@@ -1,7 +1,8 @@
 from .pricer import Pricer
+from ..instruments.barrier import BarrierOption
 from ..instruments.digital import DigitalOption
 from ..instruments.option import VanillaOption
-from ..markethandles.utils import ExerciseType, OptionType, PayoffType
+from ..markethandles.utils import BarrierType, ExerciseType, OptionType, PayoffType
 from ..markethandles.marketenvironment import MarketEnvironment
 from ..timehandles.utils import Settings
 from ..numericalhandles.dtypes import DTYPE
@@ -213,8 +214,117 @@ def bjerksund_stensland_calc(
         return _bs1993_call(K, S, r - b, -b, sigma, T)
 
 
+# Broadie-Glasserman-Kou constant: -zeta(1/2) / sqrt(2 pi)
+_BGK_BETA = 0.5826
+
+
+def _knock_in_at_expiry(S, K, H, r, sigma, T, q, option_type: OptionType, down: bool) -> tf.Tensor:
+    """Knock-in with the barrier observed at expiry only: ``vanilla(S_T) 1{S_T <= H}`` (down) or ``1{S_T >= H}`` (up),
+    exact by vanillas and cash digitals struck at the barrier."""
+    def van(strike, ot):
+        return blackscholes_calc(S, strike, r, sigma, T, q, ot)
+
+    def dig(ot):
+        return digital_calc(S, H, r, sigma, T, q, ot, PayoffType.CashOrNothing)
+
+    k, h = float(K), float(H)
+    zero = tf.zeros_like(S)
+    if option_type == OptionType.Put:
+        if down:     # (K - S)+ 1{S <= H}
+            return van(K, OptionType.Put) if k <= h else van(H, OptionType.Put) + (K - H) * dig(OptionType.Put)
+        # up: (K - S)+ 1{S >= H}
+        return zero if k <= h else van(K, OptionType.Put) - van(H, OptionType.Put) - (K - H) * dig(OptionType.Put)
+    if down:         # (S - K)+ 1{S <= H}
+        return zero if k >= h else van(K, OptionType.Call) - van(H, OptionType.Call) - (H - K) * dig(OptionType.Call)
+    # up: (S - K)+ 1{S >= H}
+    return van(K, OptionType.Call) if k >= h else van(H, OptionType.Call) + (H - K) * dig(OptionType.Call)
+
+
+def _knock_in_continuous(S, K, H, r, sigma, T, q, option_type: OptionType, down: bool) -> tf.Tensor:
+    """Reiner-Rubinstein (1991) knock-in price, continuous monitoring, no rebate (Haug's A, B, C, D terms)."""
+    b = r - q
+    phi = 1.0 if option_type == OptionType.Call else -1.0
+    eta = 1.0 if down else -1.0
+    vol_t = sigma * tf.sqrt(T)
+    mu = (b - 0.5 * sigma ** 2) / sigma ** 2
+    x1 = tf.math.log(S / K) / vol_t + (1.0 + mu) * vol_t
+    x2 = tf.math.log(S / H) / vol_t + (1.0 + mu) * vol_t
+    y1 = tf.math.log(H * H / (S * K)) / vol_t + (1.0 + mu) * vol_t
+    y2 = tf.math.log(H / S) / vol_t + (1.0 + mu) * vol_t
+    fwd_s = S * tf.exp((b - r) * T)
+    df_k = K * tf.exp(-r * T)
+    hs = H / S
+    A = phi * fwd_s * _norm_cdf(phi * x1) - phi * df_k * _norm_cdf(phi * (x1 - vol_t))
+    B = phi * fwd_s * _norm_cdf(phi * x2) - phi * df_k * _norm_cdf(phi * (x2 - vol_t))
+    C = (phi * fwd_s * tf.pow(hs, 2.0 * (mu + 1.0)) * _norm_cdf(eta * y1)
+         - phi * df_k * tf.pow(hs, 2.0 * mu) * _norm_cdf(eta * (y1 - vol_t)))
+    D = (phi * fwd_s * tf.pow(hs, 2.0 * (mu + 1.0)) * _norm_cdf(eta * y2)
+         - phi * df_k * tf.pow(hs, 2.0 * mu) * _norm_cdf(eta * (y2 - vol_t)))
+    strike_above = float(K) > float(H)
+    if option_type == OptionType.Call:
+        if down:
+            return C if strike_above else A - B + D
+        return A if strike_above else B - C + D
+    if down:
+        return B - C + D if strike_above else A
+    return A - B + D if strike_above else C
+
+
+def barrier_calc(
+    spot_price: tf.Tensor,
+    strike: tf.Tensor,
+    barrier: tf.Tensor,
+    riskfree_rate: tf.Tensor,
+    volatility: tf.Tensor,
+    time_to_maturity: tf.Tensor,
+    dividend_yield: tf.Tensor,
+    option_type: OptionType,
+    barrier_type: BarrierType,
+    n_monitoring: int | None = None,
+) -> tf.Tensor:
+    """European single-barrier option under Black-Scholes, no rebate.
+
+    - continuous monitoring (``n_monitoring=None``): Reiner-Rubinstein closed form;
+    - one monitoring date at expiry (``n_monitoring=1``): exact, vanilla and cash digitals struck at the barrier;
+    - ``n`` dates (taken as equally spaced, the last at expiry): continuous formula with the Broadie-Glasserman-Kou shifted barrier
+      ``H exp(+-0.5826 sigma sqrt(T / n))`` (away from the spot).
+
+    Knock-out = vanilla - knock-in. A barrier already crossed by the spot gives knock-in = vanilla.
+
+    Args:
+        spot_price, strike, riskfree_rate, volatility, time_to_maturity, dividend_yield: As
+            :func:`blackscholes_calc`.
+        barrier: Barrier level.
+        option_type: :class:`OptionType`.
+        barrier_type: :class:`BarrierType`.
+        n_monitoring: Number of discrete monitoring dates, ``None`` for continuous monitoring.
+
+    Returns:
+        tf.Tensor: Barrier option price.
+    """
+    S, K, r, sigma, T, q = spot_price, strike, riskfree_rate, volatility, time_to_maturity, dividend_yield
+    H = tf.cast(barrier, S.dtype)
+    down = barrier_type.is_down
+    vanilla = blackscholes_calc(S, K, r, sigma, T, q, option_type)
+    crossed = float(S) <= float(H) if down else float(S) >= float(H)
+    if crossed:
+        knock_in = vanilla
+    elif n_monitoring == 0:           # no monitoring date left
+        knock_in = tf.zeros_like(vanilla)
+    elif n_monitoring == 1:
+        knock_in = _knock_in_at_expiry(S, K, H, r, sigma, T, q, option_type, down)
+    else:
+        if n_monitoring is not None:
+            sign = -1.0 if down else 1.0
+            H = H * tf.exp(sign * _BGK_BETA * sigma * tf.sqrt(T / n_monitoring))
+        knock_in = _knock_in_continuous(S, K, H, r, sigma, T, q, option_type, down)
+    return knock_in if barrier_type.is_in else vanilla - knock_in
+
+
 class BlackScholesPricer(Pricer):
-    """Black-Scholes pricer: vanilla options (European, American by Bjerksund-Stensland 1993) and European digitals.
+    """Black-Scholes pricer: vanilla options (European, American by Bjerksund-Stensland 1993), European digitals and
+    single-barrier options (Reiner-Rubinstein, Broadie-Glasserman-Kou shift for discrete monitoring; the barrier is
+    compared with the spot net of dividends in the discrete dividend model).
 
     All market inputs come from the underlying's :class:`Equity` view
     (``market_env.get_equity``), i.e. from the market risk factors: the price
@@ -281,8 +391,8 @@ class BlackScholesPricer(Pricer):
             ValueError: If the product is not a VanillaOption or DigitalOption, if Bermudan
                 exercise is requested, or if the underlying has no vol surface.
         """
-        if not isinstance(product, (VanillaOption, DigitalOption)):
-            raise ValueError("product must be a VanillaOption or a DigitalOption")
+        if not isinstance(product, (VanillaOption, DigitalOption, BarrierOption)):
+            raise ValueError("product must be a VanillaOption, a DigitalOption or a BarrierOption")
         if product.exercise_type == ExerciseType.Bermudan:
             raise ValueError("Bermudan exercise is not supported")
 
@@ -334,7 +444,8 @@ class BlackScholesPricer(Pricer):
         return s_net, k, r, q, sigma, t
 
     def calculate_price(self, product, market_env: MarketEnvironment) -> tf.Tensor:
-        """Price a VanillaOption (Black-Scholes European, Bjerksund-Stensland 1993 American) or a DigitalOption.
+        """Price a VanillaOption (Black-Scholes European, Bjerksund-Stensland 1993 American), a DigitalOption or a
+        BarrierOption.
 
         Args:
             product (VanillaOption | DigitalOption): The option to be priced.
@@ -344,6 +455,15 @@ class BlackScholesPricer(Pricer):
             tf.Tensor: Scalar float64 NPV.
         """
         s_net, k, r, q, sigma, t = self._build_inputs(product, market_env)
+        if isinstance(product, BarrierOption):
+            n_monitoring = None
+            if not product.continuous:
+                future = [d for d in product.monitoring_dates if d > Settings.evaluation_date]
+                n_monitoring = len(future)
+                if n_monitoring == 1 and future[0] != product.end_date:
+                    raise ValueError("a single monitoring date must be the expiry")
+            return barrier_calc(s_net, k, product.barrier, r, sigma, t, q, product.option_type,
+                                product.barrier_type, n_monitoring)
         if isinstance(product, DigitalOption):
             return digital_calc(s_net, k, r, sigma, t, q, product.option_type, product.payoff_type, product.cash_amount)
         if product.exercise_type == ExerciseType.European:

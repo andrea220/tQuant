@@ -16,12 +16,14 @@ Current focus: equity.
       forward mode), `displaced_diffusion` (slice fit, skew averaging, implicit-function greeks, skew limit),
       `heston` (characteristic function, COS, calibration, QE-M), `heston_slv` (leverage, particle method,
       risk convention), `autocallable` (payoff, barrier smoothing, model comparison).
-- [ ] **Barrier options**: `BarrierOption(Product)` (up/down, in/out, rebate, discrete monitoring dates or
-      continuous), priced by the MC pricers with a Brownian-bridge crossing probability between steps (continuous
-      monitoring, smooth: AAD-friendly) or on the monitoring dates; closed form under Black-Scholes (Reiner-Rubinstein,
-      Broadie-Glasserman-Kou shift for discrete monitoring) as the test reference and an analytic pricer for flat vol.
-      Tests: in + out = vanilla, MC (GBM) = closed form, monitoring frequency → continuous, greeks vs bumps, prices
-      under LV / Heston / SLV (same smile, different barrier values).
+- [ ] **Barrier options, rest** (`BarrierOption` done, see `DEVELOPMENT_LOG.md`): rebates; Brownian-bridge vol from
+      the model (now the surface vol at `(H, T)`, exact only for a flat-vol GBM); barrier prices under Heston / SLV
+      compared with local vol (same smile, different barrier values); a `barrier` notebook with the greeks.
+- [ ] **`GeometricBrownianMotion.from_equity` on multi-date products**: it is the Black-Scholes model of one expiry
+      (vol at `(K, T)`, spot escrowed of all the dividends up to `T`), so the path is the escrowed spot at the
+      intermediate dates: `AutocallableMCPricer(model=GeometricBrownianMotion)` and discretely monitored barriers are
+      wrong there (digital strip: first annual coupon 1.11% vs 2.62% Black-Scholes). Fix: a GBM on the market forward
+      (`S = F(t) X`, like the other models) with a term-structure vol, or reject GBM for multi-date products.
 - [ ] **Multi-asset Monte Carlo**: correlated underlyings on the market forwards (GBM / local vol per asset, Cholesky of
       `market_env.get_correlation`), a multi-asset `evolve`; basket options and the worst-of autocallable
       (`AutocallableOption` on several underlyings). Greeks by AAD per underlying (delta, vega per node) and on the

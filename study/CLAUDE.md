@@ -9,14 +9,15 @@ notebook and updates the three documents together.
 | Document | Main file | Chapters | Content |
 |---|---|---|---|
 | Exercises | `exercises.tex` | `chapters/equity.tex`, `chapters/rates.tex` | questions, answers, exercises |
-| Models and Pricing | `models_and_pricing.tex` | `models/equity.tex`, `models/rates.tex` | functional: dynamics, pricing formula / algorithm, calibration, greeks |
+| Models and Pricing | `models_and_pricing.tex` | `models/market_handles.tex`, `models/models.tex`, `models/products.tex` | definitions as implemented: market handles, simulation models, products (analytic and MC pricing); no teaching material (that goes in Exercises) |
 | Architecture | `architecture.tex` | `architecture/*.tex` | technical: market data (snapshots, keys, risk factors), class architecture, numerics, testing |
 
 - `preamble.tex` is shared: packages, math macros (`\E`, `\Q`, `\dd`, ...), `\nb{...}` (notebook reference),
   `\code{...}` (library names), `\pending` (section still to be written). Macros live only there; the Q/A
   environments and tags stay in `exercises.tex`.
-- One `\section` per asset class (Q/A, Models and Pricing) or per topic (Architecture); topics are `\subsection`s
-  with a `\label` (`sec:mp-...`, `sec:arch-...`) and a `\nb{...}` to the notebook that shows them.
+- One `\section` per asset class (Q/A), per chapter (Models and Pricing: Market handles, Models, Products) or per
+  topic (Architecture); topics are `\subsection`s with a `\label` (`sec:mp-...`, `sec:arch-...`); Q/A and
+  Architecture also with a `\nb{...}` to the notebook that shows them.
 - Models and Pricing: what is computed, not how the code is organised; key formulas, the calibration and how
   the greeks are obtained; short, no long derivations. Architecture: the real classes, methods and files (check the
   code), how they connect; no financial derivations. Each fact in one document, cross-referenced from the others.

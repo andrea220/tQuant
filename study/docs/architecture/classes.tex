@@ -13,6 +13,17 @@ exercise type and the underlying. \code{VanillaOption} is European or American; 
 \code{VanillaMCPricer} prices both too; for the digital payoff \code{digital\_smoothing} sets the sigmoid width (default
 1\% of the strike, 0 for the hard indicator). \nb{digital\_options.ipynb}
 
+The barrier option class, \code{BarrierOption} in \code{instruments/barrier.py}, adds the level \code{barrier}, the
+type \code{barrier\_type} (an enum \code{BarrierType} with the members \code{DownIn}, \code{DownOut}, \code{UpIn} and
+\code{UpOut}, and the flags \code{is\_down} and \code{is\_in}) and the dates \code{monitoring\_dates}, where \code{None}
+means continuous monitoring (property \code{continuous}). \code{BlackScholesPricer} prices it through \code{barrier\_calc}
+(\code{pricers/black.py}); \code{VanillaMCPricer} through \code{\_bridge\_survival} (continuous) or
+\code{\_discrete\_survival} (monitoring dates merged into the grid).
+
+With the autocall at an unreachable level, an \code{AutocallableOption} is a strip of digitals (put barrier 0) or a
+put knocked in at expiry (coupons 0).
+\nb{digital\_strip.ipynb}, \nb{down\_and\_in\_put.ipynb}
+
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Pricers}\label{sec:arch-pricers}
 \code{Pricer}: \code{calculate\_price}, \code{price(..., autodiff)}, the tape; \code{PricerAssignment}.
