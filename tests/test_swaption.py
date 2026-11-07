@@ -204,7 +204,7 @@ class TestModelSwaptions(unittest.TestCase):
         models = {"HW": tq.GaussianShortRateModel.hull_white(self.disc, 0.03, 0.009),
                   "G2": tq.GaussianShortRateModel.g2pp(self.disc, 0.05, 0.6, 0.009, 0.008, -0.7)}
         rows = _swaption_instruments(self.mkt, swaption_generator(1.0), [("1Y", "5Y"), ("5Y", "10Y")], (0.0,))
-        n = 200_000
+        n = 10_000
         for name, m in models.items():
             for r in rows:
                 price, F, A, vol = m.swaption_from_arrays(strike=r["K"], **r["arrays"])
@@ -230,7 +230,7 @@ class TestModelSwaptions(unittest.TestCase):
                   "HWpw": tq.GaussianShortRateModel.hull_white(self.disc, 0.03, [0.006, 0.009, 0.012], sigma_times=[2.0, 6.0]),
                   "G2": tq.GaussianShortRateModel.g2pp(self.disc, 0.05, 0.6, 0.009, 0.008, -0.7)}
         rows = _swaption_instruments(self.mkt, swaption_generator(1.0), [("1Y", "5Y"), ("5Y", "10Y")], (-0.01, 0.0, 0.01))
-        n = 200_000
+        n = 10_000
         for name, m in models.items():
             legs = {}                                                  # MC legs per swaption, shared by the strikes
             for r in rows:

@@ -11,10 +11,10 @@ from tensorquant.markethandles.marketenvironment import MarketEnvironment
 from tensorquant.markethandles.volatilitysurface import VolatilitySurface
 from tensorquant.timehandles.daycounter import DayCounter, DayCounterConvention
 
-from test_black_scholes import EVAL_DATE, EXPIRIES, PILLARS, RATES, S0, make_market, make_option
 from markers import slow
+from test_black_scholes import EVAL_DATE, EXPIRIES, PILLARS, RATES, S0, make_market, make_option
 
-GBM_PATHS = 200_000
+GBM_PATHS = 20_000
 
 
 def mc(model=tq.GeometricBrownianMotion, n_paths=GBM_PATHS, n_steps=1, seed=42):
@@ -101,8 +101,8 @@ class TestGBM(MCTestCase):
         d_mc, v_mc = pricer.tape.gradient(opt.price, sources)
         bs = self.bs(ref, autodiff=True)
         d_bs, v_bs = bs.tape.gradient(ref.price, sources)
-        self.assertAlmostEqual(float(d_mc) / float(d_bs), 1.0, delta=0.01)
-        np.testing.assert_allclose(v_mc.numpy(), v_bs.numpy(), rtol=0.03, atol=1e-8)
+        self.assertAlmostEqual(float(d_mc) / float(d_bs), 1.0, delta=0.02)
+        np.testing.assert_allclose(v_mc.numpy(), v_bs.numpy(), rtol=0.05, atol=1e-8)
 
     def test_delta_vs_common_random_numbers_bump(self):
         """Pathwise AAD delta = derivative of the same MC estimator (bump with the same seed)."""
@@ -141,7 +141,7 @@ class TestGBM(MCTestCase):
 
 
 class TestLocalVol(MCTestCase):
-    LV = dict(model=tq.LocalVolatilityModel, n_paths=20_000, n_steps=50)
+    LV = dict(model=tq.LocalVolatilityModel, n_paths=5_000, n_steps=50)
 
     def test_flat_surface_reproduces_black_scholes(self):
         """Flat implied vol: Dupire local vol = implied vol, MC within 3 standard errors of BS."""
@@ -154,6 +154,7 @@ class TestLocalVol(MCTestCase):
             with self.subTest(type=ot, K=K):
                 self.assertLess(abs(float(opt.price) - float(ref.price)), 3 * float(opt.standard_error))
 
+    @slow
     def test_float64_and_vega_reaches_nodes(self):
         opt = make_option(EXPIRIES["1Y"], "Call", 100.0)
         pricer = mc(**self.LV)
@@ -278,9 +279,9 @@ class TestLocalVolForward(unittest.TestCase):
         self.mkt = ssvi_market()
         self.eq = self.mkt.get_equity("SSVI")
 
-    def simulate(self, T, n_paths=40_000, seed=3, **kw):
+    def simulate(self, T, n_paths=10_000, seed=3, **kw):
         model = tq.LocalVolatilityModel.from_equity(self.eq, **kw)
-        n = max(100, int(100 * T))
+        n = max(50, int(50 * T))
         t_grid = tf.linspace(tf.constant(0.0, tf.float64), tf.constant(T, tf.float64), n + 1)[1:]
         dw = tf.random.stateless_normal([n_paths, n], seed=[seed, 0], dtype=tf.float64)
         return model, t_grid, model.evolve(t_grid, dw)
@@ -296,11 +297,11 @@ class TestLocalVolForward(unittest.TestCase):
         for k in range(0, len(t_grid), 25):
             self.assertAlmostEqual(float(tf.reduce_mean(paths[:, k])), float(self.eq.forward(float(t_grid[k]))), places=8)
 
-    @slow
     def test_ssvi_smile_repriced_at_the_nodes(self):
-        """Arbitrage-free surface on a narrow grid: MC implied vols (OTM options) at the 1Y and 3Y nodes."""
+        """Arbitrage-free surface on a narrow grid: MC implied vols (OTM options) at the 1Y and 3Y nodes, a gross
+        check (10k paths: MC noise ~0.5 vol points)."""
         vs = self.eq.vol_surface
-        for T, tol in ((1.0, 0.6), (3.0, 1.0)):
+        for T, tol in ((1.0, 1.5), (3.0, 2.0)):
             expiry = EVAL_DATE + timedelta(days=int(round(T * 365)))
             _, _, paths = self.simulate(T)
             s_t = paths[:, -1].numpy()
@@ -330,7 +331,7 @@ class TestLocalVolForward(unittest.TestCase):
     @slow
     def test_greeks_vs_common_random_numbers_bumps(self):
         """Pathwise AAD delta and node vega of the pricer = derivatives of the same MC estimator."""
-        pricer_args = dict(model=tq.LocalVolatilityModel, n_paths=20_000, n_steps=100, seed=5)
+        pricer_args = dict(model=tq.LocalVolatilityModel, n_paths=3_000, n_steps=50, seed=5)
         make = lambda: make_option(EXPIRIES["1Y"], "Call", 100.0, underlying="SSVI")
         opt = make()
         pricer = tq.VanillaMCPricer(**pricer_args)

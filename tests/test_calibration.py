@@ -104,7 +104,7 @@ class TestModelCaplets(unittest.TestCase):
                 "G2": tq.GaussianShortRateModel.g2pp(self.curve, 0.05, 0.4, 0.008, 0.006, -0.5)}
 
     def test_closed_form_vs_monte_carlo(self):
-        n = 200_000
+        n = 10_000
         for name, m in self.models().items():
             xs, D = m.simulate([m.time(self.fix)], n, seed=19)
             x = xs[:, 0]

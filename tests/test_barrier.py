@@ -91,6 +91,7 @@ class TestBlackScholes(unittest.TestCase):
         dig, _ = bs(tq.DigitalOption(tq.Currency.EUR, EVAL_DATE, EXPIRY, OT.Put, H, underlying="FLAT"), self.mkt)
         self.assertAlmostEqual(p, put_h + (K - H) * dig, places=12)
 
+    @slow
     def test_delta_vega_vs_bumps(self):
         """AAD delta and vega (sum over the nodes) of the continuous closed form vs central bumps."""
         eq = self.mkt.get_equity("FLAT")
@@ -128,14 +129,13 @@ class TestMonteCarlo(unittest.TestCase):
         tq.Settings.evaluation_date = EVAL_DATE
         self.mkt = flat_vol_market(0.2)
 
-    def mc(self, product, n_paths=100_000, n_steps=100, seed=1, smoothing=0.0, autodiff=False):
+    def mc(self, product, n_paths=4_000, n_steps=50, seed=1, smoothing=0.0, autodiff=False):
         pricer = tq.VanillaMCPricer(n_paths=n_paths, n_steps=n_steps, seed=seed, digital_smoothing=smoothing)
         pricer.price(product, self.mkt, autodiff=autodiff)
         return float(product.price), float(product.standard_error), pricer
 
-    @slow
     def test_continuous_vs_closed_form(self):
-        """GBM with the Brownian-bridge survival = Reiner-Rubinstein within 3 SE, all 8 types, 100 steps."""
+        """GBM with the Brownian-bridge survival = Reiner-Rubinstein within 3 SE, all 8 types."""
         for bt, ot, K, H in all_cases():
             price, se, _ = self.mc(barrier(ot, K, H, bt))
             ref, _ = bs(barrier(ot, K, H, bt), self.mkt)
@@ -150,7 +150,6 @@ class TestMonteCarlo(unittest.TestCase):
             ref, _ = bs(barrier(OT.Put, 100.0, 80.0, bt, [EXPIRY]), self.mkt)
             self.assertLess(abs(price - ref), 3 * se)
 
-    @slow
     def test_discrete_monthly_vs_bgk(self):
         """Monthly monitoring: MC on the dates = BGK-shifted closed form within 3 SE + 1% (BGK is an approximation)."""
         months = [d for d in (EVAL_DATE + timedelta(days=30 * i) for i in range(1, 13))
@@ -163,21 +162,20 @@ class TestMonteCarlo(unittest.TestCase):
     def test_in_plus_out_is_vanilla(self):
         """Same paths: knock-in + knock-out = vanilla path by path (continuous and discrete)."""
         for monitoring in (None, [EXPIRY]):
-            i, _, _ = self.mc(barrier(OT.Put, 100.0, 85.0, BT.DownIn, monitoring), n_paths=20_000, n_steps=50)
-            o, _, _ = self.mc(barrier(OT.Put, 100.0, 85.0, BT.DownOut, monitoring), n_paths=20_000, n_steps=50)
-            v, _, _ = self.mc(vanilla(OT.Put, 100.0), n_paths=20_000, n_steps=50)
+            i, _, _ = self.mc(barrier(OT.Put, 100.0, 85.0, BT.DownIn, monitoring), n_paths=2_000, n_steps=20)
+            o, _, _ = self.mc(barrier(OT.Put, 100.0, 85.0, BT.DownOut, monitoring), n_paths=2_000, n_steps=20)
+            v, _, _ = self.mc(vanilla(OT.Put, 100.0), n_paths=2_000, n_steps=20)
             self.assertAlmostEqual(i + o, v, places=10)
 
-    @slow
     def test_delta_vs_bump(self):
         """Pathwise AAD delta of the bridge estimator (continuous in the path) vs a common-random-numbers bump."""
         eq = self.mkt.get_equity("FLAT")
         product = barrier(OT.Put, 100.0, 85.0, BT.DownIn)
-        _, _, pricer = self.mc(product, n_paths=50_000, n_steps=50, autodiff=True)
+        _, _, pricer = self.mc(product, n_paths=2_000, n_steps=20, autodiff=True)
         delta = float(pricer.tape.gradient(product.price, eq.spot))
         s0, h = float(eq.spot), 0.5
-        eq.spot.assign(s0 + h); up, _, _ = self.mc(barrier(OT.Put, 100.0, 85.0, BT.DownIn), n_paths=50_000, n_steps=50)
-        eq.spot.assign(s0 - h); dn, _, _ = self.mc(barrier(OT.Put, 100.0, 85.0, BT.DownIn), n_paths=50_000, n_steps=50)
+        eq.spot.assign(s0 + h); up, _, _ = self.mc(barrier(OT.Put, 100.0, 85.0, BT.DownIn), n_paths=2_000, n_steps=20)
+        eq.spot.assign(s0 - h); dn, _, _ = self.mc(barrier(OT.Put, 100.0, 85.0, BT.DownIn), n_paths=2_000, n_steps=20)
         eq.spot.assign(s0)
         self.assertAlmostEqual(delta, (up - dn) / (2 * h), delta=0.01 * abs(delta) + 1e-3)
 

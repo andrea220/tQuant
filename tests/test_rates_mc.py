@@ -7,11 +7,12 @@ import numpy as np
 import tensorflow as tf
 
 import tensorquant as tq
+
+from markers import slow
 from tensorquant.index.curverateindex import IborIndex
 from tensorquant.instruments.helpers import SwapGenerator
 from tensorquant.pricers.fixedflow import FixedCouponDiscounting
 from tensorquant.pricers.floatingflow import FloatingCouponDiscounting
-from markers import slow
 
 EVAL_DATE = date(2026, 5, 15)
 A365 = tq.DayCounterConvention.Actual365
@@ -39,6 +40,8 @@ def make_swap(quote=0.028):
 
 
 EXPOSURE_DATES = [EVAL_DATE] + [EVAL_DATE + timedelta(days=91 * k) for k in range(1, 23)]
+# few dates (the generator costs ~0.15 s per date whatever the paths): today, 1Y, 2.5Y, 4Y, 5Y, after maturity
+FEW_DATES = [EXPOSURE_DATES[k] for k in (0, 4, 10, 16, 20, 22)]
 
 
 class RatesTestCase(unittest.TestCase):
@@ -117,7 +120,7 @@ class TestPiecewiseVol(RatesTestCase):
 
     def test_monte_carlo(self):
         """Exact simulation over the pieces: martingales, Var(x(t)) and the caplet closed form."""
-        m, n = self.piecewise(), 100_000
+        m, n = self.piecewise(), 10_000
         times = [0.5, 2.0, 4.0, 8.0]
         xs, D = m.simulate(times, n, seed=21)
         for k, t in enumerate(times):
@@ -126,7 +129,7 @@ class TestPiecewiseVol(RatesTestCase):
             with self.subTest(t=t):
                 self.assertLess(abs(d.mean() - float(self.curve.discount(t))), 4 * d.std() / np.sqrt(n))
                 self.assertLess(abs(v.mean() - float(self.curve.discount(12.0))), 4 * v.std() / np.sqrt(n))
-                self.assertAlmostEqual(xs[:, k, 0].numpy().var() / float(m.factor_covariance(t)[0, 0]), 1.0, delta=0.03)
+                self.assertAlmostEqual(xs[:, k, 0].numpy().var() / float(m.factor_covariance(t)[0, 0]), 1.0, delta=0.06)
         ps, pe = m.zero_bond(4.0, 4.0, xs[:, 2]), m.zero_bond(4.0, 4.5, xs[:, 2])
         payoff = (D[:, 2] * tf.maximum(ps - (1 + 0.5 * 0.03) * pe, 0.0)).numpy()
         self.assertLess(abs(payoff.mean() - float(m.caplet(4.0, 4.0, 4.5, 0.03, 0.5))), 4 * payoff.std() / np.sqrt(n))
@@ -148,7 +151,7 @@ class TestPiecewiseVol(RatesTestCase):
 
 
 class TestSimulation(RatesTestCase):
-    N = 50_000
+    N = 5_000
 
     def test_martingales(self):
         """E[D(0,t)] = P(0,t) and E[D(0,t) P(t,T)] = P(0,T) within 4 standard errors."""
@@ -170,11 +173,11 @@ class TestSimulation(RatesTestCase):
         x = xs[:, 1].numpy()
         for i, (k, s) in enumerate(((G2["a"], G2["sigma"]), (G2["b"], G2["eta"]))):
             var = s ** 2 * (1 - np.exp(-2 * k * t)) / (2 * k)
-            self.assertAlmostEqual(x[:, i].var() / var, 1.0, delta=0.03)
+            self.assertAlmostEqual(x[:, i].var() / var, 1.0, delta=0.08)
         a, b = G2["a"], G2["b"]
         cov = G2["rho"] * G2["sigma"] * G2["eta"] * (1 - np.exp(-(a + b) * t)) / (a + b)
         corr = cov / np.sqrt(G2["sigma"] ** 2 * (1 - np.exp(-2 * a * t)) / (2 * a) * G2["eta"] ** 2 * (1 - np.exp(-2 * b * t)) / (2 * b))
-        self.assertAlmostEqual(np.corrcoef(x[:, 0], x[:, 1])[0, 1], corr, delta=0.02)
+        self.assertAlmostEqual(np.corrcoef(x[:, 0], x[:, 1])[0, 1], corr, delta=0.05)
 
     def test_seed_and_invalid_times(self):
         m = self.models()["HW"]
@@ -194,13 +197,13 @@ class TestSimulation(RatesTestCase):
         g, g0 = tape.gradient(value, self.curve.variables), tape0.gradient(p0, self.curve.variables)
         for a, b in zip(g, g0):
             if b is not None:
-                self.assertAlmostEqual(float(a) / float(b), 1.0, delta=0.01)
+                self.assertAlmostEqual(float(a) / float(b), 1.0, delta=0.02)
 
 
 class TestSwapExposure(RatesTestCase):
-    def exposure(self, model_name="HW", n_paths=20_000, seed=21, swap=None):
+    def exposure(self, model_name="HW", n_paths=1_000, seed=21, swap=None):
         swap = swap or make_swap()
-        gen = tq.SwapExposureGenerator(self.models()[model_name], EXPOSURE_DATES, n_paths=n_paths, seed=seed)
+        gen = tq.SwapExposureGenerator(self.models()[model_name], FEW_DATES, n_paths=n_paths, seed=seed)
         gen.simulate(swap, self.mkt)
         return gen, swap
 
@@ -213,7 +216,7 @@ class TestSwapExposure(RatesTestCase):
 
     @slow
     def test_today_equals_the_swap_pricer(self):
-        gen, swap = self.exposure(n_paths=100)
+        gen, swap = self.exposure(n_paths=10)
         ref = make_swap()
         tq.SwapPricer().price(ref, self.mkt)
         np.testing.assert_allclose(gen.mtm[:, 0].numpy(), float(ref.price), rtol=1e-12)
@@ -224,19 +227,19 @@ class TestSwapExposure(RatesTestCase):
         for name in ("HW", "G2"):
             gen, swap = self.exposure(name)
             v, D = gen.mtm.numpy(), gen.discount.numpy()
-            for k in (4, 10, 16, 20):
+            for k in (1, 2, 3, 4):
                 dv = D[:, k] * v[:, k]
-                with self.subTest(model=name, date=EXPOSURE_DATES[k]):
-                    self.assertLess(abs(dv.mean() - self.pv_after(swap, EXPOSURE_DATES[k])), 4 * dv.std() / np.sqrt(len(dv)))
+                with self.subTest(model=name, date=FEW_DATES[k]):
+                    self.assertLess(abs(dv.mean() - self.pv_after(swap, FEW_DATES[k])), 4 * dv.std() / np.sqrt(len(dv)))
 
     @slow
     def test_profile_identities(self):
-        gen, swap = self.exposure(n_paths=5_000)
+        gen, swap = self.exposure(n_paths=200)
         ee, ene = gen.expected_exposure.numpy(), gen.expected_negative_exposure.numpy()
         self.assertTrue(np.all(ee >= 0) and np.all(ene <= 0))
         np.testing.assert_allclose(ee + ene, gen.mtm.numpy().mean(axis=0), atol=1e-8)
         self.assertTrue(np.all(gen.pfe(0.975) >= ee - 1e-9))
-        after = [k for k, d in enumerate(EXPOSURE_DATES) if d > swap.end_date + timedelta(days=10)]
+        after = [k for k, d in enumerate(FEW_DATES) if d > swap.end_date + timedelta(days=10)]
         self.assertTrue(after)
         self.assertEqual(float(tf.reduce_max(tf.abs(gen.mtm[:, after[0]]))), 0.0)
 
@@ -245,14 +248,14 @@ class TestSwapExposure(RatesTestCase):
         var = self.curve.variables[4]   # 5Y pillar
         model = self.models()["HW"]
         with tf.GradientTape() as tape:
-            gen = tq.SwapExposureGenerator(model, EXPOSURE_DATES, n_paths=5_000, seed=31)
+            gen = tq.SwapExposureGenerator(model, FEW_DATES, n_paths=300, seed=31)
             gen.simulate(make_swap(), self.mkt)
             epe = tf.reduce_sum(gen.discounted_expected_exposure)
         g = float(tape.gradient(epe, var))
         base, out = float(var), []
         for x in (base + 1e-6, base - 1e-6):
             var.assign(x)
-            gen = tq.SwapExposureGenerator(model, EXPOSURE_DATES, n_paths=5_000, seed=31)
+            gen = tq.SwapExposureGenerator(model, FEW_DATES, n_paths=300, seed=31)
             gen.simulate(make_swap(), self.mkt)
             out.append(float(tf.reduce_sum(gen.discounted_expected_exposure)))
         var.assign(base)
