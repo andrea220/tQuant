@@ -280,36 +280,111 @@ discretisation errors, which is the check of the construction; the information t
   \frac{\dd X_t}{X_t} = \sqrt{v_t}\,\dd W^1_t,\qquad
   \dd v_t = \kappa(\theta - v_t)\,\dd t + \xi\sqrt{v_t}\,\dd W^2_t,\qquad \dd\langle W^1, W^2\rangle_t = \rho\,\dd t ,
 \]
-five constant parameters: initial variance $v_0$, long-run variance $\theta$, mean reversion $\kappa$, vol of vol $\xi$, correlation $\rho$.
-$\rho < 0$ gives the negative skew, $\xi$ the curvature, $\kappa$ how fast both fade with the maturity. The variance stays
-positive when $2\kappa\theta \ge \xi^2$ (Feller); otherwise it touches zero.
+five constant parameters: initial variance $v_0$ (level of the short maturities), long-run variance $\theta$ (level of
+the long ones), mean reversion $\kappa$ (how fast the short-term features fade; half-life $\ln 2/\kappa$), vol of vol $\xi$
+(curvature, and size of the skew), correlation $\rho$ (sign and slope of the skew). The expected variance is
+$\E[v_t] = \theta + (v_0 - \theta)e^{-\kappa t}$. The variance stays positive when $2\kappa\theta \ge \xi^2$ (Feller); otherwise it touches zero and
+bounces back, which equity calibrations usually imply.
 
-\paragraph{Closed form.} The characteristic function of $\ln X_T$ is known; in the form that is continuous in $u$
+\paragraph{Implied vol structure.}
+\begin{itemize}[nosep]
+  \item \emph{ATM term structure.} With $\rho = 0$, given the path of $v$ the stock is lognormal with variance $\int_0^T v_t\,\dd t$, so
+        the call is the Black--Scholes price averaged over the average variance $\bar v_T$ \citep{hull1987}. The ATM price is
+        almost linear in the vol, hence
+        \[
+          \sigma_{\mathrm{ATM}}(T) \approx \E\big[\sqrt{\bar v_T}\,\big] < \sqrt{\E[\bar v_T]} = \sqrt{\theta + (v_0 - \theta)\,\tfrac{1 - e^{-\kappa T}}{\kappa T}} :
+        \]
+        the vol of vol lowers the ATM vol, more at long maturities (the dispersion of $\bar v_T$ grows), and a negative
+        correlation lowers it further. The ATM term structure depends on all five parameters, not only on $v_0$, $\theta$, $\kappa$.
+  \item \emph{Skew.} At short maturity the ATM skew has a finite limit \citep[ch.~3]{gatheral2006},
+        \[
+          \frac{\partial\sigma_{\mathrm{imp}}}{\partial y}\Big|_{y = 0,\ T \to 0} = \frac{\rho\,\xi}{4\sqrt{v_0}},
+        \]
+        and once $\kappa T \gg 1$ it decays like $1/T$. The equity skew grows as the maturity shrinks (roughly like $T^{-1/2}$):
+        one parameter set cannot match both ends.
+  \item \emph{Forward smile.} The same $\xi$ and $\rho$ act on every period, so the smile seen from a future date keeps its
+        skew and curvature, with a level that depends on the variance at that date: unlike local vol, the future smile is
+        random and does not flatten.
+\end{itemize}
+
+\paragraph{Closed form.} Heston is affine: the characteristic function of $\ln X_T$ is exponential-affine in $v_0$,
+$\varphi(u) = \exp(C(T, u) + D(T, u)\,v_0)$, with $C$, $D$ solutions of Riccati equations. In the form that is continuous in $u$
 \citep{albrecher2007}, with $b = \kappa - \rho\xi iu$, $d = \sqrt{b^2 + \xi^2(iu + u^2)}$, $g = (b-d)/(b+d)$,
 \[
   \varphi(u) = \exp\Big(\frac{\kappa\theta}{\xi^2}\Big[(b-d)T - 2\ln\frac{1 - g e^{-dT}}{1-g}\Big]
   + \frac{b-d}{\xi^2}\,\frac{1 - e^{-dT}}{1 - g e^{-dT}}\,v_0\Big).
 \]
-European options by the COS method \citep{fang2008}: the density of $\ln X_T$ is expanded in a cosine series on a range of
-$\pm 30$ standard deviations around its mean (1024 terms); puts are integrated, calls follow by parity.
+European options by the COS method \citep{fang2008}: $\ln X_T$ is truncated to $[a, b]$ = mean $\pm 30$ standard deviations
+(from the cumulants); on it the density is a cosine series whose coefficients are $\mathrm{Re}[\varphi(u_n)e^{-iu_n a}]$,
+$u_n = n\pi/(b - a)$; the payoff coefficients are closed-form, so the price is a sum of $N = 1024$ terms (exponential
+convergence). Puts are integrated, calls follow by parity.
 
-\paragraph{Calibration.} The five parameters are fitted to the whole surface at once:
-\[
-  \min_{v_0, \kappa, \theta, \xi, \rho}\ \sum_{i,j} \left(\frac{C^{\mathrm{Heston}}(k_{ij}, T_i) - C^{\mathrm{mkt}}(k_{ij}, T_i)}{\mathcal V^{\mathrm{ATM}}_{T_i}}\right)^2 ,
-\]
-calls per unit forward at the strike nodes $k_{ij} = K_j/F(T_i)$, each maturity divided by its ATM Black vega so that the
-residuals are close to implied vol errors and all maturities weigh alike. Bounds: $v_0, \theta \in [10^{-4}, 1]$,
-$\kappa \in [0.01, 20]$, $\xi \in [0.01, 5]$, $\rho \in [-0.99, 0.99]$; start from the short ATM variance for $v_0$, the average ATM variance
-for $\theta$, $\kappa = 1.5$, $\xi = 0.5$, $\rho = -0.6$. Five parameters cannot fit a steep short-dated smile: the errors are
-largest at the first maturities and in the wings. The sensitivities of the parameters to the market quotes come from
-the implicit function theorem at the optimum, as for the displaced diffusion.
+\paragraph{Calibration.} An optimisation: five parameters cannot reprice all the quotes, so the fit has errors.
+\begin{enumerate}[nosep]
+  \item \emph{Targets}: every node as an undiscounted call per unit forward, $c_{ij} = c_{\mathrm{BS}}(k_{ij}, T_i, \sigma_{ij})$, $k_{ij} = K_j/F(T_i)$
+        (prices, not implied vols: no inversion inside the search).
+  \item \emph{Weights}: each maturity divided by its ATM Black vega $\mathcal V_i = \sqrt{T_i}\,\phi(\sigma^{\mathrm{ATM}}_i\sqrt{T_i}/2)$, so a price error at the money
+        reads as an implied vol error and all maturities weigh alike; in the wings the residual is the vol error times
+        $\mathcal V_{ij}/\mathcal V_i$, so the wings count by their vega.
+  \item \emph{Objective}:
+        \[
+          \min_{v_0, \kappa, \theta, \xi, \rho}\ \sum_{i,j} \left(\frac{c^{\mathrm{Heston}}(k_{ij}, T_i) - c_{ij}}{\mathcal V_i}\right)^2 ,
+        \]
+        with bounds $v_0, \theta \in [10^{-4}, 1]$, $\kappa \in [0.01, 20]$, $\xi \in [0.01, 5]$, $\rho \in [-0.99, 0.99]$; start from the shortest ATM variance for
+        $v_0$, the average ATM variance for $\theta$, $\kappa = 1.5$, $\xi = 0.5$, $\rho = -0.6$.
+  \item \emph{Search}: bounded trust-region least squares with a finite-difference Jacobian, on a cheaper COS (256 terms,
+        $\pm 12$ standard deviations); then a polish on the full-precision COS and one Newton step on the exact Hessian.
+  \item \emph{Report}: errors per maturity in vol points (ATM, rms, max), Feller, parameters on a bound.
+\end{enumerate}
+The errors are largest at the first maturities and in the wings (the short-dated skew). The parameters are poorly
+identified: $\kappa$, $\theta$ and $\xi$ trade off (fits of almost the same quality along a curve), so they move between
+calibrations while the fitted surface barely does. In practice: a global search or yesterday's parameters as start,
+some parameters fixed, a penalty on parameter changes, the calibration restricted to the product's maturities, or
+richer models (time-dependent parameters, \citealp{andersen2010}; jumps, \citealp{bates1996}).
 
 \paragraph{Simulation.} The quadratic-exponential scheme of \citet{andersen2008}. Given $v_t$, the next variance has mean
 $m = \theta + (v_t - \theta)e^{-\kappa\Delta}$ and variance
 $s^2 = v_t\,\xi^2 e^{-\kappa\Delta}(1 - e^{-\kappa\Delta})/\kappa + \theta\,\xi^2 (1 - e^{-\kappa\Delta})^2/(2\kappa)$; with $\psi = s^2/m^2$, it is drawn as
 $a(b + Z)^2$ when $\psi \le 1.5$ (moments matched) and from a mass at zero plus an exponential tail otherwise, which keeps it
 non-negative without truncation. $\ln X$ is then stepped with the time integral of $v$ approximated by the average of
-the two ends and the drift chosen so that $X$ stays an exact martingale. Two normals per step.
+the two ends and the drift chosen so that $X$ stays an exact martingale. Two normals per step. The scheme is accurate
+with large steps (quarterly steps reprice the closed form within the Monte Carlo error, Feller violated).
+
+\paragraph{Sensitivities.} The parameters depend on the quotes through the optimum, so each sensitivity runs through
+the calibration:
+\[
+  \text{quotes} \;\to\; (F(T_i),\ c_{ij}) \;\to\; p^* = (v_0, \kappa, \theta, \xi, \rho) \;\to\; \text{price (closed form or paths)} .
+\]
+The optimum satisfies $\nabla_p L(p^*, m) = 0$ for every market input $m$; differentiating this identity
+(implicit function theorem),
+\[
+  \frac{\dd p^*}{\dd m} = -H^{-1}\,\frac{\partial^2 L}{\partial p\,\partial m},\qquad H = \nabla^2_p L(p^*, m),
+\]
+the derivative of a re-optimisation without re-optimising (parameters on a bound held fixed).
+\begin{itemize}[nosep]
+  \item \emph{Vega per node}: every parameter depends on many nodes ($v_0$ on the short ATM vols, $\kappa$ and $\theta$ on the long
+        maturities with opposite signs, $\rho$ on the skew, $\xi$ on the curvature), so a price has vega on the whole surface,
+        with signs, also far from its own strike and maturity. The total vega is close to the Black--Scholes one, the
+        buckets are not.
+  \item \emph{Delta}: a higher spot raises the forwards (the paths scale with them) and moves every node to a lower
+        moneyness, which changes the targets and hence the parameters; both effects go through the chain above.
+  \item \emph{Rates, repo, dividends}: through the forwards, as the delta without the move of the spot.
+\end{itemize}
+Closed-form and Monte Carlo (pathwise) greeks agree within the Monte Carlo error.
+
+\paragraph{Limits.}
+\begin{itemize}[nosep]
+  \item \emph{Fit}: the short-dated skew and the term structure of the skew are out of reach of five constant parameters;
+        vanillas and near-expiry exotics are mispriced in the short wings.
+  \item \emph{Identifiability}: unstable parameters and vega buckets from one calibration to the next.
+  \item \emph{Dynamics tied to today's smile}: the vol of vol and correlation that fit today's curvature and skew also set
+        the forward smile; there is no separate control.
+  \item \emph{Feller usually violated}: a mass of the variance near zero; the simulation needs a scheme built for it.
+  \item \emph{Constant correlation and long-run level}: no regimes.
+  \item \emph{Local optimisation}: the result can depend on the start and on the weights.
+\end{itemize}
+Heston is the reference for the dynamics of the vol and has a fast closed form, but does not reprice the surface; local
+vol does the opposite, and the stochastic local vol model of \S\ref{sec:mp-slv} combines the two.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Heston stochastic local volatility}\label{sec:mp-slv}
