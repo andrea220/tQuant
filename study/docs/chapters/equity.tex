@@ -240,14 +240,63 @@ American put is worth $K - S$: delta $-1$.
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Volatility: smile, local vol, displaced diffusion}
 
-\begin{question}{\Practice \diff{1}}{Which nodes carry the vega?}
-A price uses the vol surface at one $(K, T)$ between the nodes. Which nodes of \texttt{volatility\_matrix} does it
-depend on? Check it by bumping one node with \texttt{assign}. \nb{market\_handles.ipynb}
+\begin{question}{\Theory \diff{1}}{Butterfly spreads with calls and with puts}
+What is a butterfly spread built with calls? And with puts? Draw the payoff, and say what its price must satisfy.
+\nb{local\_vol.ipynb}
 \end{question}
 \begin{answer}
-\texttt{volatility(K, T)} is bilinear and flat outside: only the 4 nodes around $(K, T)$ (2 on an edge, 1 at a
-corner), with the bilinear weights. Hence the bucketed vega (gradient w.r.t.\ the matrix) of a Black--Scholes price
-sits on those nodes; a model that builds its own surface (local vol) spreads it further.
+\emph{With calls}: long one call at $K - h$, short two calls at $K$, long one call at $K + h$ (same maturity). Payoff at $T$:
+\[
+  (S_T - K + h)^+ - 2\,(S_T - K)^+ + (S_T - K - h)^+ =
+  \begin{cases}
+    0 & S_T \le K - h \\
+    S_T - (K - h) & K - h \le S_T \le K \\
+    (K + h) - S_T & K \le S_T \le K + h \\
+    0 & S_T \ge K + h
+  \end{cases}
+\]
+a \emph{triangle} of height $h$ centred on $K$ and of area $h^2$: it pays only if the stock ends between $K - h$ and $K + h$,
+most at $K$.
+
+\emph{With puts}: the same strikes and weights ($+1, -2, +1$) give the \emph{same} payoff. By put--call parity each call is a put
+plus the forward, $C(K) = P(K) + P(0,T)(F - K)$; the forward parts cancel because the weights sum to zero
+($1 - 2 + 1 = 0$) and so do the weighted strikes ($(K - h) - 2K + (K + h) = 0$). So a call butterfly and a put butterfly
+have the same price; in practice one uses the out-of-the-money options (puts below the forward, calls above).
+
+\emph{Price}: the payoff is never negative, so the price must be $\ge 0$:
+\[
+  C(K - h) - 2\,C(K) + C(K + h) \ge 0 ,
+\]
+i.e.\ the call price is \textbf{convex in the strike}. A negative butterfly price is a \emph{butterfly arbitrage} (buy it, get
+paid today, never pay later). As a position it is a bet that the stock ends near $K$: short volatility, long the
+centre of the distribution.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{What a very tight butterfly prices}
+Divide the butterfly by $h^2$ and let $h \to 0$. What payoff does it tend to, and what is its price? What does it say
+about the market prices of the calls of one maturity? \nb{local\_vol.ipynb}
+\end{question}
+\begin{answer}
+Divided by $h^2$, the triangle has area one and width $2h$: as $h \to 0$ it becomes a spike at $K$ of unit area (a Dirac
+delta), i.e.\ a security that pays ``1 per unit of strike'' if the stock ends exactly at $K$ (an \emph{Arrow--Debreu} security).
+Its price is the probability of ending there, discounted:
+\[
+  \frac{C(K - h) - 2\,C(K) + C(K + h)}{h^2} \;\longrightarrow\; \frac{\partial^2 C}{\partial K^2} = P(0,T)\,q_T(K),
+\]
+$q_T$ the risk-neutral density of $S_T$ (Breeden and Litzenberger, 1978). Directly from the integral:
+$C(K) = P(0,T)\int_K^\infty (S - K)\,q_T(S)\,\mathrm dS$, so $\partial_K C = -P(0,T)\,\mathbb Q(S_T > K)$ (the digital) and
+$\partial_{KK} C = P(0,T)\,q_T(K)$. Per unit of forward, with $c(k, T) = C/(P(0,T)F(T))$ and $k = K/F$: $\partial_{kk} c = p_T(k)$, the
+density of $X_T = S_T/F(T)$.
+
+Consequences:
+\begin{itemize}[nosep]
+  \item the calls of one maturity, for all strikes, \emph{are} the market's distribution of the stock at that maturity;
+  \item no butterfly arbitrage $\Leftrightarrow$ convex call prices $\Leftrightarrow$ a non-negative density;
+  \item the density is a \emph{second} derivative of prices: it is very sensitive to how the quotes are interpolated
+        between strikes. A surface linear in vol between the nodes has a smile slope that jumps at each node, so the
+        ``density'' has a spike at every node (the first experiment of \texttt{local\_vol.ipynb}); this is why the
+        local vol is built from a smooth representation of the smile.
+\end{itemize}
 \end{answer}
 
 \begin{question}{\Theory \diff{2}}{Dupire formula}
