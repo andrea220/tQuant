@@ -47,6 +47,11 @@ Equity:
 
 - [ ] Local vol MC noise is large in the wings and at long maturities (OTM call at 170%, 3Y: ±1 vol point with
       100k paths): variance reduction (antithetics, control variate on the forward) not done.
+- [ ] Heston COS truncation range from the cumulants (`heston_cumulants`, mean +/- 30 sd, `abs(c2)` as a guard): with
+      Feller strongly violated the second cumulant can come out negative or inaccurate (Oosterlee-Grzelak, ch. 6, use a
+      fixed range `+/- L sqrt(T)` for this reason). Fine on the snapshot (Feller -0.48, `c2 = 1.12` at 5Y, prices = the
+      book's puts + parity to 1e-6), but not checked on extreme parameters: test a range of parameter sets against a
+      fixed-range COS / Lewis quadrature, fall back to the fixed range if `c2` is not positive.
 
 Interest rates:
 

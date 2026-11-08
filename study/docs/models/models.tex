@@ -275,7 +275,7 @@ discretisation errors, which is the check of the construction; the information t
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Heston}\label{sec:mp-heston}
-\paragraph{Dynamics.} The variance is a mean-reverting square-root process correlated with the spot \citep{heston1993}:
+\paragraph{Dynamics.} The variance is a mean-reverting square-root process correlated with the spot \citep{heston1993}; see \citet[ch.~8]{oosterlee2019}:
 \[
   \frac{\dd X_t}{X_t} = \sqrt{v_t}\,\dd W^1_t,\qquad
   \dd v_t = \kappa(\theta - v_t)\,\dd t + \xi\sqrt{v_t}\,\dd W^2_t,\qquad \dd\langle W^1, W^2\rangle_t = \rho\,\dd t ,
@@ -314,12 +314,12 @@ $\varphi(u) = \exp(C(T, u) + D(T, u)\,v_0)$, with $C$, $D$ solutions of Riccati 
   \varphi(u) = \exp\Big(\frac{\kappa\theta}{\xi^2}\Big[(b-d)T - 2\ln\frac{1 - g e^{-dT}}{1-g}\Big]
   + \frac{b-d}{\xi^2}\,\frac{1 - e^{-dT}}{1 - g e^{-dT}}\,v_0\Big).
 \]
-European options by the COS method \citep{fang2008}: $\ln X_T$ is truncated to $[a, b]$ = mean $\pm 30$ standard deviations
+European options by the COS method \citep{fang2008}; \citet[sec.~8.4.1]{oosterlee2019}: $\ln X_T$ is truncated to $[a, b]$ = mean $\pm 30$ standard deviations
 (from the cumulants); on it the density is a cosine series whose coefficients are $\mathrm{Re}[\varphi(u_n)e^{-iu_n a}]$,
 $u_n = n\pi/(b - a)$; the payoff coefficients are closed-form, so the price is a sum of $N = 1024$ terms (exponential
 convergence). Puts are integrated, calls follow by parity.
 
-\paragraph{Calibration.} An optimisation: five parameters cannot reprice all the quotes, so the fit has errors.
+\paragraph{Calibration.} An optimisation: five parameters cannot reprice all the quotes, so the fit has errors \citep[sec.~8.2.3]{oosterlee2019}.
 \begin{enumerate}[nosep]
   \item \emph{Targets}: every node as an undiscounted call per unit forward, $c_{ij} = c_{\mathrm{BS}}(k_{ij}, T_i, \sigma_{ij})$, $k_{ij} = K_j/F(T_i)$
         (prices, not implied vols: no inversion inside the search).
@@ -342,7 +342,7 @@ calibrations while the fitted surface barely does. In practice: a global search 
 some parameters fixed, a penalty on parameter changes, the calibration restricted to the product's maturities, or
 richer models (time-dependent parameters, \citealp{andersen2010}; jumps, \citealp{bates1996}).
 
-\paragraph{Simulation.} The quadratic-exponential scheme of \citet{andersen2008}. Given $v_t$, the next variance has mean
+\paragraph{Simulation.} The quadratic-exponential scheme of \citet{andersen2008} \citep[see also][sec.~9.3.4]{oosterlee2019}. Given $v_t$, the next variance has mean
 $m = \theta + (v_t - \theta)e^{-\kappa\Delta}$ and variance
 $s^2 = v_t\,\xi^2 e^{-\kappa\Delta}(1 - e^{-\kappa\Delta})/\kappa + \theta\,\xi^2 (1 - e^{-\kappa\Delta})^2/(2\kappa)$; with $\psi = s^2/m^2$, it is drawn as
 $a(b + Z)^2$ when $\psi \le 1.5$ (moments matched) and from a mass at zero plus an exponential tail otherwise, which keeps it
