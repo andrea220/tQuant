@@ -128,63 +128,107 @@ $\beta$ and the summed variance.
 \]
 There is one source of randomness; the instantaneous vol of the stock is known once the spot is known. The function
 $\sigma_{\mathrm{loc}}$ is not chosen: it is \emph{implied} by the market, as the only diffusion of this form whose distribution of
-$S_T$ at every maturity is the one of the market option prices.
+$S_T$ at every maturity is the one of the market option prices. Below, $k = K/F(T)$ and $c(k, T) = \E[(X_T - k)^+]$ is the
+undiscounted call per unit of forward.
 
-\paragraph{From option prices to local vol.} With $C(K, T)$ the undiscounted call on the forward, Dupire's equation
-gives the local variance in terms of the time decay and the convexity in strike of the calls:
-\[
-  \sigma_{\mathrm{loc}}^2(K, T) = \frac{\partial_T C}{\tfrac12 K^2\,\partial_{KK} C} .
-\]
-Equivalently, for any model of a stochastic instantaneous vol $\sigma_t$ that reprices the same calls,
-$\sigma_{\mathrm{loc}}^2(K, T) = \E[\sigma_T^2 \mid S_T = K]$ \citep{gyongy1986,derman1994}: the local variance is the expected instantaneous
-variance on the paths through $(T, K)$. In implied total variance $w(y, T) = \sigma_{\mathrm{imp}}^2(y, T)\,T$, with forward
-log-moneyness $y = \ln(K/F(T))$ \citep[eq.~1.10]{gatheral2006}:
+\paragraph{From option prices to local vol.} Three steps.
+\begin{enumerate}[nosep, label=(\Alph*)]
+  \item \emph{Prices give the distributions} \citep{breeden1978}. Differentiating $c = \int_k^\infty (x - k)\,p_T(x)\,\dd x$ in the strike,
+        \[
+          \partial_k c = -\Q(X_T > k),\qquad \partial_{kk} c = p_T(k):
+        \]
+        a butterfly $c(k-h) - 2c(k) + c(k+h)$ divided by $h^2$ pays a unit-area triangle around $k$ and tends to the density.
+        The calls of one maturity are the risk-neutral distribution at that maturity; no butterfly arbitrage $\Leftrightarrow$
+        $c$ convex in $k$ $\Leftrightarrow$ $p_T \ge 0$.
+  \item \emph{The distributions give the local vol} \citep{dupire1994}. The distributions alone do not fix how the stock moves
+        between maturities; within the diffusions above there is exactly one that has them all. Itô's formula on the
+        payoff $(X_T - k)^+$ (Tanaka: $f' = \mathbf 1\{x > k\}$, $f'' = \delta(x - k)$) and expectation: the linear part has zero
+        mean ($X$ is a martingale) and only the kink at the strike contributes,
+        \[
+          \partial_T c = \tfrac12\,\sigma_{\mathrm{loc}}^2(T, k)\,k^2\,p_T(k) = \tfrac12\,\sigma_{\mathrm{loc}}^2(T, k)\,k^2\,\partial_{kk} c
+          \qquad\Longrightarrow\qquad
+          \sigma_{\mathrm{loc}}^2(T, k) = \frac{\partial_T c}{\tfrac12\,k^2\,\partial_{kk} c} .
+        \]
+        It is the Black--Scholes theta--gamma relation read in strike: the calls grow with the maturity only through the
+        paths at the strike, in proportion to the local variance and to the density there. Known prices determine the
+        local variance: calibration is a computation, not an optimisation.
+  \item \emph{Meaning} \citep{gyongy1986,derman1994}. For any model with a stochastic instantaneous vol $\sigma_t$ that reprices the
+        same calls, $\sigma_{\mathrm{loc}}^2(T, k) = \E[\sigma_T^2 \mid X_T = k]$: the local variance is the expected instantaneous variance
+        on the paths through $(T, k)$.
+\end{enumerate}
+
+\paragraph{The formula in implied total variance.} With forward log-moneyness $y = \ln k$ and total implied variance
+$w(y, T) = \sigma_{\mathrm{imp}}^2(y, T)\,T$, the market call is the Black--Scholes price $c = c_{\mathrm{BS}}(y, w(y, T))$, which depends
+on $y$ and $w$ only. In $y$ the denominator of Dupire is $\tfrac12(\partial_{yy} c - \partial_y c)$. By the chain rule the numerator is
+$\partial_T c = \partial_w c_{\mathrm{BS}}\,\partial_T w$, and the denominator, with the Black--Scholes identities, is $\partial_w c_{\mathrm{BS}}\; g$; the common factor
+cancels \citep[eq.~1.10]{gatheral2006}:
 \[
   \sigma_{\mathrm{loc}}^2 = \frac{\partial_T w}{g},\qquad
   g = 1 - \frac{y}{w}\,\partial_y w + \frac14\Big(-\frac14 - \frac1w + \frac{y^2}{w^2}\Big)(\partial_y w)^2 + \frac12\,\partial_{yy} w .
 \]
-The numerator is the calendar term (the variance added between two maturities), the denominator the butterfly term
-(proportional to the risk-neutral density). The surface is free of static arbitrage when $\partial_T w \ge 0$ at fixed $y$ and
-$g > 0$. Without skew ($\partial_y w = 0$), $g = 1$ and the local variance is the forward implied variance $\partial_T w$; a flat
-surface gives a flat local vol equal to it.
+\begin{itemize}[nosep]
+  \item \emph{Numerator} (calendar term): the variance the market adds per unit of time at fixed moneyness, the forward
+        variance.
+  \item \emph{Denominator} (butterfly term): $g$ is the density relative to the lognormal one with the same total variance,
+        $p(y) = g(y)\,e^{-d_-^2/2}/\sqrt{2\pi w}$ with $d_- = -y/\sqrt w - \sqrt w/2$. The skew term $-\frac yw\,\partial_y w$ is below $0$ on the downside
+        of a negative skew: lower $g$, higher local vol there.
+  \item \emph{No static arbitrage}, also the condition for a local vol to exist: $\partial_T w \ge 0$ at fixed $y$ (calendar spreads)
+        and $g > 0$ (butterflies).
+  \item \emph{No skew}: $g = 1$ and $\sigma_{\mathrm{loc}}^2 = \partial_T w$; a flat surface gives a flat local vol.
+\end{itemize}
 
-\paragraph{Calibration.} The local vol is built from the implied vol nodes $\sigma_{ij}$ (maturities $T_i$, strikes $K_j$); there is
-no optimisation, the fit is exact at the nodes by construction:
+\paragraph{Calibration.} There is no parameter to fit: calibrating means building, from the implied vol nodes $\sigma_{ij}$
+(maturities $T_i$, strikes $K_j$), a surface $w(y, T)$ defined everywhere that passes through the nodes, has continuous
+$\partial_y w$, $\partial_{yy} w$ in closed form, keeps $\partial_T w \ge 0$ and has wings without arbitrage; then applying the formula. The fit is
+exact at the nodes by construction. The steps:
 \begin{enumerate}[nosep]
-  \item each node is placed in forward log-moneyness, $y_{ij} = \ln(K_j / F(T_i))$, with its total variance $w_{ij} = \sigma_{ij}^2 T_i$;
-  \item per maturity, $w(\cdot, T_i)$ is a natural cubic spline in $y$ through the nodes, so $\partial_y w$ and $\partial_{yy} w$ are
-        analytic (no finite differences of option prices, which are tiny at short maturities and in the wings);
-        outside the nodes it continues linearly with the slope capped at $1.9$, below the bound $2$ of
-        \citet{lee2004} on the wings of the total variance;
-  \item in time, $w$ is linear between maturities at fixed $y$, and linear from $w = 0$ at $t = 0$ to the first maturity, so
-        $\partial_T w$ is constant on each interval;
-  \item $\sigma_{\mathrm{loc}}$ follows from the formula above on a grid of time step $1/96$ year and 300 points of $y \in [\ln 0.05, \ln 5]$,
-        with $g$ floored at $10^{-3}$ and $\sigma_{\mathrm{loc}}$ capped at 200\%;
-  \item the cells where the market data imply $g < 10^{-3}$ or $\partial_T w \le 0$ are reported as static arbitrage: there no
-        local vol can reprice the surface.
+  \item \emph{Coordinates.} Each node goes to $y_{ij} = \ln(K_j / F(T_i))$ and $w_{ij} = \sigma_{ij}^2 T_i$ (the same strike has a different $y$ at
+        each maturity, since the forward moves).
+  \item \emph{Smile per maturity.} $w(\cdot, T_i)$ is a natural cubic spline in $y$ through the nodes (the least-bending curve with
+        continuous curvature), so $\partial_y w$ and $\partial_{yy} w$ are analytic: no finite differences of option prices, which are tiny
+        at short maturities and in the wings, and no slope jumps (linear interpolation in vol puts a spike in the
+        density at every node). Outside the nodes it continues linearly with the slope capped at $1.9$, below the
+        bound $2$ of \citet{lee2004} on the wings of the total variance.
+  \item \emph{Between maturities.} At fixed $y$, $w$ is linear in $T$ (the same weights for $\partial_y w$, $\partial_{yy} w$), so $\partial_T w$ is the
+        forward variance of each interval and is positive whenever the slices do not cross; before the first maturity
+        $w$ is linear from $0$ (flat implied vol), after the last the implied vol is flat. The local vol therefore jumps
+        at each quoted maturity.
+  \item \emph{The formula on a grid.} $\sigma_{\mathrm{loc}}$ on a grid of time step $1/96$ year (plus the maturities) and 300 points of
+        $y \in [\ln 0.05, \ln 5]$, with $g$ floored at $10^{-3}$ and $\sigma_{\mathrm{loc}}$ capped at 200\%; the simulation reads it by bilinear
+        interpolation at $y = \ln(S_t/F(t))$.
+  \item \emph{Arbitrage check.} The cells within the quoted strikes where $g < 10^{-3}$ or $\partial_T w \le 0$ are reported as static
+        arbitrage: there no local vol can reprice the surface.
 \end{enumerate}
 Between the nodes this representation (spline in total variance) is not the bilinear interpolation in vol used by the
 closed-form pricers of \S\ref{sec:mp-vol-surface}: the two agree at the nodes only.
 
-\paragraph{How implied and local vol relate.} The implied variance of $(K, T)$ is approximately the time average of the
-local variance over the paths that end at the strike \citep[eqs.~3.8--3.11]{gatheral2006}, concentrated around the
-straight line from the spot to the strike in log-moneyness:
+\paragraph{How implied and local vol relate.} They are different objects: the implied vol is the constant vol that
+reprices one option, the local vol the instantaneous vol at $(t, S)$. The implied variance of $(K, T)$ is approximately
+the time average of the local variance over the paths that end at the strike \citep[eqs.~3.8--3.11]{gatheral2006},
+concentrated around the straight line from the spot to the strike in log-moneyness:
 \[
   \sigma_{\mathrm{imp}}^2(K, T) \approx \frac1T\int_0^T \sigma_{\mathrm{loc}}^2\big(t, \tfrac tT\,y_K\big)\,\dd t .
 \]
-Hence: near the money and at short maturity the implied skew is about half the local skew (the path gets only half-way
-to the strike on average); a steep short-dated implied wing requires a much higher local vol there; with a convex smile
-the local vol at the money is below the implied vol (the paths also visit the higher-vol wings). The local skew decays
-with the maturity, so the \emph{forward} smile of the model (the smile of $S_{T_2}/S_{T_1}$) is flatter than today's smile of
-the same length: the model fits the distributions at each date, not the dynamics of the smile
-\citep[ch.~3 and 8]{gatheral2006}; see also \citet{derman2016}.
+Consequences:
+\begin{itemize}[nosep]
+  \item \emph{Rule of 2} \citep{derman1996}: with $\sigma_{\mathrm{loc}} \approx a + b\,y$ near the money and a short maturity,
+        $\sigma_{\mathrm{imp}}(y) \approx \frac1y\int_0^y (a + b z)\,\dd z = a + \frac b2\,y$: the implied skew is about half the local skew. At longer
+        maturities the average also runs over the term structure and the ratio moves away from 2.
+  \item A steep short-dated implied wing requires a much higher local vol there; with a convex smile the local vol at
+        the money is below the implied vol (the paths also visit the higher-vol wings).
+  \item The fit is checked by repricing: options simulated under the local vol, inverted with Black, give back the
+        market implied vols.
+  \item The local skew decays with the maturity, so the \emph{forward} smile of the model (the smile of $S_{T_2}/S_{T_1}$) is
+        flatter than today's smile of the same length \citep[ch.~3 and 8]{gatheral2006}; see also \citet{derman2016}.
+\end{itemize}
 
 \paragraph{Simulation.} Log-Euler on $\ln X$ with the local vol at the start of each step:
 \[
   \ln X_{t+\Delta} = \ln X_t - \tfrac12\,\sigma^2\Delta + \sigma\sqrt\Delta\,Z,\qquad \sigma = \sigma_{\mathrm{loc}}(t, \ln X_t),
 \]
-$\sigma_{\mathrm{loc}}$ bilinear on its grid. The scheme has a bias of first order in the step: the repriced smile is about $0.3$
-vol points high with 50 steps a year.
+$\sigma_{\mathrm{loc}}$ bilinear on its grid. The scheme has a bias of first order in the step: on an equity surface, at the maturities
+from 6M to 3Y, the repriced smile is about $0.2$ vol points high on average with 50 steps a year (at most $0.5$), and the bias
+is gone with 200 steps a year; with $2\cdot10^4$ paths the Monte Carlo error is of a few tenths of a vol point.
 
 \paragraph{Sensitivities.} The local vol is rebuilt from the quotes for every price, so each sensitivity runs through
 the construction above (chain rule), then through the paths:
@@ -210,6 +254,24 @@ the construction above (chain rule), then through the paths:
 \end{itemize}
 For vanillas these sensitivities match the closed-form Black--Scholes sticky-strike ones up to the Monte Carlo and
 discretisation errors, which is the check of the construction; the information the model adds is in the exotics.
+
+\paragraph{Limits.} All from the assumption of a deterministic vol:
+\begin{itemize}[nosep]
+  \item \emph{Flat forward smile}: products on future smiles (forward-start options, cliquets, barriers and digitals
+        observed at future dates in autocallables) are mispriced.
+  \item \emph{Smile dynamics}: after a spot move the model's smile moves opposite to the observed one \citep{hagan2002}, so the
+        model's own hedge is poor; in practice the surface is recalibrated and the greeks follow a market convention
+        (sticky strike).
+  \item \emph{No vol factor}: no vol of vol and a perfect spot--vol dependence; models that reprice the same vanillas
+        (Heston, stochastic local vol) give different exotic prices, which local vol cannot measure.
+  \item \emph{Interpolation-dependent}: between the nodes, in the wings and beyond the quoted maturities the local vol is a
+        choice of construction; exotics that live there inherit it.
+  \item \emph{Noise}: the second derivative in strike amplifies quote errors and arbitrages; the local vol surface and its
+        vegas are unstable from one calibration to the next, hence arbitrage-free parametric smiles in practice
+        \citep[SVI,][]{gatheral2006}.
+  \item \emph{Short-dated skew}: largely jump risk in the market; a diffusion reproduces it only with extreme local vols in
+        the wings.
+\end{itemize}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Heston}\label{sec:mp-heston}
