@@ -47,6 +47,16 @@ Equity:
 
 - [ ] Local vol MC noise is large in the wings and at long maturities (OTM call at 170%, 3Y: ±1 vol point with
       100k paths): variance reduction (antithetics, control variate on the forward) not done.
+- [ ] Heston SLV does not reprice the short-dated downside of the surface: on the snapshot (TICKER1, mixing 1) the 6M
+      smile is too high by about +0.7 vol points at 60% and +0.4 at 70% (+0.5 at 60% at 1Y, gone at 3Y), against
+      local vol on the same draws at ~0. Systematic, not Monte Carlo noise: unchanged from 80k to 320k particles,
+      with 400 smoother nodes instead of 100, without the shrinkage, with 200 steps a year instead of 50, without the
+      leverage cap and the variance floor; it disappears as the mixing goes to 0 (SLV = local vol exactly), so the
+      log step and the leverage are applied correctly and the error comes with the stochastic variance. Cause not
+      identified (candidates: the leverage frozen at the step start while `E[v | X]` moves fast on the short
+      downside, the QE log step with a per-particle leverage, the interplay with Feller strongly violated). Probably
+      also behind the SLV vs LV gaps in `digital_strip` and `down_and_in_put`. Study in `study/notebooks/heston_slv.ipynb`
+      (section 6).
 - [ ] Heston COS truncation range from the cumulants (`heston_cumulants`, mean +/- 30 sd, `abs(c2)` as a guard): with
       Feller strongly violated the second cumulant can come out negative or inaccurate (Oosterlee-Grzelak, ch. 6, use a
       fixed range `+/- L sqrt(T)` for this reason). Fine on the snapshot (Feller -0.48, `c2 = 1.12` at 5Y, prices = the

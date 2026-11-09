@@ -390,31 +390,73 @@ vol does the opposite, and the stochastic local vol model of \S\ref{sec:mp-slv} 
 \subsection{Heston stochastic local volatility}\label{sec:mp-slv}
 \paragraph{Dynamics.} The Heston variance multiplied by a leverage function of time and spot:
 \[
-  \frac{\dd X_t}{X_t} = L(t, X_t)\,\sqrt{v_t}\,\dd W^1_t ,
+  \frac{\dd X_t}{X_t} = L(t, X_t)\,\sqrt{v_t}\,\dd W^1_t,\qquad
+  \dd v_t = \kappa(\theta - v_t)\,\dd t + \eta\,\xi\sqrt{v_t}\,\dd W^2_t,\qquad \dd\langle W^1, W^2\rangle_t = \rho\,\dd t ,
 \]
-$v$ the calibrated Heston variance with the vol of vol scaled by a mixing factor $\eta \in (0, 1]$ ($\eta\,\xi$). The stochastic
-variance gives the smile dynamics (forward smile); the leverage corrects the marginals.
+$(v_0, \kappa, \theta, \xi, \rho)$ the calibrated Heston parameters of \S\ref{sec:mp-heston}, the vol of vol scaled by a mixing factor
+$\eta \in (0, 1]$. The instantaneous variance is $L^2 v_t$: the stochastic variance gives the dynamics (forward smile, vol of
+vol), the leverage corrects its level spot by spot so that the marginals are those of local vol
+\citep[][sec.~10.2]{vanderstoep2014,oosterlee2019}.
 
-\paragraph{Calibration of the leverage.} By Gyöngy's theorem the model has the local vol marginals if its local variance
-$L^2(t, x)\,\E[v_t \mid X_t = x]$ equals the market one, which gives
+\paragraph{The leverage.} By Gyöngy's theorem \citep{gyongy1986} a process with stochastic instantaneous variance has the
+marginals of the local vol model whose local variance is the expected instantaneous variance given the spot. The SLV
+model has the market marginals if $L^2(t, x)\,\E[v_t \mid X_t = x] = \sigma_{\mathrm{loc}}^2(t, x)$, hence
 \[
   L^2(t, x) = \frac{\sigma_{\mathrm{loc}}^2(t, x)}{\E[v_t \mid X_t = x]} ,
 \]
-$\sigma_{\mathrm{loc}}$ the local vol of \S\ref{sec:mp-lv} (\citealp{vanderstoep2014,oosterlee2019}). The conditional expectation depends on the
-leverage itself, so it is estimated on the simulated paths while they are generated (particle method,
-\citealp{guyon2012}): at each step
+$\sigma_{\mathrm{loc}}$ the local vol of \S\ref{sec:mp-lv}. Where the Heston variance on the paths through $(t, x)$ is too high for the
+market, $L < 1$, where too low, $L > 1$. Limits: on a Heston market $L = 1$; for $\eta \to 0$ the variance is deterministic and
+the model is local vol. Every $\eta$ reprices the same vanillas: $\eta$ only moves the dynamics, from local vol ($\eta \to 0$,
+flat forward smile) towards Heston ($\eta = 1$).
+
+\paragraph{Calibration.} No optimisation beyond its two components:
 \begin{enumerate}[nosep]
-  \item 100 nodes span the 0.1\%--99.9\% quantiles of $\ln X_t$ over the paths;
-  \item $\E[v_t \mid \ln X_t]$ at the nodes is the regression of $v_t$ on $\ln X_t$ with tent (piecewise linear) kernels; nodes
-        with few paths are shrunk to the overall mean of $v_t$, and the result is floored at $10^{-4}$;
-  \item each path gets $L = \sigma_{\mathrm{loc}}/\sqrt{\E[v \mid X]}$ at its own $\ln X_t$ (capped at 10), and the step is taken.
+  \item the local vol from the surface (\S\ref{sec:mp-lv}), exact;
+  \item the Heston parameters from the surface (\S\ref{sec:mp-heston}), with $\xi \to \eta\,\xi$;
+  \item the leverage on the simulated paths. $\E[v_t \mid X_t]$ depends on the law of $(X_t, v_t)$, hence on the leverage at
+        earlier times (a McKean SDE): it is built forward in time on the particles \citep[particle method,][]{guyon2012}.
+        At each step:
+        \begin{enumerate}[nosep]
+          \item 100 nodes span the 0.1\%--99.9\% quantiles of $\ln X_t$ over the paths;
+          \item $\E[v_t \mid \ln X_t]$ at the nodes is the average of $v_t$ with tent (piecewise linear) weights, each path
+                splitting its weight between its two nodes; nodes with few paths are shrunk to the overall mean of $v_t$
+                (a pseudo-count of 5\% of the paths per node), and the result is floored at $10^{-4}$;
+          \item each path gets $L = \sigma_{\mathrm{loc}}/\sqrt{\E[v \mid X]}$ at its own $\ln X_t$ (capped at 10), and the step is taken.
+        \end{enumerate}
+  \item the mixing factor $\eta$ is not determined by the vanillas: it is set to reprice products that depend on the
+        dynamics (forward-start options, barriers, cliquets) when quotes exist, or by judgement.
 \end{enumerate}
-Small $\eta$ gives back the local vol model, $\eta = 1$ the most stochastic vol the Heston calibration allows.
+The leverage is far from 1 where Heston and the market disagree: at short maturities it supplies the steep short-dated
+skew and wings that Heston misses; at long maturities it removes the excess curvature of the Heston smile.
 
-\paragraph{Simulation.} QE step for $v$, log step of $X$ with $L$ frozen over the step, martingale correction per path.
+\paragraph{Simulation.} QE step for $v$ (\S\ref{sec:mp-heston}), log step of $X$ with $L$ frozen over the step (the Heston
+log-step coefficients scaled per path by $L$), exact martingale correction per path. The leverage is rebuilt on the
+pricing paths at every pricing, in one pass.
 
-\paragraph{Sensitivities.} By convention the Heston parameters and the conditional expectation $\E[v \mid X]$ are held
-fixed; the leverage moves with the market through the local vol and the forward.
+\paragraph{Sensitivities.} By convention the Heston parameters are held and the estimate $\E[v \mid X]$ is not
+differentiated; the leverage moves with the market through the local vol (vol nodes) and the forward (spot, repo,
+dividends, curve):
+\[
+  \text{quotes} \;\to\; \sigma_{\mathrm{loc}}(t, y),\ F(t) \;\to\; L = \sigma_{\mathrm{loc}}/\sqrt{\E[v \mid X]} \;\to\; X_t \;\to\; S_t = F(t)\,X_t \;\to\; \text{payoff}.
+\]
+In exact SLV a vanilla does not depend on the Heston parameters (the leverage compensates them), so the convention
+loses nothing for vanillas: their delta and vega per node are close to the local vol ones. For an exotic the dynamics
+is frozen; its sensitivity to the dynamics (to $\eta$, to a Heston recalibration) is a separate model-risk number.
+Differentiating the estimator itself is unstable (the derivative of the smoother with respect to a path's own position
+is the slope between noisy nodes, compounded over the steps).
+
+\paragraph{Limits.}
+\begin{itemize}[nosep]
+  \item \emph{Dynamics by choice}: $\eta$ is not identified by the vanillas, and exotic prices depend on it.
+  \item \emph{Estimator}: Monte Carlo noise on the vanillas (more paths than local vol), and choices (nodes, kernel,
+        shrinkage, floor, cap) that matter in the wings. On a steep equity surface the short-dated downside is not
+        repriced exactly (a few tenths of a vol point, systematic: it does not vanish with more particles).
+  \item \emph{Cost}: local vol and a Heston calibration first, then a sort and a smoother per step.
+  \item \emph{Greeks by convention}: the dynamics risk is not in the greeks.
+  \item \emph{Inherited}: the interpolation dependence of local vol and Feller violated in the Heston part.
+\end{itemize}
+SLV is the standard equity model for path-dependent exotics: it reprices the hedging vanillas and leaves the dynamics
+as an explicit choice.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Gaussian short-rate models}\label{sec:mp-gsr}
