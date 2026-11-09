@@ -16,6 +16,7 @@ from .brownian import observation_columns
 from .equitymodel import EquityModel
 from .stochasticprocess import StochasticProcess
 from ..numericalhandles.dtypes import DTYPE
+from ..numericalhandles.implicit import implicit_sensitivities, implicit_solution, newton_step, optimality_derivatives
 
 BETA_BOUNDS = (0.02, 1.5)
 SIGMA_BOUNDS = (1e-4, 3.0)
@@ -460,35 +461,26 @@ def _implicit_step(theta: np.ndarray, k: tf.Tensor, iv: tf.Tensor, t: np.ndarray
     """Slice parameters as differentiable functions of the market (implicit function theorem).
 
     ``theta(m) = theta* - H^{-1} grad_theta L(theta*, m)`` with ``L`` the half sum of squared residuals and
-    ``H`` its exact Hessian at the optimum (held constant): the value is ``theta*`` (``grad = 0``, up to
-    the solver tolerance) and ``d theta / d m = -H^{-1} d grad / d m``. Parameters on a bound stay fixed.
+    ``H`` its exact Hessian at the optimum: the value is ``theta*`` (``grad = 0``, up to the solver tolerance)
+    and ``d theta / d m = -H^{-1} d grad / d m`` for ``m = (k, iv)``, computed once as numbers
+    (:mod:`~tensorquant.numericalhandles.implicit`) and attached as the gradient. Parameters on a bound stay fixed.
     """
-    x = tf.constant(theta, DTYPE)
     tt = tf.constant(t, DTYPE)[:, None]
-    market = _black_tf(k, iv, tt)
 
-    def objective(p):
-        model = displaced_diffusion_price(k, p[:, 0:1], p[:, 1:2], tt)
-        return 0.5 * tf.reduce_sum(tf.square(model - market), axis=1)                  # [n] separable slices
+    def gradient(x, k_, iv_):
+        market = _black_tf(k_, iv_, tt)
+        with tf.GradientTape() as tape:
+            tape.watch(x)
+            model = displaced_diffusion_price(k_, x[:, 0:1], x[:, 1:2], tt)
+            loss = 0.5 * tf.reduce_sum(tf.square(model - market))                          # separable slices
+        return tape.gradient(loss, x)                                                     # [n, 2]
 
-    with tf.GradientTape(persistent=True) as outer:
-        outer.watch(x)
-        with tf.GradientTape() as inner:
-            inner.watch(x)
-            loss = tf.reduce_sum(objective(x))
-        grad = inner.gradient(loss, x)                                                    # [n, 2], depends on m
-        rows = [tf.reduce_sum(grad[:, j]) for j in range(2)]
-    # the slices are independent: the gradient of a column sum is that Hessian row of every slice
-    hess = tf.stop_gradient(tf.stack([outer.gradient(r, x) for r in rows], axis=1))       # [n, 2, 2]
-    del outer
     lower = np.array([BETA_BOUNDS[0], SIGMA_BOUNDS[0]])
     upper = np.array([BETA_BOUNDS[1], SIGMA_BOUNDS[1]])
-    free = tf.constant(~(np.isclose(theta, lower) | np.isclose(theta, upper)), DTYPE)    # [n, 2]
-    mask = free[:, :, None] * free[:, None, :]
-    eye = tf.eye(2, dtype=DTYPE)[None]
-    hess = hess * mask + eye * (1.0 - free[:, :, None])
-    step = tf.linalg.solve(hess, (grad * free)[..., None])[..., 0]
-    return x - step
+    free = ~(np.isclose(theta, lower) | np.isclose(theta, upper))                         # [n, 2]
+    g, hess, dg_dz = optimality_derivatives(gradient, theta, (k, iv))
+    value = theta - newton_step(g, hess, free).reshape(theta.shape)
+    return implicit_solution(value, (k, iv), implicit_sensitivities(hess, dg_dz, free, theta.shape))
 
 
 def _report(k, iv, t, theta, beta_fwd, sigma_fwd) -> pd.DataFrame:

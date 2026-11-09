@@ -103,13 +103,17 @@ class EquityModel(ABC):
         if tape is None or not params:
             return
         factors = equity.risk_factors()
+        variables = [v for vs in factors.values() for v in vs]
         jac = {}
         for name, value in params.items():
-            jac[name] = {}
-            for key, variables in factors.items():
-                blocks = tape.jacobian(value, variables, experimental_use_pfor=False)
-                jac[name][key] = [np.zeros(tuple(value.shape) + tuple(v.shape)) if b is None else b.numpy()
-                                  for b, v in zip(blocks, variables)]
+            # one backward pass per parameter entry, to all the variables at once
+            blocks = tape.jacobian(value, variables, experimental_use_pfor=False)
+            blocks = [np.zeros(tuple(value.shape) + tuple(v.shape)) if b is None else b.numpy()
+                      for b, v in zip(blocks, variables)]
+            jac[name], i = {}, 0
+            for key, vs in factors.items():
+                jac[name][key] = blocks[i:i + len(vs)]
+                i += len(vs)
         self.jacobian = jac
 
     @staticmethod

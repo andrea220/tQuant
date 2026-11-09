@@ -73,10 +73,15 @@ simulate on a uniform grid ending at the expiry and leave \code{standard\_error}
 \subsection{Calibration}\label{sec:arch-calibration}
 Calibration inside the factories (implicit-function greeks), the stored Jacobian, and the rates calibration module.
 
-The least-squares calibrations (Heston, displaced diffusion) run in NumPy / SciPy and end with one Newton step written
-in TensorFlow on the optimality condition: the value stays at the optimum and the gradient is the implicit-function
-one, $\mathrm{d}p/\mathrm{d}m = -H^{-1}\,\partial^2 L/\partial p\,\partial m$ (\code{\_implicit\_step}). Inside
-\code{from\_equity} this makes the parameters differentiable functions of the market; \code{calibrate} evaluates the same
-graph once and stores $\mathrm{d}p/\mathrm{d}m$ (\code{EquityModel.jacobian}), so that the par greeks of an instance
-equal the greeks through the calibration (\code{tests/test\_model\_instances.py}). The rates calibration
+The least-squares calibrations (Heston, displaced diffusion) run in NumPy / SciPy and end with the implicit step
+(\code{\_implicit\_step}, helpers in \code{numericalhandles/implicit.py}): at the optimum the gradient $g$ of the
+objective, its Hessian $H$ and $\partial g/\partial m$ for the calibration inputs $m$ (relative strikes, target prices,
+weights) are computed once, eagerly, as numbers (\code{optimality\_derivatives}: one backward pass per parameter);
+\code{implicit\_solution} returns the parameters as a tensor of $m$ with a custom gradient
+$\mathrm{d}p/\mathrm{d}m = -H^{-1}\,\partial g/\partial m$ (parameters on a bound fixed). The caller's tape never
+differentiates through the second-order graph of $g$ (first order only). Inside \code{from\_equity} this makes the
+parameters differentiable functions of the market; \code{calibrate} takes one Jacobian per parameter to all the risk
+factors and stores it (\code{EquityModel.jacobian}), so that the par greeks of an instance equal the greeks through the
+calibration (\code{tests/test\_model\_instances.py}). Calibration of TICKER1: Heston about 3~s (2~s once the COS
+residuals are compiled), displaced diffusion about 2~s. The rates calibration
 (\code{calibration/}) is a separate module (least squares with an AAD Jacobian). \pending

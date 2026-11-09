@@ -265,6 +265,20 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       LV / SLV greeks identical, Heston and DD par greeks through the stored Jacobian = AAD through the calibration
       (rtol 1e-6), serialization, by-hand models, argument checks. Full suite 265 tests green. Notebook `heston_slv`
       on the instances (SLV family for the barrier: one Heston calibration, `HestonSLVModel(heston_model, mixing=e)`).
+- [x] **Faster calibrations (implicit step precomputed)**: the implicit-function derivatives of the Heston and
+      displaced diffusion calibrations are computed once at the optimum, eagerly, as numbers (`numericalhandles/
+      implicit.py`: `optimality_derivatives` = g, H, dg/dz with one backward pass per parameter; `newton_step`;
+      `implicit_sensitivities` = -H^{-1} dg/dz with bounded parameters fixed; `implicit_solution` = parameters with a
+      custom gradient). Before, Heston traced a `tf.function` with the Hessian and differentiated it inside the
+      caller's tape (11.6 s of tracing on first use), and the DD Jacobian walked the second-order eager graph;
+      `EquityModel._record_calibration` takes one Jacobian per parameter to all the risk factors (was one per market
+      key). TICKER1 (snapshot): Heston 16.2 s -> 3.2 s first call (2.0 s once the COS residuals are compiled), DD
+      7.6 s -> 2.0 s. Checks: new calibration Jacobian pins (`TestCalibrationJacobianPins`: Heston on the pins market,
+      DD on a market with interior betas and non-zero residuals, sum and abs sum per parameter / key / variable,
+      pinned with the old code) unchanged to rtol 1e-8; parameter, price and greek pins unchanged to 1e-8 except the
+      SLV vanilla (1e-6: the Heston parameters move by ~1e-15 relative, eager vs compiled, and the particle leverage
+      amplifies it to ~4e-7, also in the old code); bump-and-recalibrate tests and par greeks = AAD unchanged. Only
+      first order through the calibration (as before, the Hessian was held constant).
 
 ## 5. Market data I/O
 

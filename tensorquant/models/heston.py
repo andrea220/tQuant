@@ -15,6 +15,7 @@ from .displaceddiffusion import _black_implied_vol
 from .equitymodel import EquityModel
 from .stochasticprocess import StochasticProcess
 from ..numericalhandles.dtypes import DTYPE
+from ..numericalhandles.implicit import implicit_sensitivities, implicit_solution, newton_step, optimality_derivatives
 
 HESTON_PARAMS = ("v0", "kappa", "theta", "xi", "rho")
 HESTON_BOUNDS = {"v0": (1e-4, 1.0), "kappa": (1e-2, 20.0), "theta": (1e-4, 1.0), "xi": (1e-2, 5.0), "rho": (-0.99, 0.99)}
@@ -533,43 +534,31 @@ def _residuals(x, k, t, market, weight, precise=False):
     return _RESIDUALS[precise](x, k, t, market, weight)
 
 
-@tf.function(input_signature=_SIGNATURE)
-def _gradient_and_hessian(x, k, t, market, weight):
-    """Gradient of the objective (differentiable w.r.t. the market inputs) and its Hessian (held constant).
-
-    The Hessian rows are gradients of the gradient components (one backward pass each)."""
-    with tf.GradientTape(persistent=True) as outer:
-        outer.watch(x)
-        with tf.GradientTape() as inner:
-            inner.watch(x)
-            loss = _objective(x, k, t, market, weight)
-        grad = inner.gradient(loss, x)
-        rows = [grad[j] for j in range(len(HESTON_PARAMS))]
-    hess = tf.stack([outer.gradient(r, x) for r in rows])
-    return grad, tf.stop_gradient(hess)
-
-
 def _implicit_step(theta: np.ndarray, lower, upper, k, t, market, weight) -> tf.Tensor:
     """Parameters as differentiable functions of the market (implicit function theorem).
 
     1. Value: one Newton step on the full-precision objective from the solver's point (which stops ~1e-8 away
        with a finite-difference Jacobian), kept only if small and inside the bounds (a near-degenerate Hessian,
        e.g. a flat smile, gives large steps along directions the prices do not see).
-    2. Derivative: ``s = H^{-1} grad_p L(p*, m)``, ``p(m) = p* - (s - stop_gradient(s))``: the value stays ``p*``
-       and ``dp/dm = -H^{-1} d grad / dm``, ``H`` the exact Hessian held constant. Parameters on a bound stay fixed.
+    2. Derivative: ``dp/dm = -H^{-1} d grad_p L / dm`` at that point, ``H`` the exact Hessian, computed once as
+       numbers (:mod:`~tensorquant.numericalhandles.implicit`) for ``m = (k, market, weight)`` and attached as the
+       gradient of the returned parameters. Parameters on a bound stay fixed.
     """
     free = ~(np.isclose(theta, lower) | np.isclose(theta, upper))
-    f = tf.constant(free.astype(float), DTYPE)
+    t_c = tf.constant(tf.convert_to_tensor(t, DTYPE).numpy())
 
-    def newton_step(x, grad, hess):
-        hess = hess * f[:, None] * f[None, :] + tf.linalg.diag(1.0 - f)
-        return tf.linalg.solve(hess, (grad * f)[:, None])[:, 0]
+    def gradient(x, k_, market_, weight_):
+        with tf.GradientTape() as tape:
+            tape.watch(x)
+            loss = _objective(x, k_, t_c, market_, weight_)
+        return tape.gradient(loss, x)
 
-    stopped = [tf.stop_gradient(v) for v in (k, t, market, weight)]
-    step = newton_step(tf.constant(theta, DTYPE), *_gradient_and_hessian(tf.constant(theta, DTYPE), *stopped)).numpy()
+    inputs = (k, market, weight)
+    held = [tf.constant(tf.convert_to_tensor(v, DTYPE).numpy()) for v in inputs]
+    g, hess, _ = optimality_derivatives(lambda x: gradient(x, *held), theta)
+    step = newton_step(g, hess, free)
     moved = theta - step
     if np.all(moved >= lower) and np.all(moved <= upper) and np.all(np.abs(step) <= 1e-4 * np.maximum(np.abs(theta), 1e-2)):
         theta = moved
-    x = tf.constant(theta, DTYPE)
-    step = newton_step(x, *_gradient_and_hessian(x, k, t, market, weight))
-    return x - (step - tf.stop_gradient(step))
+    _, hess, dg_dz = optimality_derivatives(gradient, theta, inputs)
+    return implicit_solution(theta, inputs, implicit_sensitivities(hess, dg_dz, free, theta.shape))
