@@ -1,4 +1,5 @@
 from .stochasticprocess import *
+from .equitymodel import *
 from .brownian import *
 from .localvolatility import *
 from .displaceddiffusion import *

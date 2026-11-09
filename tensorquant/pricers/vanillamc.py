@@ -8,6 +8,7 @@ from ..instruments.option import VanillaOption
 from ..markethandles.marketenvironment import MarketEnvironment
 from ..markethandles.utils import ExerciseType, PayoffType
 from ..models.brownian import GeometricBrownianMotion
+from ..models.equitymodel import bind, check_model
 from ..numericalhandles.dtypes import DTYPE
 from ..timehandles.utils import Settings
 
@@ -15,11 +16,14 @@ from ..timehandles.utils import Settings
 class VanillaMCPricer(Pricer):
     """Monte Carlo pricer for European :class:`VanillaOption`, :class:`DigitalOption` and :class:`BarrierOption` (float64).
 
-    The model is built from the market at every pricing call:
-    ``model.from_equity(market_env.get_equity(...), maturity, strike)``, so the
-    simulation inputs are the market risk factors and one
-    ``pricer.tape.gradient(product.price, market_env.risk_factors())`` gives
-    pathwise delta, vega per vol node, rho per pillar and dividend sensitivities.
+    The model is a **class** or an **instance** (:class:`EquityModel`):
+
+    - class: built from the market at every pricing call, ``model.from_equity(market_env.get_equity(...), maturity,
+      strike)``, calibration included, so one ``pricer.tape.gradient(product.price, market_env.risk_factors())`` gives
+      pathwise delta, vega per vol node (through the calibration), rho per pillar and dividend sensitivities;
+    - instance: bound to the underlying, ``model.process(equity)`` (its ticker must match): parameters held, model
+      greeks ``pricer.tape.gradient(product.price, model.parameters)``, market greeks through the forwards (and the
+      vol nodes for the models that read them at pricing); par greeks with :func:`par_greeks`.
 
     Paths are simulated on a uniform grid ending exactly at the option maturity (plus the monitoring dates of a
     discretely monitored barrier).
@@ -37,7 +41,8 @@ class VanillaMCPricer(Pricer):
     Args:
         model: Model class with a ``from_equity(equity, maturity, strike)`` factory
             (:class:`GeometricBrownianMotion`, :class:`LocalVolatilityModel`, :class:`DisplacedDiffusionModel`,
-            :class:`HestonModel`); ``model.noise_size()`` normals are drawn per path and step.
+            :class:`HestonModel`, :class:`HestonSLVModel`) or a model instance (:class:`EquityModel`); the process's
+            ``noise_size()`` normals are drawn per path and step.
         n_paths: Number of Monte Carlo paths.
         n_steps: Number of time steps up to maturity.
         seed: Seed of the stateless Gaussian draws.
@@ -54,17 +59,14 @@ class VanillaMCPricer(Pricer):
 
     def __init__(
         self,
-        model: type = GeometricBrownianMotion,
+        model=GeometricBrownianMotion,
         n_paths: int = 50_000,
         n_steps: int = 252,
         seed: int = 42,
         digital_smoothing: float = 0.01,
     ) -> None:
         super().__init__()
-        if not hasattr(model, "from_equity"):
-            raise TypeError(
-                f"model must be a model class with a from_equity factory, got {model!r}"
-            )
+        check_model(model)
         self._model = model
         self._n_paths = n_paths
         self._n_steps = n_steps
@@ -100,7 +102,7 @@ class VanillaMCPricer(Pricer):
         eq = market_env.get_equity(product.underlying, ccy=product.ccy)
         if eq.vol_surface is None:
             raise ValueError(f"No volatility surface for underlying '{product.underlying}'")
-        model = self._model.from_equity(eq, product.end_date, float(product.strike))
+        model = bind(self._model, eq, product.end_date, float(product.strike))
 
         daycounter = eq.vol_surface.daycounter
         T = daycounter.year_fraction(Settings.evaluation_date, product.end_date)

@@ -5,6 +5,7 @@ from .pricer import Pricer
 from ..instruments.autocallable import AutocallableOption
 from ..markethandles.marketenvironment import MarketEnvironment
 from ..models.localvolatility import LocalVolatilityModel
+from ..models.equitymodel import bind, check_model
 from ..numericalhandles.dtypes import DTYPE
 from ..timehandles.utils import Settings
 
@@ -16,9 +17,11 @@ class AutocallableMCPricer(Pricer):
     ``NPV = notional * E[ sum_i coupon_i P(0, pay_i) - put P(0, T) ]``,
     ``put = participation * max(K - S_T, 0) / K`` if ``S_T <= payoff barrier`` and not called.
 
-    The model is built from the market at every pricing call
-    (``model.from_equity(market_env.get_equity(product.underlying), maturity, strike)``),
-    so one ``pricer.tape.gradient(product.price, market_env.risk_factors())`` gives the greeks.
+    The model is a class, built from the market at every pricing call
+    (``model.from_equity(market_env.get_equity(product.underlying), maturity, strike)``, greeks through the
+    calibration: one ``pricer.tape.gradient(product.price, market_env.risk_factors())``), or an instance
+    (:class:`EquityModel`) bound with ``model.process(equity)`` (parameters held: model greeks on
+    ``model.parameters``, par greeks with :func:`par_greeks`); see :class:`VanillaMCPricer`.
     Paths are simulated (stateless seed) on the union of the future fixing dates and a uniform
     grid of step ``max_time_step``, with the vol-surface day count.
 
@@ -29,7 +32,7 @@ class AutocallableMCPricer(Pricer):
     exact (hard) payoff.
 
     Args:
-        model: Model class with ``from_equity`` (default :class:`LocalVolatilityModel`).
+        model: Model class with ``from_equity`` (default :class:`LocalVolatilityModel`) or a model instance.
         n_paths: Number of paths.
         seed: Seed of the stateless Gaussian draws.
         max_time_step: Largest simulation step (years).
@@ -43,15 +46,14 @@ class AutocallableMCPricer(Pricer):
 
     def __init__(
         self,
-        model: type = LocalVolatilityModel,
+        model=LocalVolatilityModel,
         n_paths: int = 20_000,
         seed: int = 42,
         max_time_step: float = 1.0 / 52.0,
         barrier_smoothing: float = 0.01,
     ) -> None:
         super().__init__()
-        if not hasattr(model, "from_equity"):
-            raise TypeError(f"model must be a model class with a from_equity factory, got {model!r}")
+        check_model(model)
         if barrier_smoothing < 0:
             raise ValueError("barrier_smoothing must be >= 0")
         self._model = model
@@ -100,7 +102,7 @@ class AutocallableMCPricer(Pricer):
         time_grid = np.unique(np.concatenate([uniform, fixing_times]))
         column = {d: i for i, d in enumerate(fixings)}     # paths are returned at the fixings only
 
-        model = self._model.from_equity(eq, product.end_date, float(product.strike))
+        model = bind(self._model, eq, product.end_date, float(product.strike))
         k = model.noise_size()
         dw = tf.random.stateless_normal([self._n_paths, len(time_grid)] + ([k] if k > 1 else []),
                                         seed=[self._seed, 0], dtype=DTYPE)

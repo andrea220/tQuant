@@ -33,8 +33,7 @@ def normals(n_paths, n_steps, seed=1):
 
 def slv(eq, mixing=1.0, **kwargs):
     """SLV on given Heston parameters (TRUTH) and the local vol of *eq*: no calibration."""
-    return tq.HestonSLVModel(eq, tq.HestonModel(eq, **TRUTH), tq.LocalVolatilityModel.from_equity(eq),
-                             mixing=mixing, **kwargs)
+    return tq.HestonSLVModel(tq.HestonModel(**TRUTH), mixing=mixing, **kwargs).process(eq)
 
 
 def autocallable(strike, underlying):
@@ -101,12 +100,11 @@ class TestModel(unittest.TestCase):
 
     def test_invalid_inputs(self):
         eq = heston_market().get_equity("HES")
-        heston = tq.HestonModel(eq, **TRUTH)
-        lv = tq.LocalVolatilityModel.from_equity(eq)
+        heston = tq.HestonModel(**TRUTH)
         for kwargs in (dict(mixing=0.0), dict(mixing=1.5), dict(n_nodes=1)):
             with self.assertRaises(ValueError):
-                tq.HestonSLVModel(eq, heston, lv, **kwargs)
-        model = tq.HestonSLVModel(eq, heston, lv)
+                tq.HestonSLVModel(heston, **kwargs)
+        model = tq.HestonSLVModel(heston).process(eq)
         self.assertEqual((model.size(), model.noise_size()), (2, 2))
         with self.assertRaises(ValueError):
             model.evolve([0.5, 1.0], tf.zeros([1000, 2], tf.float64))

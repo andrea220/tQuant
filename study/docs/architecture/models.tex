@@ -2,8 +2,8 @@
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Stochastic processes}\label{sec:arch-models}
-\code{StochasticProcess} (\code{size}, \code{initial\_values}, \code{noise\_size}, \code{evolve}) and the
-\code{from\_equity} factories used by the Monte Carlo pricers.
+\code{StochasticProcess} (\code{size}, \code{initial\_values}, \code{noise\_size}, \code{evolve}): the interface of
+everything the Monte Carlo pricers simulate.
 
 Common interface: \code{StochasticProcess} (\code{models/stochasticprocess.py}).
 \begin{itemize}[nosep]
@@ -15,15 +15,68 @@ Common interface: \code{StochasticProcess} (\code{models/stochasticprocess.py}).
 \end{itemize}
 The caller draws the normals
 (\code{tf.random.stateless\_normal} with a seed), which makes the paths reproducible and the bumps common-random-number
-ones. Equity models have a \code{from\_equity(equity, maturity, strike)} factory that builds them from the market
-variables, so the simulation is differentiable w.r.t.\ them. They are the GBM (\code{GeometricBrownianMotion},
-exact steps), local vol, displaced diffusion, Heston and Heston SLV.
-\code{VanillaMCPricer(model, n\_paths, n\_steps, seed, digital\_smoothing)} takes the model \emph{class}, calls
-\code{from\_equity} at each price, simulates on a uniform grid ending at the expiry and leaves
-\code{standard\_error}, \code{discount\_factor} and \code{time\_to\_maturity} on the product. \nb{monte\_carlo\_gbm.ipynb}
+ones. \nb{monte\_carlo\_gbm.ipynb}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Models and processes}\label{sec:arch-equity-models}
+Equity model instances (\code{EquityModel}) separate from the market, bound to an \code{Equity} into a process.
+
+An equity model (\code{models/equitymodel.py}) holds \emph{settings} (how it is built) and \emph{calibrated parameters}
+(float64 \code{tf.Variable}s), never the market: the underlying is given to the calibration and to the binding.
+\begin{itemize}[nosep]
+  \item \code{Model.calibrate(equity, **settings)}: an instance with the parameters, the fit \code{report}, the
+        \code{ticker} and \code{calibration\_date}, and the calibration \code{jacobian}
+        $\{\text{parameter}: \{\text{market key}: [\partial p / \partial\,\text{variable}]\}\}$ with the keys of
+        \code{Equity.risk\_factors()} (computed by \code{tape.jacobian} through the differentiable calibration);
+        \code{Model(**parameters)} by hand: no Jacobian;
+  \item \code{model.process(equity)}: a new \code{StochasticProcess} (\code{XxxProcess}, the model is not modified)
+        that rebuilds the market-dependent part (forwards, local vol grid, leverage) and simulates; the closed forms
+        (\code{vanilla\_price}, \code{implied\_vol}) live on the process;
+  \item \code{Model.from\_equity(equity, maturity, strike)}: a process calibrated inside the caller's tape (greeks
+        through the calibration), the factory the pricers use when given the class;
+  \item \code{model.parameters} (model greeks);\\
+        \code{par\_greeks(model, model\_greeks, market\_greeks)}
+        ($\partial V/\partial m = \partial V/\partial m|_{\text{direct}} + \sum_p \partial V/\partial p\,\partial p/\partial m$),
+        \code{to\_frames()} / \code{from\_frames()} (settings, parameters, Jacobian in long format, report: exact round
+        trip; JSON values for the settings).
+\end{itemize}
+
+\begin{center}
+\footnotesize
+\begin{tabular}{llll}
+  \toprule
+  model & settings & parameters & process \\
+  \midrule
+  \code{LocalVolatilityModel} & grid, wings, $g$ floor & none (vegas direct) & \code{LocalVolatilityProcess} \\
+  \code{HestonModel} & martingale correction & $v_0, \kappa, \theta, \xi, \rho$ & \code{HestonProcess} \\
+  \code{DisplacedDiffusionModel} & slice parameters & $\beta, \sigma$ per piece & \code{DisplacedDiffusionProcess} \\
+  \code{HestonSLVModel} & mixing, smoother, cap & none (Heston held) & \code{HestonSLVProcess} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+\code{HestonSLVModel} composes a \code{HestonModel} and a \code{LocalVolatilityModel}; its tables nest theirs
+(\code{heston.*}, \code{local\_vol.*}). \code{GeometricBrownianMotion} stays a process with an option-specific
+\code{from\_equity} (vol at $(K, T)$).
+
+The Monte Carlo pricers (\code{VanillaMCPricer}, \code{AutocallableMCPricer}) take a model class or an instance
+(\code{check\_model}, \code{bind}): a class is calibrated at each price inside the tape (\code{from\_equity}); an
+instance is bound with \code{process(equity)}, its ticker checked against the product's underlying. One backward pass
+on a nested structure gives model and market greeks:
+\begin{center}
+  \code{pricer.tape.gradient(price, \{"model": params, "market": factors\})},
+\end{center}
+with \code{params = model.parameters} and \code{factors = equity.risk\_factors()}. The pricers
+simulate on a uniform grid ending at the expiry and leave \code{standard\_error}, \code{discount\_factor} and
+\code{time\_to\_maturity} on the product. \nb{heston\_slv.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Calibration}\label{sec:arch-calibration}
-Calibration inside the factories (implicit-function greeks) and the rates calibration module.
+Calibration inside the factories (implicit-function greeks), the stored Jacobian, and the rates calibration module.
 
-\pending
+The least-squares calibrations (Heston, displaced diffusion) run in NumPy / SciPy and end with one Newton step written
+in TensorFlow on the optimality condition: the value stays at the optimum and the gradient is the implicit-function
+one, $\mathrm{d}p/\mathrm{d}m = -H^{-1}\,\partial^2 L/\partial p\,\partial m$ (\code{\_implicit\_step}). Inside
+\code{from\_equity} this makes the parameters differentiable functions of the market; \code{calibrate} evaluates the same
+graph once and stores $\mathrm{d}p/\mathrm{d}m$ (\code{EquityModel.jacobian}), so that the par greeks of an instance
+equal the greeks through the calibration (\code{tests/test\_model\_instances.py}). The rates calibration
+(\code{calibration/}) is a separate module (least squares with an AAD Jacobian). \pending

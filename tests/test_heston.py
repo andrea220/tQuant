@@ -60,7 +60,7 @@ def heston_market(params=TRUTH) -> MarketEnvironment:
         "IR:EUR:ESTR:SPOT": tq.RateCurve(EVAL_DATE, [0.5, 1.0, 2.0, 5.0], [0.020, 0.022, 0.024, 0.026], "LINEAR", A365),
         "EQ:EUR:HES:SPOT": S0, "EQ:EUR:HES:REPO": 0.005, "EQ:EUR:HES:DIVYIELD": 0.02, "EQ:EUR:HES:VOL": surface,
     })
-    truth = HestonModel(mkt.get_equity("HES"), **params)
+    truth = HestonModel(**params).process(mkt.get_equity("HES"))
     surface.volatility_matrix.assign([[truth.implied_vol(K, T) for K in STRIKES] for T in MATURITIES])
     return mkt
 
@@ -97,12 +97,12 @@ class TestClosedForm(unittest.TestCase):
 
     @slow
     def test_negative_rho_gives_negative_skew(self):
-        model = HestonModel(heston_market().get_equity("HES"), **TRUTH)
+        model = HestonModel(**TRUTH).process(heston_market().get_equity("HES"))
         vols = [model.implied_vol(K, 1.0) for K in (80.0, 100.0, 120.0)]
         self.assertGreater(vols[0], vols[1])
         self.assertGreater(vols[1], vols[2])
         with self.assertRaises(ValueError):
-            HestonModel(model._equity, **dict(TRUTH, rho=-1.0))
+            HestonModel(**dict(TRUTH, rho=-1.0))
 
 
 class TestCalibration(unittest.TestCase):
@@ -190,7 +190,7 @@ class TestMonteCarlo(unittest.TestCase):
     def test_qe_vs_closed_form(self):
         """QE-M with 26 steps a year: calls at 70/100/130% within 3 SE of the COS price (Feller violated)."""
         mkt = heston_market()
-        model = HestonModel(mkt.get_equity("HES"), **TRUTH, martingale_correction=False)
+        model = HestonModel(**TRUTH, martingale_correction=False).process(mkt.get_equity("HES"))
         self.assertLess(model.feller, 0.0)
         grid = np.arange(1, 53) / 26.0
         dw = tf.random.stateless_normal([self.N, len(grid), 2], seed=[3, 0], dtype=tf.float64)
@@ -208,7 +208,7 @@ class TestMonteCarlo(unittest.TestCase):
         times = [0.25, 0.5, 1.0]
         dw = tf.random.stateless_normal([self.N, 3, 2], seed=[5, 0], dtype=tf.float64)
         for correction in (False, True):
-            paths = HestonModel(eq, **TRUTH, martingale_correction=correction).evolve(times, dw).numpy()
+            paths = HestonModel(**TRUTH, martingale_correction=correction).process(eq).evolve(times, dw).numpy()
             for col, t in enumerate(times):
                 F = float(eq.forward(t))
                 with self.subTest(correction=correction, t=t):
@@ -220,7 +220,7 @@ class TestMonteCarlo(unittest.TestCase):
     @slow
     def test_variance_moments_and_shapes(self):
         """E[v_t] = theta + (v0 - theta) e^{-kappa t} within 3 SE, v >= 0; noise_size 2, dw shape checked."""
-        model = HestonModel(heston_market().get_equity("HES"), **TRUTH)
+        model = HestonModel(**TRUTH).process(heston_market().get_equity("HES"))
         self.assertEqual((model.size(), model.noise_size()), (2, 2))
         grid = np.arange(1, 27) / 26.0
         _, v = model.simulate(grid, tf.random.stateless_normal([self.N, 26, 2], seed=[7, 0], dtype=tf.float64))

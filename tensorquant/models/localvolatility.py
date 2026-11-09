@@ -4,6 +4,7 @@ from typing import Sequence, Union
 import numpy as np
 import tensorflow as tf
 
+from .equitymodel import EquityModel
 from .stochasticprocess import StochasticProcess
 from .brownian import observation_columns
 from ..numericalhandles.dtypes import DTYPE
@@ -176,14 +177,15 @@ def _simulate_forward_ratio(sigma_ty, lv_t, lv_y, t_grid, dw):
 # LocalVolatilityModel
 # ============================================================
 
-class LocalVolatilityModel(StochasticProcess):
-    """Local volatility equity model on the market forward (Gatheral's formula, forward moneyness).
+class LocalVolatilityProcess(StochasticProcess):
+    """Local volatility process on the market forward (Gatheral's formula, forward moneyness): the
+    :class:`LocalVolatilityModel` bound to an :class:`Equity`.
 
     ``S_t = F(t) X_t`` with ``F(t) = equity.forward(t)`` and
     ``d ln X = -sigma^2/2 dt + sigma dW``, ``sigma = sigma_loc(t, ln X)`` from
-    :func:`gatheral_local_vol` on the market vol nodes. Build it with :meth:`from_equity`
-    (``VanillaMCPricer`` / ``AutocallableMCPricer`` do it at every price); everything is
-    differentiable w.r.t. the vol nodes, spot, repo, dividends and discount curve.
+    :func:`gatheral_local_vol` on the market vol nodes. Built by :meth:`LocalVolatilityModel.process` (or
+    :meth:`from_equity`) inside the pricing tape; everything is differentiable w.r.t. the vol nodes, spot, repo,
+    dividends and discount curve.
     """
 
     def __init__(self, equity, sigma_ty, lv_t, lv_y, martingale_correction: bool = True, arbitrage: dict = None):
@@ -217,8 +219,8 @@ class LocalVolatilityModel(StochasticProcess):
         max_wing_slope: float = 1.9,
         g_floor: float = 1e-3,
         martingale_correction: bool = True,
-    ) -> "LocalVolatilityModel":
-        """Local vol model of *equity* on the market forward (differentiable w.r.t. the market).
+    ) -> "LocalVolatilityProcess":
+        """Local vol process of *equity* on the market forward (differentiable w.r.t. the market).
 
         Simulates ``X_t = S_t / F(t)`` with ``F(t) = equity.forward(t)`` (spot, repo, dividends,
         discount curve) and returns ``S_t = F(t) X_t``: the forward is the market one at every
@@ -242,7 +244,7 @@ class LocalVolatilityModel(StochasticProcess):
                 time, so the MC forward equals ``F(t)`` exactly (removes the forward noise).
 
         Returns:
-            LocalVolatilityModel: Model in forward mode.
+            LocalVolatilityProcess: Process in forward mode.
 
         Raises:
             ValueError: If the underlying has no vol surface.
@@ -337,3 +339,44 @@ class LocalVolatilityModel(StochasticProcess):
             x = x / tf.reduce_mean(x, axis=0, keepdims=True)
         forwards = tf.stack([self._forward(t) for t in times])
         return x * forwards[None, :]
+
+
+class LocalVolatilityModel(EquityModel):
+    """Local volatility model (Dupire-Gatheral on the market forward): settings only, no calibrated parameters.
+
+    The local vol is a function of the market vol surface, rebuilt by :meth:`process` from the vol nodes of the
+    equity at every pricing (inside the pricing tape): the vega per node comes straight from the AAD, already a par
+    greek, and :attr:`jacobian` stays ``None``.
+
+    Settings: ``n_y`` (points of the forward log-moneyness grid), ``y_range`` (its range, ``ln(K/F)``), ``time_step``,
+    ``max_wing_slope`` (Lee clip outside the strike nodes), ``g_floor`` (floor on the butterfly factor),
+    ``martingale_correction`` (sample mean of ``X_t`` rescaled to 1). See :meth:`LocalVolatilityProcess.from_equity`.
+
+    Example::
+
+        model = tq.LocalVolatilityModel()                                  # or LocalVolatilityModel(n_y=400)
+        tq.VanillaMCPricer(model=model).price(option, market_env)
+    """
+
+    SETTINGS = {"n_y": 300, "y_range": [float(np.log(0.05)), float(np.log(5.0))], "time_step": 1.0 / 96.0,
+                "max_wing_slope": 1.9, "g_floor": 1e-3, "martingale_correction": True}
+
+    def process(self, equity) -> LocalVolatilityProcess:
+        s = self.settings
+        return LocalVolatilityProcess.from_equity(
+            equity, n_y=int(s["n_y"]), y_range=tuple(s["y_range"]), time_step=float(s["time_step"]),
+            max_wing_slope=float(s["max_wing_slope"]), g_floor=float(s["g_floor"]),
+            martingale_correction=bool(s["martingale_correction"]))
+
+    @classmethod
+    def calibrate(cls, equity, **settings) -> "LocalVolatilityModel":
+        """Nothing to fit: records the settings and the underlying (the local vol is rebuilt at every pricing)."""
+        model = cls(**settings)
+        model._record_calibration(equity, {}, None)
+        return model
+
+    @classmethod
+    def from_equity(cls, equity, maturity: Union[date, float] = None, strike: float = None,
+                    **settings) -> LocalVolatilityProcess:
+        """Local vol process of *equity* (``maturity`` and ``strike`` unused: factory signature of the pricers)."""
+        return cls(**settings).process(equity)

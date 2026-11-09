@@ -249,6 +249,22 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
 - [x] `examples/local_vol.py` / `local_vol_mdm.py`: one analysis (`analyse_local_vol` in `local_vol.py`, reused by
       `local_vol_mdm.py`): `from_equity` per maturity, MC forward vs `Equity.forward`, MC implied vols of OTM
       options vs market at every node with SE (removed `std(log S_T)/√T` "ATM vol" and `BS(σ_loc)` "reprice error").
+- [x] **Equity models as instances, separate from the market** (part 1 of the `tqstudio` design in `ROADMAP.md`):
+      `models/equitymodel.py` `EquityModel` (settings + calibrated parameters as float64 `tf.Variable`s, no `Equity`):
+      `Model.calibrate(equity)` (parameters, report, ticker, date, calibration Jacobian `dp/d(market risk factors)` by
+      `tape.jacobian` through the differentiable calibration), `Model(**parameters)` by hand (no Jacobian),
+      `model.process(equity)` → bound process, `Model.from_equity` = process calibrated inside the caller's tape
+      (unchanged behaviour), `par_greeks`, `to_frames` / `from_frames` (exact round trip). The former model classes
+      are the processes (`LocalVolatilityProcess`, `HestonProcess`, `DisplacedDiffusionProcess`, `HestonSLVProcess`,
+      same numerical code); new `LocalVolatilityModel` (settings only, vegas direct), `HestonModel`,
+      `DisplacedDiffusionModel` (slice parameters as settings), `HestonSLVModel` (a `HestonModel` + a
+      `LocalVolatilityModel`, Heston held). `VanillaMCPricer` / `AutocallableMCPricer` take a class (as before) or an
+      instance (`bind`: ticker checked). GBM unchanged (option-specific factory). Checks: `tests/test_model_pins.py`
+      (prices, delta, vega of the four classes and the autocallable, calibrated Heston / DD parameters, pinned before
+      the change) unchanged to rtol 1e-8; `tests/test_model_instances.py`: instance price = class price (Heston 1e-12),
+      LV / SLV greeks identical, Heston and DD par greeks through the stored Jacobian = AAD through the calibration
+      (rtol 1e-6), serialization, by-hand models, argument checks. Full suite 265 tests green. Notebook `heston_slv`
+      on the instances (SLV family for the barrier: one Heston calibration, `HestonSLVModel(heston_model, mixing=e)`).
 
 ## 5. Market data I/O
 

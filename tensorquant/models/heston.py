@@ -12,6 +12,7 @@ from scipy.optimize import least_squares
 
 from .brownian import observation_columns
 from .displaceddiffusion import _black_implied_vol
+from .equitymodel import EquityModel
 from .stochasticprocess import StochasticProcess
 from ..numericalhandles.dtypes import DTYPE
 
@@ -178,18 +179,20 @@ def _simulate_qe(rows, v0, dw):
 
 
 # ============================================================
-# HestonModel
+# HestonProcess
 # ============================================================
 
-class HestonModel(StochasticProcess):
-    """Heston stochastic volatility equity model on the market forward.
+class HestonProcess(StochasticProcess):
+    """Heston stochastic volatility process on the market forward: the :class:`HestonModel` bound to an
+    :class:`Equity` (or calibrated inside the caller's tape by :meth:`from_equity`).
 
     ``S_t = F(t) X_t`` with ``F(t) = equity.forward(t)`` (spot, repo, dividends, discount curve) and::
 
         dX / X = sqrt(v) dW_1,   dv = kappa (theta - v) dt + xi sqrt(v) dW_2,   d<W_1, W_2> = rho dt,
 
     ``X_0 = 1``, ``v_0 = v0`` (time-homogeneous parameters; discrete dividends act as proportional drops).
-    Build it with :meth:`from_equity` (calibrated to the vol surface) or from given parameters.
+    Built by :meth:`HestonModel.process` (parameters held: model greeks) or by :meth:`from_equity` (calibrated to the
+    vol surface inside the caller's tape: greeks through the calibration).
 
     - closed form: :func:`heston_price` (characteristic function in the stable form, COS method);
     - calibration: least squares on the prices of the whole surface, each slice scaled by its ATM vega (a
@@ -228,7 +231,7 @@ class HestonModel(StochasticProcess):
 
     @classmethod
     def from_equity(cls, equity, maturity: Union[date, float] = None, strike: float = None,
-                    martingale_correction: bool = True, initial: dict = None) -> "HestonModel":
+                    martingale_correction: bool = True, initial: dict = None) -> "HestonProcess":
         """Calibrate the Heston parameters to the vol surface of *equity* (differentiable w.r.t. the market).
 
         Args:
@@ -239,7 +242,7 @@ class HestonModel(StochasticProcess):
                 ``xi = 0.5``, ``rho = -0.6``).
 
         Returns:
-            HestonModel: Calibrated model; :attr:`parameters`, :attr:`feller`, :attr:`calibration` (report).
+            HestonProcess: Calibrated process; :attr:`parameters`, :attr:`feller`, :attr:`calibration` (report).
 
         Raises:
             ValueError: If the underlying has no lognormal vol surface.
@@ -403,6 +406,84 @@ class HestonModel(StochasticProcess):
             x = x / tf.reduce_mean(x, axis=0, keepdims=True)
         forwards = tf.stack([tf.cast(self._equity.forward(float(v)), DTYPE) for v in times])
         return x * forwards[None, :]
+
+
+class HestonModel(EquityModel):
+    """Heston model instance: the five parameters as float64 ``tf.Variable``s, no market.
+
+    ``dX / X = sqrt(v) dW_1``, ``dv = kappa (theta - v) dt + xi sqrt(v) dW_2``, ``d<W_1, W_2> = rho dt`` on the
+    market forward of the equity given to :meth:`process`. Build it by hand (``HestonModel(v0=..., ...)``: no
+    Jacobian) or with :meth:`calibrate` (least squares on the whole vol surface, see :meth:`HestonProcess.from_equity`;
+    stores the report and the calibration Jacobian ``dp / d(market inputs)`` for :func:`par_greeks`).
+
+    Example::
+
+        model = tq.HestonModel.calibrate(market_env.get_equity("SX5E"))
+        pricer = tq.VanillaMCPricer(model=model)
+        pricer.price(option, market_env)
+        model_greeks = pricer.tape.gradient(option.price, model.parameters)
+    """
+
+    SETTINGS = {"martingale_correction": True}
+
+    def __init__(self, v0, kappa, theta, xi, rho, **settings):
+        """Args:
+            v0, kappa, theta, xi, rho: Heston parameters (numbers or tensors: their values are taken).
+            **settings: ``martingale_correction`` (sample mean of ``X_t`` rescaled to 1).
+
+        Raises:
+            ValueError: If a parameter is outside its natural range.
+        """
+        super().__init__(**settings)
+        values = {n: float(np.asarray(tf.stop_gradient(v)) if tf.is_tensor(v) else v)
+                  for n, v in zip(HESTON_PARAMS, (v0, kappa, theta, xi, rho))}
+        if min(values["v0"], values["kappa"], values["theta"], values["xi"]) <= 0.0 or abs(values["rho"]) >= 1.0:
+            raise ValueError(f"invalid Heston parameters {values}")
+        self._p = {n: self._variable(v, f"heston_{n}") for n, v in values.items()}
+
+    @property
+    def parameters(self) -> dict:
+        """``{v0, kappa, theta, xi, rho}`` as float64 ``tf.Variable``s (model greeks: ``tape.gradient(price,
+        model.parameters)``)."""
+        return dict(self._p)
+
+    @property
+    def feller(self) -> float:
+        """``2 kappa theta - xi^2`` (>= 0: the variance does not reach 0)."""
+        p = {n: float(v) for n, v in self._p.items()}
+        return 2.0 * p["kappa"] * p["theta"] - p["xi"] ** 2
+
+    def process(self, equity) -> HestonProcess:
+        return HestonProcess(equity, *[self._p[n] for n in HESTON_PARAMS],
+                             martingale_correction=bool(self.settings["martingale_correction"]))
+
+    @classmethod
+    def calibrate(cls, equity, initial: dict = None, **settings) -> "HestonModel":
+        """Calibrate to the vol surface of *equity* (as :meth:`HestonProcess.from_equity`) and store the parameters,
+        the report and the Jacobian of the parameters w.r.t. the market risk factors of *equity*.
+
+        Args:
+            equity (Equity): The underlying.
+            initial (dict, optional): Starting parameters of the search.
+            **settings: Model settings.
+        """
+        with tf.GradientTape(persistent=True) as tape:
+            fitted = HestonProcess.from_equity(equity, initial=initial)
+            params = fitted.parameters
+        model = cls(**params, **settings)
+        model._record_calibration(equity, params, tape, report=fitted.calibration)
+        return model
+
+    @classmethod
+    def from_equity(cls, equity, maturity: Union[date, float] = None, strike: float = None, initial: dict = None,
+                    **settings) -> HestonProcess:
+        """Process calibrated inside the caller's tape (greeks through the calibration): :meth:`HestonProcess.from_equity`."""
+        return HestonProcess.from_equity(equity, maturity, strike, initial=initial,
+                                         martingale_correction=settings.get("martingale_correction", True))
+
+    @classmethod
+    def _from_values(cls, values: dict, settings: dict, frames: dict) -> "HestonModel":
+        return cls(**{n: float(values[n][0]) for n in HESTON_PARAMS}, **settings)
 
 
 # ============================================================

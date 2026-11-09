@@ -13,6 +13,7 @@ from scipy.optimize import brentq, least_squares
 from scipy.stats import norm
 
 from .brownian import observation_columns
+from .equitymodel import EquityModel
 from .stochasticprocess import StochasticProcess
 from ..numericalhandles.dtypes import DTYPE
 
@@ -158,13 +159,14 @@ def _simulate_ratio(beta, step_sd, dw):
 # DisplacedDiffusionModel
 # ============================================================
 
-class DisplacedDiffusionModel(StochasticProcess):
-    """Displaced diffusion (shifted lognormal) equity model on the market forward.
+class DisplacedDiffusionProcess(StochasticProcess):
+    """Displaced diffusion (shifted lognormal) process on the market forward: the :class:`DisplacedDiffusionModel`
+    bound to an :class:`Equity` (or calibrated inside the caller's tape by :meth:`from_equity`).
 
     ``S_t = F(t) X_t`` with ``F(t) = equity.forward(t)`` and ``dX = sigma(t) (beta(t) X + 1 - beta(t)) dW``,
     ``X_0 = 1``: ``beta = 1`` is lognormal, ``beta -> 0`` normal, ``beta < 1`` a negative equity skew.
     ``beta(t)``, ``sigma(t)`` are piecewise constant between the maturities of the vol surface (forward
-    parameters). Build it with :meth:`from_equity`:
+    parameters). :meth:`from_equity` calibrates it:
 
     1. slice calibration: per surface maturity, ``(beta_T, sigma_T)`` of the closed form
        :func:`displaced_diffusion_price` fitted to the market smile by least squares on the prices per unit
@@ -230,7 +232,7 @@ class DisplacedDiffusionModel(StochasticProcess):
 
     @classmethod
     def from_equity(cls, equity, maturity: Union[date, float] = None, strike: float = None,
-                    martingale_correction: bool = True) -> "DisplacedDiffusionModel":
+                    martingale_correction: bool = True) -> "DisplacedDiffusionProcess":
         """Calibrate the model to the vol surface of *equity* (differentiable w.r.t. the market).
 
         Args:
@@ -239,7 +241,7 @@ class DisplacedDiffusionModel(StochasticProcess):
             martingale_correction (bool): Rescale the simulated ``X_t`` to sample mean 1 at each time.
 
         Returns:
-            DisplacedDiffusionModel: Calibrated model; :attr:`calibration` reports the fit per maturity.
+            DisplacedDiffusionProcess: Calibrated process; :attr:`calibration` reports the fit per maturity.
 
         Raises:
             ValueError: If the underlying has no lognormal vol surface, or the forward betas are not positive.
@@ -365,6 +367,74 @@ class DisplacedDiffusionModel(StochasticProcess):
             x = x / tf.reduce_mean(x, axis=0, keepdims=True)
         forwards = tf.stack([tf.cast(self._equity.forward(float(v)), DTYPE) for v in times])
         return x * forwards[None, :]
+
+
+class DisplacedDiffusionModel(EquityModel):
+    """Displaced diffusion model instance: forward parameters ``beta(t)``, ``sigma(t)`` piecewise constant on
+    ``t_nodes`` (float64 ``tf.Variable``s ``[n]``), no market.
+
+    ``dX = sigma(t) (beta(t) X + 1 - beta(t)) dW`` on the market forward of the equity given to :meth:`process`.
+    Build it by hand (no Jacobian) or with :meth:`calibrate` (slice fit + skew averaging, see
+    :meth:`DisplacedDiffusionProcess.from_equity`; stores the report, the slice parameters of the closed form and the
+    calibration Jacobian for :func:`par_greeks`).
+    """
+
+    SETTINGS = {"t_nodes": None, "beta_slice": None, "sigma_slice": None, "martingale_correction": True}
+
+    def __init__(self, t_nodes, beta_fwd, sigma_fwd, **settings):
+        """Args:
+            t_nodes: ``[n]`` piece ends (year fractions, increasing).
+            beta_fwd, sigma_fwd: ``[n]`` forward parameters per piece (numbers or tensors: their values are taken).
+            **settings: ``beta_slice`` / ``sigma_slice`` (slice parameters of the closed form, default averaged from
+                the pieces), ``martingale_correction``.
+        """
+        t_nodes = [float(v) for v in np.ravel(t_nodes)]
+        for key in ("beta_slice", "sigma_slice"):
+            if settings.get(key) is not None:
+                value = settings[key]
+                value = np.asarray(tf.stop_gradient(value)) if tf.is_tensor(value) else np.asarray(value, dtype=float)
+                settings[key] = [float(v) for v in np.ravel(value)]
+        super().__init__(t_nodes=t_nodes, **settings)
+        beta = np.ravel(np.asarray(tf.stop_gradient(beta_fwd) if tf.is_tensor(beta_fwd) else beta_fwd, dtype=float))
+        sigma = np.ravel(np.asarray(tf.stop_gradient(sigma_fwd) if tf.is_tensor(sigma_fwd) else sigma_fwd, dtype=float))
+        self._beta = self._variable(beta, "dd_beta_fwd")
+        self._sigma = self._variable(sigma, "dd_sigma_fwd")
+
+    @property
+    def parameters(self) -> dict:
+        """``{beta_fwd, sigma_fwd}`` ``[n]`` as float64 ``tf.Variable``s."""
+        return {"beta_fwd": self._beta, "sigma_fwd": self._sigma}
+
+    def process(self, equity) -> DisplacedDiffusionProcess:
+        s = self.settings
+        return DisplacedDiffusionProcess(equity, s["t_nodes"], self._beta, self._sigma, s["beta_slice"],
+                                         s["sigma_slice"], bool(s["martingale_correction"]))
+
+    @classmethod
+    def calibrate(cls, equity, **settings) -> "DisplacedDiffusionModel":
+        """Calibrate to the vol surface of *equity* (as :meth:`DisplacedDiffusionProcess.from_equity`) and store the
+        forward and slice parameters, the report and the Jacobian w.r.t. the market risk factors of *equity*."""
+        with tf.GradientTape(persistent=True) as tape:
+            fitted = DisplacedDiffusionProcess.from_equity(equity)
+            beta_fwd, sigma_fwd = fitted.forward_parameters
+        beta_slice, sigma_slice = fitted.slice_parameters
+        model = cls(fitted.t_nodes, beta_fwd, sigma_fwd, beta_slice=beta_slice, sigma_slice=sigma_slice, **settings)
+        model._record_calibration(equity, {"beta_fwd": beta_fwd, "sigma_fwd": sigma_fwd}, tape,
+                                  report=fitted.calibration)
+        return model
+
+    @classmethod
+    def from_equity(cls, equity, maturity: Union[date, float] = None, strike: float = None,
+                    **settings) -> DisplacedDiffusionProcess:
+        """Process calibrated inside the caller's tape (greeks through the calibration)."""
+        return DisplacedDiffusionProcess.from_equity(equity, maturity, strike,
+                                                     martingale_correction=settings.get("martingale_correction", True))
+
+    @classmethod
+    def _from_values(cls, values: dict, settings: dict, frames: dict) -> "DisplacedDiffusionModel":
+        settings = dict(settings)
+        t_nodes = settings.pop("t_nodes")
+        return cls(t_nodes, values["beta_fwd"], values["sigma_fwd"], **settings)
 
 
 # ============================================================

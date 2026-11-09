@@ -9,8 +9,9 @@ import numpy as np
 import tensorflow as tf
 
 from .brownian import observation_columns
-from .heston import HestonModel, _f64
-from .localvolatility import LocalVolatilityModel, _rows_at
+from .equitymodel import EquityModel
+from .heston import HestonModel, HestonProcess, _f64
+from .localvolatility import LocalVolatilityModel, LocalVolatilityProcess, _rows_at
 from .stochasticprocess import StochasticProcess
 from ..numericalhandles.dtypes import DTYPE
 
@@ -114,8 +115,9 @@ def _simulate_slv(rows, sigma_rows, lv_y, v0, dw, n_nodes, max_leverage, keep_al
     return (tf.transpose(xs.stack()),)
 
 
-class HestonSLVModel(StochasticProcess):
-    """Heston stochastic local volatility on the market forward.
+class HestonSLVProcess(StochasticProcess):
+    """Heston stochastic local volatility process on the market forward: the :class:`HestonSLVModel` bound to an
+    :class:`Equity` (or built from the market inside the caller's tape by :meth:`from_equity`).
 
     ``S_t = F(t) X_t`` with ``F(t) = equity.forward(t)`` and::
 
@@ -140,14 +142,14 @@ class HestonSLVModel(StochasticProcess):
     parameters held, ``E`` depends on the market only through the particle positions (not differentiated).
     """
 
-    def __init__(self, equity, heston: HestonModel, local_vol: LocalVolatilityModel, mixing: float = 1.0,
+    def __init__(self, equity, heston: HestonProcess, local_vol: LocalVolatilityProcess, mixing: float = 1.0,
                  n_nodes: int = 100, martingale_correction: bool = True, max_leverage: float = 10.0):
-        """Use :meth:`from_equity`, or give the two calibrated components.
+        """Built by :meth:`HestonSLVModel.process` or :meth:`from_equity`, or from the two bound components.
 
         Args:
             equity (Equity): The underlying (its ``forward`` drives the dynamics).
-            heston (HestonModel): Stochastic variance parameters.
-            local_vol (LocalVolatilityModel): Local vol of the market surface.
+            heston (HestonProcess): Stochastic variance parameters.
+            local_vol (LocalVolatilityProcess): Local vol of the market surface.
             mixing (float): Vol-of-vol scale ``eta`` in ``(0, 1]``.
             n_nodes (int): Nodes of the conditional-expectation smoother.
             martingale_correction (bool): Rescale ``X_t`` to sample mean 1 (MC forward = ``F(t)``).
@@ -169,8 +171,8 @@ class HestonSLVModel(StochasticProcess):
 
     @classmethod
     def from_equity(cls, equity, maturity: Union[date, float] = None, strike: float = None, mixing: float = 1.0,
-                    n_nodes: int = 100, martingale_correction: bool = True) -> "HestonSLVModel":
-        """Heston calibrated to the surface (:meth:`HestonModel.from_equity`) + local vol of the same surface.
+                    n_nodes: int = 100, martingale_correction: bool = True) -> "HestonSLVProcess":
+        """Heston calibrated to the surface (:meth:`HestonProcess.from_equity`) + local vol of the same surface.
 
         Args:
             equity (Equity): The underlying (``market_env.get_equity``).
@@ -180,10 +182,10 @@ class HestonSLVModel(StochasticProcess):
             martingale_correction (bool): Rescale the simulated ``X_t`` to sample mean 1 at each time.
 
         Returns:
-            HestonSLVModel: Model built from the market (differentiable w.r.t. it).
+            HestonSLVProcess: Process built from the market (differentiable w.r.t. it).
         """
-        heston = HestonModel.from_equity(equity)
-        local_vol = LocalVolatilityModel.from_equity(equity)
+        heston = HestonProcess.from_equity(equity)
+        local_vol = LocalVolatilityProcess.from_equity(equity)
         return cls(equity, heston, local_vol, mixing, n_nodes, martingale_correction)
 
     @property
@@ -262,3 +264,77 @@ class HestonSLVModel(StochasticProcess):
             x = x / tf.reduce_mean(x, axis=0, keepdims=True)
         forwards = tf.stack([tf.cast(self._equity.forward(float(v)), DTYPE) for v in times])
         return x * forwards[None, :]
+
+
+class HestonSLVModel(EquityModel):
+    """Heston SLV model instance: a :class:`HestonModel` (stochastic variance, held), a :class:`LocalVolatilityModel`
+    (settings: the local vol is rebuilt from the market at every pricing) and the SLV settings (``mixing`` in
+    ``(0, 1]``, ``n_nodes`` of the conditional-expectation smoother, ``max_leverage``, ``martingale_correction``).
+
+    The leverage ``L = sigma_LV / sqrt(E[v | X])`` is built by :meth:`process` on the pricing paths (particle method),
+    with the risk convention of :class:`HestonSLVProcess`: Heston parameters held, so :attr:`parameters` is empty and
+    the greeks are the market greeks through the local vol and the forward (vega per node direct, no Jacobian).
+
+    Example::
+
+        model = tq.HestonSLVModel.calibrate(equity, mixing=0.5)           # or HestonSLVModel(tq.HestonModel(...))
+        tq.VanillaMCPricer(model=model).price(option, market_env)
+    """
+
+    SETTINGS = {"mixing": 1.0, "n_nodes": 100, "max_leverage": 10.0, "martingale_correction": True}
+
+    def __init__(self, heston: HestonModel, local_vol: LocalVolatilityModel = None, **settings):
+        """Args:
+            heston (HestonModel): Stochastic variance (calibrated or by hand).
+            local_vol (LocalVolatilityModel, optional): Local vol settings (default settings if omitted).
+            **settings: ``mixing``, ``n_nodes``, ``max_leverage``, ``martingale_correction``.
+
+        Raises:
+            ValueError: If ``mixing`` is not in ``(0, 1]`` or ``n_nodes < 2``.
+        """
+        super().__init__(**settings)
+        if not 0.0 < float(self.settings["mixing"]) <= 1.0:
+            raise ValueError(f"mixing must be in (0, 1], got {self.settings['mixing']}")
+        if int(self.settings["n_nodes"]) < 2:
+            raise ValueError("n_nodes must be >= 2")
+        self.heston = heston
+        self.local_vol = local_vol if local_vol is not None else LocalVolatilityModel()
+
+    def process(self, equity) -> HestonSLVProcess:
+        s = self.settings
+        return HestonSLVProcess(equity, self.heston.process(equity), self.local_vol.process(equity),
+                                float(s["mixing"]), int(s["n_nodes"]), bool(s["martingale_correction"]),
+                                float(s["max_leverage"]))
+
+    @classmethod
+    def calibrate(cls, equity, initial: dict = None, local_vol_settings: dict = None, **settings) -> "HestonSLVModel":
+        """Heston calibrated to the surface of *equity* (:meth:`HestonModel.calibrate`) + local vol settings.
+
+        Args:
+            equity (Equity): The underlying.
+            initial (dict, optional): Starting parameters of the Heston search.
+            local_vol_settings (dict, optional): Settings of the :class:`LocalVolatilityModel`.
+            **settings: SLV settings (``mixing``, ...).
+        """
+        heston = HestonModel.calibrate(equity, initial=initial)
+        model = cls(heston, LocalVolatilityModel.calibrate(equity, **(local_vol_settings or {})), **settings)
+        model._record_calibration(equity, {}, None, report=heston.report)
+        return model
+
+    @classmethod
+    def from_equity(cls, equity, maturity: Union[date, float] = None, strike: float = None,
+                    **settings) -> HestonSLVProcess:
+        """Process built from the market inside the caller's tape (:meth:`HestonSLVProcess.from_equity`)."""
+        return HestonSLVProcess.from_equity(equity, maturity, strike, **settings)
+
+    def to_frames(self) -> dict:
+        frames = super().to_frames()
+        frames.update({f"heston.{k}": v for k, v in self.heston.to_frames().items()})
+        frames.update({f"local_vol.{k}": v for k, v in self.local_vol.to_frames().items()})
+        return frames
+
+    @classmethod
+    def _from_values(cls, values: dict, settings: dict, frames: dict) -> "HestonSLVModel":
+        sub = lambda prefix: {k[len(prefix):]: v for k, v in frames.items() if k.startswith(prefix)}
+        return cls(HestonModel.from_frames(sub("heston.")), LocalVolatilityModel.from_frames(sub("local_vol.")),
+                   **settings)

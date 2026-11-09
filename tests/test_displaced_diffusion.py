@@ -36,7 +36,7 @@ def dd_market(beta_fwd=BETA_FWD, sigma_fwd=SIGMA_FWD) -> MarketEnvironment:
         "EQ:EUR:DD:SPOT": S0, "EQ:EUR:DD:REPO": 0.005, "EQ:EUR:DD:DIVYIELD": 0.02, "EQ:EUR:DD:VOL": surface,
     })
     eq = mkt.get_equity("DD")
-    truth = DisplacedDiffusionModel(eq, NODES, beta_fwd, sigma_fwd)
+    truth = DisplacedDiffusionModel(NODES, beta_fwd, sigma_fwd).process(eq)
     surface.volatility_matrix.assign([[truth.implied_vol(K, T) for K in STRIKES] for T in NODES])
     return mkt
 
@@ -80,7 +80,7 @@ class TestClosedForm(unittest.TestCase):
 
 class TestSkewAveraging(unittest.TestCase):
     def test_round_trip_and_constant_beta(self):
-        model = DisplacedDiffusionModel(dd_market().get_equity("DD"), NODES, BETA_FWD, SIGMA_FWD)
+        model = DisplacedDiffusionModel(NODES, BETA_FWD, SIGMA_FWD).process(dd_market().get_equity("DD"))
         beta_t, sigma_t = model.effective_parameters(NODES)
         beta_f, sigma_f, floored = forward_from_slices(NODES, beta_t, sigma_t)
         np.testing.assert_allclose(beta_f.numpy(), BETA_FWD, rtol=1e-12)
@@ -89,7 +89,7 @@ class TestSkewAveraging(unittest.TestCase):
         self.assertAlmostEqual(float(beta_t[0]), BETA_FWD[0], places=14)          # first slice = first piece
         self.assertTrue(BETA_FWD[1] < float(beta_t[1]) < BETA_FWD[0])            # weighted average in between
         self.assertAlmostEqual(float(sigma_t[1]) ** 2, (0.25 ** 2 * 0.5 + 0.2 ** 2 * 0.5), places=14)
-        constant = DisplacedDiffusionModel(model._equity, NODES, [0.6] * 3, SIGMA_FWD)
+        constant = DisplacedDiffusionModel(NODES, [0.6] * 3, SIGMA_FWD).process(model._equity)
         np.testing.assert_allclose(constant.effective_parameters([0.3, 1.7, 4.0])[0].numpy(), 0.6, rtol=1e-14)
 
 
@@ -165,11 +165,11 @@ class TestCalibration(unittest.TestCase):
         with self.assertRaises(ValueError):
             DisplacedDiffusionModel.from_equity(eq)
         with self.assertRaises(ValueError):
-            DisplacedDiffusionModel(self.eq, [1.0, 0.5], [0.5, 0.5], [0.2, 0.2])
+            DisplacedDiffusionModel([1.0, 0.5], [0.5, 0.5], [0.2, 0.2]).process(self.eq)
         with self.assertRaises(ValueError):
-            DisplacedDiffusionModel(self.eq, [0.5, 1.0], [0.5, -0.1], [0.2, 0.2])
+            DisplacedDiffusionModel([0.5, 1.0], [0.5, -0.1], [0.2, 0.2]).process(self.eq)
         with self.assertRaises(ValueError):
-            DisplacedDiffusionModel(self.eq, [0.5, 1.0], [0.5], [0.2, 0.2])
+            DisplacedDiffusionModel([0.5, 1.0], [0.5], [0.2, 0.2]).process(self.eq)
 
 
 class TestMonteCarlo(unittest.TestCase):
