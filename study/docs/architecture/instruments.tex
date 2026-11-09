@@ -9,7 +9,9 @@
 Equity options derive from \code{Option}, which holds the option type, the strike (a float64 variable), the
 exercise type and the underlying. \code{VanillaOption} is European or American; \code{DigitalOption} is European, with a
 \code{payoff\_type} (\code{CashOrNothing} or \code{AssetOrNothing}, enum \code{PayoffType}) and a \code{cash\_amount}.
-\code{BlackScholesPricer} prices both, the digitals through \code{digital\_calc}; the factory maps a digital to it.
+\code{BlackScholesPricer} prices both, the digitals through \code{digital\_calc} (vol at the strike) or, with
+\code{digital\_spread} $= h$, as a centred spread of vanillas at $K(1 \pm h)$ on the smile; the factory maps a digital
+to it.
 \code{VanillaMCPricer} prices both too; for the digital payoff \code{digital\_smoothing} sets the sigmoid width (default
 1\% of the strike, 0 for the hard indicator). \nb{digital\_options.ipynb}
 

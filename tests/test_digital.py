@@ -105,6 +105,45 @@ class TestBlackScholes(unittest.TestCase):
         self.assertAlmostEqual((spread[0] - spread[1]) / (2 * h), float(d.price) - vega * slope, places=6)
         self.assertGreater((spread[0] - spread[1]) / (2 * h) - float(d.price), 0.02)   # negative skew: digital call up
 
+    def test_digital_spread_flag(self):
+        """digital_spread = h: cash = A (V(K - hK) - V(K + hK)) phi / 2hK from vanilla prices on the smile (both
+        dividend models), asset = K cash + phi V(K); flat surface -> closed form; AAD delta vs the vanilla spread's."""
+        h = 0.01
+        for ticker, model in (("CONT", "continuous"), ("DISC", "discrete")):
+            for ot, phi in (("Call", 1.0), ("Put", -1.0)):
+                K = 90.0
+                legs = []
+                for k in (K * (1 - h), K * (1 + h), K):
+                    v = vanilla(ot, k, ticker)
+                    bs_price(v, self.mkt, model)
+                    legs.append(float(v.price))
+                unit = phi * (legs[0] - legs[1]) / (2 * h * K)
+                cash, asset = digital(ot, K, CASH, 2.5, ticker), digital(ot, K, ASSET, underlying=ticker)
+                tq.BlackScholesPricer(model, digital_spread=h).price(cash, self.mkt)
+                tq.BlackScholesPricer(model, digital_spread=h).price(asset, self.mkt)
+                with self.subTest(ticker=ticker, type=ot):
+                    self.assertAlmostEqual(float(cash.price), 2.5 * unit, places=12)
+                    self.assertAlmostEqual(float(asset.price), K * unit + phi * legs[2], places=10)
+        flat = flat_vol_market(0.2)
+        d_closed, d_spread = digital("Put", 100.0, underlying="FLAT"), digital("Put", 100.0, underlying="FLAT")
+        bs_price(d_closed, flat)
+        tq.BlackScholesPricer(digital_spread=1e-4).price(d_spread, flat)
+        self.assertAlmostEqual(float(d_spread.price), float(d_closed.price), places=7)
+
+        eq = self.mkt.get_equity("CONT")
+        d = digital("Put", 90.0)
+        pricer = tq.BlackScholesPricer(digital_spread=h)
+        pricer.price(d, self.mkt, autodiff=True)
+        delta = float(pricer.tape.gradient(d.price, eq.spot))
+        deltas = []
+        for k in (90.0 * (1 - h), 90.0 * (1 + h)):
+            v = vanilla("Put", k)
+            p = bs_price(v, self.mkt, autodiff=True)
+            deltas.append(float(p.tape.gradient(v.price, eq.spot)))
+        self.assertAlmostEqual(delta, -(deltas[0] - deltas[1]) / (2 * h * 90.0), places=12)
+        with self.assertRaises(ValueError):
+            tq.BlackScholesPricer(digital_spread=0.0)
+
     def test_greeks_and_factory(self):
         """Cash digital delta = A P(0,T) n(d2) / (S sigma sqrt T) (continuous model) by AAD; factory -> BS."""
         eq = self.mkt.get_equity("CONT")

@@ -345,12 +345,18 @@ class BlackScholesPricer(Pricer):
       the discrete-model delta.
     - Underlying with only ``DIVYIELD``: carry = div yield + repo, whatever
       ``dividend_model``.
+
+    Digitals: by default the closed form at the vol of the strike (no smile slope). With ``digital_spread = h > 0``
+    a European digital is priced as a centred spread of vanillas on the smile, each at its own vol: unit cash
+    digital ``u = phi (V(K - hK) - V(K + hK)) / (2 hK)`` (``-dV/dK`` for a call, ``dV/dK`` for a put, so it includes
+    ``-phi vega dsigma/dK``); cash-or-nothing ``A u``, asset-or-nothing ``K u + phi V(K)``.
     """
 
     def __init__(
         self,
         dividend_model: str = "continuous",
         use_implied_repo: bool = True,
+        digital_spread: float = None,
     ):
         """Initialize the pricer.
 
@@ -359,9 +365,11 @@ class BlackScholesPricer(Pricer):
                 underlying has a discrete dividend schedule, see class docstring).
             use_implied_repo (bool): When ``True``, the market repo is part of the
                 carry; when ``False`` the repo is ignored.
+            digital_spread (float, optional): Half-width of the vanilla spread as a fraction of the strike
+                (e.g. ``0.005``); ``None``: digitals by the closed form at the vol of the strike.
 
         Raises:
-            ValueError: If ``dividend_model`` is not supported.
+            ValueError: If ``dividend_model`` is not supported or ``digital_spread`` is not positive.
         """
         super().__init__()
         allowed_dividend_models = {"continuous", "discrete"}
@@ -370,8 +378,11 @@ class BlackScholesPricer(Pricer):
                 f"Invalid dividend_model '{dividend_model}'. "
                 f"Allowed values are: {sorted(allowed_dividend_models)}"
             )
+        if digital_spread is not None and not digital_spread > 0.0:
+            raise ValueError(f"digital_spread must be positive, got {digital_spread}")
         self._dividend_model = dividend_model
         self._use_implied_repo = use_implied_repo
+        self._digital_spread = digital_spread
 
     def _build_inputs(
         self, product, market_env: MarketEnvironment
@@ -465,7 +476,27 @@ class BlackScholesPricer(Pricer):
             return barrier_calc(s_net, k, product.barrier, r, sigma, t, q, product.option_type,
                                 product.barrier_type, n_monitoring)
         if isinstance(product, DigitalOption):
-            return digital_calc(s_net, k, r, sigma, t, q, product.option_type, product.payoff_type, product.cash_amount)
+            if self._digital_spread is None:
+                return digital_calc(s_net, k, r, sigma, t, q, product.option_type, product.payoff_type,
+                                    product.cash_amount)
+            return self._digital_by_spread(product, market_env, s_net, k, r, sigma, t, q)
         if product.exercise_type == ExerciseType.European:
             return blackscholes_calc(s_net, k, r, sigma, t, q, product.option_type)
         return bjerksund_stensland_calc(s_net, k, r, sigma, t, q, product.option_type)
+
+    def _digital_by_spread(self, product, market_env, s_net, k, r, sigma, t, q) -> tf.Tensor:
+        """European digital as a centred spread of vanillas on the smile (see the class docstring)."""
+        vol_surface = market_env.get_equity(product.underlying, ccy=product.ccy).vol_surface
+        tenor = float(t.numpy())
+        strike = float(product.strike)
+        h = self._digital_spread * strike
+        phi = float(product.option_type.value)
+
+        def vanilla(x: float) -> tf.Tensor:
+            vol = vol_surface.volatility(strike=x, tenor=tenor)
+            return blackscholes_calc(s_net, tf.constant(x, DTYPE), r, vol, t, q, product.option_type)
+
+        unit = phi * (vanilla(strike - h) - vanilla(strike + h)) / (2.0 * h)
+        if product.payoff_type == PayoffType.AssetOrNothing:
+            return k * unit + phi * blackscholes_calc(s_net, k, r, sigma, t, q, product.option_type)
+        return product.cash_amount * unit

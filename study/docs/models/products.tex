@@ -73,6 +73,11 @@ drawn from a fixed seed, so a repricing with bumped market data uses the same ra
 \subsection{Digital options}\label{sec:mp-digital}
 European, paid at $T$ on $\phi(S_T - K) > 0$: cash-or-nothing (amount $A$) or asset-or-nothing ($S_T$).
 \emph{Black--Scholes}, vol at the strike: $D^{\mathrm{cash}} = A\,P(0,T)\,N(\phi d_2)$, $D^{\mathrm{asset}} = P(0,T)\,F\,N(\phi d_1)$.
+This ignores the smile slope. \emph{On the smile} the unit cash digital is $-\phi\,\partial V/\partial K$ of the vanilla
+priced at its own vol, $P(0,T)\,N(\phi d_2) - \phi\,\mathcal{V}\,\partial\sigma/\partial K$ ($\mathcal{V}$ the vanilla
+vega), computed as the centred spread $\phi\,[V(K - hK) - V(K + hK)]/(2hK)$; asset-or-nothing $= K\,D^{\mathrm{cash}}_{A=1}
++ \phi\,V(K)$. With a negative skew the smile lowers the digital put and raises the digital call; the gap is first
+order (one vega times the skew).
 \emph{Monte Carlo}: the indicator has no pathwise derivative, so it is replaced by the sigmoid
 $1/(1 + e^{-\phi(S_T - K)/(\varepsilon K)})$ of width $\varepsilon$ (1\% of the strike by default; $\varepsilon = 0$ is the exact indicator, with
 no pathwise delta or vega).
