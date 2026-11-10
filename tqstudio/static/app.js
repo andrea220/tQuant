@@ -3,7 +3,10 @@
 const $ = (id) => document.getElementById(id);
 const fmt = (x, d = 4) => (x === null || x === undefined ? "" : Number(x).toFixed(d));
 const pct = (x, d = 2) => (x === null || x === undefined ? "" : (100 * x).toFixed(d));
-const LAYOUT = { margin: { l: 55, r: 15, t: 35, b: 45 }, font: { size: 12 }, showlegend: false };
+const AXIS = { gridcolor: "#eef1f6", zerolinecolor: "#dde2ea", linecolor: "#dde2ea" };
+const LAYOUT = { margin: { l: 55, r: 15, t: 38, b: 45 }, font: { size: 12, family: "Segoe UI, system-ui, sans-serif",
+  color: "#18202f" }, showlegend: false, paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+  colorway: ["#3563e9", "#e8833a", "#12805c", "#a43fd1", "#c2362f"] };
 
 function table(columns, rows) {
   // columns: [[header, row => cell text], ...]
@@ -14,7 +17,7 @@ function table(columns, rows) {
 
 function plot(id, traces, title, xTitle, yTitle, extra = {}) {
   Plotly.react($(id), traces, { ...LAYOUT, title: { text: title, font: { size: 13 } },
-    xaxis: { title: xTitle }, yaxis: { title: yTitle }, ...extra }, { displaylogo: false, responsive: true });
+    xaxis: { title: xTitle, ...AXIS }, yaxis: { title: yTitle, ...AXIS }, ...extra }, { displaylogo: false, responsive: true });
 }
 
 function render(d) {
@@ -22,8 +25,8 @@ function render(d) {
   const cards = [["Spot", fmt(s.spot, 2)], ["Currency", s.currency], ["Repo", pct(s.repo, 3) + "%"],
     ["Dividends", s.dividend_model], ["Discount curve", s.discount_curve], ["Snapshot", s.snapshot]];
   if (s.div_yield !== null) cards.splice(4, 0, ["Div yield", pct(s.div_yield, 3) + "%"]);
-  $("summary").innerHTML = cards.map(([l, v]) =>
-    `<div class="card"><div class="label">${l}</div><div class="value">${v}</div></div>`).join("");
+  $("summary").innerHTML = cards.map(([l, v], i) =>
+    `<div class="card${i === 0 ? " big" : ""}"><div class="label">${l}</div><div class="value">${v}</div></div>`).join("");
 
   $("forwards").innerHTML = table([
     ["Tenor", (r) => r.tenor], ["Forward", (r) => fmt(r.forward, 2)], ["Fwd / spot", (r) => fmt(r.forward_over_spot)],

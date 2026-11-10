@@ -8,51 +8,68 @@
   <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
 </head>
 <body>
-  <header>
-    <h1>tqstudio</h1>
+  <aside>
+    <div class="brand">tq<span>studio</span></div>
     <nav><a href="/">Market data</a><a class="active" href="/tradepad">Tradepad</a></nav>
-    <div class="controls"><span id="snapshot" class="muted"></span></div>
-  </header>
+    <div class="side-foot" id="snapshot"></div>
+  </aside>
 
-  <main>
-    <section>
-      <h2>Trade</h2>
-      <div class="form">
-        <div class="field"><label for="ticker">Underlying</label><select id="ticker"></select></div>
-        <div class="field"><label for="product">Product</label><select id="product"></select></div>
-        <div class="field"><label for="option_type">Type</label>
-          <select id="option_type"><option>Put</option><option>Call</option></select></div>
-        <div class="field"><label for="strike_pct">Strike (% spot)</label>
-          <input id="strike_pct" type="number" step="0.5" value="100"></div>
-        <div class="field"><label for="expiry">Expiry</label><input id="expiry" type="date"></div>
-        <div class="field"><label for="quantity">Quantity</label>
-          <input id="quantity" type="number" step="1" value="1"></div>
-        <div class="field digital"><label for="payoff">Digital payoff</label>
-          <select id="payoff"><option>Cash</option><option>Asset</option></select></div>
-        <div class="field digital"><label for="cash_amount">Cash amount</label>
-          <input id="cash_amount" type="number" step="1" value="100"></div>
-        <div class="field barrier"><label for="barrier_type">Barrier type</label><select id="barrier_type"></select></div>
-        <div class="field barrier"><label for="barrier_pct">Barrier (% spot)</label>
-          <input id="barrier_pct" type="number" step="0.5" value="70"></div>
-        <div class="field"><label for="n_paths">MC paths</label>
-          <select id="n_paths"><option value="20000">20,000</option><option value="50000" selected>50,000</option>
-            <option value="100000">100,000</option></select></div>
+  <div class="page">
+    <div class="topbar"><h1>Tradepad</h1></div>
+
+    <main class="tradepad">
+      <div class="panel">
+        <h2>Deal</h2>
+        <div class="form">
+          <div class="field wide"><label for="ticker">Underlying</label><select id="ticker"></select></div>
+          <div class="field"><label for="product">Product</label><select id="product"></select></div>
+          <div class="field"><label for="option_type">Type</label>
+            <select id="option_type"><option>Put</option><option>Call</option></select></div>
+          <div class="field"><label for="strike_pct">Strike (% spot)</label>
+            <input id="strike_pct" type="number" step="0.5" value="100"></div>
+          <div class="field"><label for="quantity">Quantity</label>
+            <input id="quantity" type="number" step="1" value="1"></div>
+          <div class="field wide"><label for="expiry">Expiry</label><input id="expiry" type="date"></div>
+          <div class="field digital"><label for="payoff">Digital payoff</label>
+            <select id="payoff"><option>Cash</option><option>Asset</option></select></div>
+          <div class="field digital"><label for="cash_amount">Cash amount</label>
+            <input id="cash_amount" type="number" step="1" value="100"></div>
+          <div class="field barrier"><label for="barrier_type">Barrier type</label><select id="barrier_type"></select></div>
+          <div class="field barrier"><label for="barrier_pct">Barrier (% spot)</label>
+            <input id="barrier_pct" type="number" step="0.5" value="70"></div>
+
+          <div class="section-label">Model</div>
+          <div class="field"><label for="model">Model</label><select id="model"></select></div>
+          <div class="field mc"><label for="n_paths">MC paths</label>
+            <select id="n_paths"><option value="20000">20,000</option><option value="50000" selected>50,000</option>
+              <option value="100000">100,000</option></select></div>
+        </div>
+        <button id="price">Price</button>
+        <span id="status" class="muted"></span>
+        <p class="note">Black-Scholes: closed forms at the vol of the strike; digitals as a call / put spread on the
+          smile (strikes K &plusmn; 0.5%); barriers with continuous monitoring. Local vol: Monte Carlo on the calibrated
+          local vol (calibrated on first use per underlying, then cached).</p>
       </div>
-      <div class="checks" id="models"></div>
-      <p class="muted">Barrier: continuous monitoring. Models are calibrated on the first use per underlying (Heston SLV
-        about 10 s), then cached.</p>
-      <button id="price">Price</button>
-      <span id="status" class="muted"></span>
-    </section>
 
-    <section id="results-section" class="hidden">
-      <h2>Results <span id="trade-info" class="muted"></span></h2>
-      <div id="results"></div>
-      <p class="muted">Price, delta, vega (1 vol point, sum over the surface nodes) and rho (1 bp, sum over the curve
-        pillars) times the quantity; market greeks through the model calibrations. Click a row for its vega map.</p>
-      <div id="chart-vega" class="chart" style="height: 380px"></div>
-    </section>
-  </main>
+      <div>
+        <div id="empty" class="panel empty">Define a deal and press <b>Price</b>.</div>
+        <div id="results-section" class="hidden">
+          <div class="panel">
+            <h2>Valuation <span id="model-info" class="pill"></span></h2>
+            <div id="valuation" class="cards"></div>
+          </div>
+          <div class="panel">
+            <h2>Market at expiry</h2>
+            <div id="market" class="cards"></div>
+          </div>
+          <div class="panel">
+            <h2>Vega per surface node <span class="muted">(1 vol point, times the quantity)</span></h2>
+            <div id="chart-vega" class="chart" style="height: 400px"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
 
   <script src="/static/tradepad.js"></script>
 </body>

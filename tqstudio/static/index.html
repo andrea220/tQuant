@@ -3,63 +3,68 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>tqstudio</title>
+  <title>tqstudio · Market data</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
 </head>
 <body>
-  <header>
-    <h1>tqstudio</h1>
+  <aside>
+    <div class="brand">tq<span>studio</span></div>
     <nav><a class="active" href="/">Market data</a><a href="/tradepad">Tradepad</a></nav>
-    <div class="controls">
-      <label for="ticker">Underlying</label>
-      <select id="ticker"></select>
-      <span id="snapshot" class="muted"></span>
+    <div class="side-foot" id="snapshot"></div>
+  </aside>
+
+  <div class="page">
+    <div class="topbar">
+      <h1>Market data</h1>
+      <div class="controls">
+        <label for="ticker" class="muted">Underlying</label>
+        <select id="ticker"></select>
+      </div>
     </div>
-  </header>
 
-  <main>
-    <p id="status" class="muted">Loading…</p>
+    <main>
+      <p id="status" class="muted">Loading…</p>
 
-    <section>
-      <h2>Summary</h2>
-      <div id="summary" class="cards"></div>
-    </section>
-
-    <section>
-      <h2>Forwards and dividends</h2>
-      <div class="grid2">
-        <div id="forwards"></div>
-        <div id="dividends"></div>
+      <div class="panel">
+        <h2>Summary</h2>
+        <div id="summary" class="cards"></div>
       </div>
-      <div class="grid2">
-        <div id="chart-forward" class="chart"></div>
-        <div id="chart-divyield" class="chart"></div>
-      </div>
-    </section>
 
-    <section>
-      <h2>Discount curve <span id="curve-name" class="muted"></span></h2>
-      <div class="grid2">
-        <div id="curve"></div>
-        <div id="chart-curve" class="chart"></div>
+      <div class="panel">
+        <h2>Forwards and dividends</h2>
+        <div class="grid2">
+          <div id="forwards" class="hscroll"></div>
+          <div id="dividends" class="scroll"></div>
+        </div>
+        <div class="grid2" style="margin-top: 14px">
+          <div id="chart-forward" class="chart"></div>
+          <div id="chart-divyield" class="chart"></div>
+        </div>
       </div>
-    </section>
 
-    <section>
-      <h2>Implied volatility surface</h2>
-      <div id="vol"></div>
-      <div class="grid2">
-        <div id="chart-smiles" class="chart"></div>
-        <div id="chart-atm" class="chart"></div>
+      <div class="panel">
+        <h2>Implied volatility surface</h2>
+        <div id="vol" class="hscroll"></div>
+        <div class="grid2" style="margin-top: 14px">
+          <div id="chart-smiles" class="chart"></div>
+          <div id="chart-atm" class="chart"></div>
+        </div>
       </div>
-    </section>
 
-    <section>
-      <h2>Correlations</h2>
-      <div id="correlations" class="scroll"></div>
-    </section>
-  </main>
+      <div class="grid2">
+        <div class="panel">
+          <h2>Discount curve <span id="curve-name" class="muted"></span></h2>
+          <div id="curve" class="scroll"></div>
+          <div id="chart-curve" class="chart" style="margin-top: 14px"></div>
+        </div>
+        <div class="panel">
+          <h2>Correlations</h2>
+          <div id="correlations" class="scroll" style="max-height: 690px"></div>
+        </div>
+      </div>
+    </main>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>

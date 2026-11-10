@@ -41,7 +41,7 @@ class Engine:
 
     def price(self, request: dict) -> dict:
         with self.lock:
-            return price_trade(self.market, self.models, request["trade"], request["models"],
+            return price_trade(self.market, self.models, request["trade"], request["model"],
                                n_paths=int(request.get("n_paths", 50_000)))
 
 
