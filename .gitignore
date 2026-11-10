@@ -15,6 +15,7 @@ __pycache__/
 *.xlsx
 # study/: i notebook vanno versionati, gli artefatti LaTeX no
 !study/**/*.ipynb
+!tqstudio/testviews/*.ipynb
 study/docs/build/
 .ipynb_checkpoints/
 
