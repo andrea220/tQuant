@@ -12,7 +12,8 @@ body { margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-seri
 header { display: flex; align-items: center; gap: 24px; padding: 12px 24px; background: var(--panel);
          border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10; flex-wrap: wrap; }
 h1 { font-size: 18px; margin: 0; color: var(--accent); }
-nav span { padding: 6px 10px; border-radius: 6px; }
+nav a { padding: 6px 10px; border-radius: 6px; color: var(--text); text-decoration: none; }
+nav a:hover { background: #f0f2f6; }
 nav .active { background: #e8eefc; color: var(--accent); font-weight: 600; }
 .controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
@@ -32,3 +33,18 @@ th:first-child, td:first-child { text-align: left; }
 .scroll { max-height: 360px; overflow: auto; }
 #vol { overflow-x: auto; margin-bottom: 12px; }
 .chart { height: 320px; }
+
+/* tradepad */
+.form { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px 16px; align-items: end; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { color: var(--muted); font-size: 12px; }
+.field input, .field select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+.checks { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 14px 0 4px; }
+.checks label { display: flex; align-items: center; gap: 6px; }
+button { padding: 7px 18px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font: inherit;
+         font-weight: 600; cursor: pointer; }
+button:disabled { background: #9aa8cf; cursor: wait; }
+.hidden { display: none !important; }
+.error { color: #b42318; }
+tr.selectable { cursor: pointer; }
+tr.selected td { background: #eef3ff; }
