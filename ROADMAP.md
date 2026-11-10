@@ -76,18 +76,12 @@ factors, calibration policy, joint simulation, portfolio pricing, aggregation, p
   no spurious P&L from parameter jumps. Greeks consistent with the policy: model greeks through `eps` only; skew /
   wing risk separately (par greeks through the Jacobian, or bump and recalibrate).
 
-**3. SLV with a stored conditional expectation.**
-- Store `E[v | X]` on a `(t, y)` grid (with the Heston parameters and mixing it was estimated with), not the leverage:
-  at pricing `L = sigma_LV(today) / sqrt(E)`, so today's local vol always enters (surface repriced, vega per node
-  complete, same risk convention as now: Heston parameters and `E` held). Full re-estimation of `E` periodically or on
-  a trigger.
-- `HestonSLVModel` with an optional stored `E`: absent = today's on-the-fly particle method (single trade, tests,
-  study); present = `E` read from the grid at each step (paths independent and reusable across trades, no minimum
-  number of particles). Reuses the QE step with per-particle `L` and the `(t, y)` grid reading of local vol.
-- Estimation of `E` on a dedicated, larger simulation (particle method, Guyon / Henry-Labordère) or by the
-  Fokker-Planck PDE of the joint density (Göttker-Schnetmann / Spanderen, QuantLib; van der Stoep et al.). The PDE is
-  also an independent check of the open short-dated SLV error (see Future development, Equity).
-- Tests: stored `E` from the same run = on-the-fly prices; mixing -> 0 = local vol.
+**3. SLV with a stored conditional expectation.** Done for the single underlying (`DEVELOPMENT_LOG.md`: `E[v | X]`
+calibrated on its own particles and stored, read at pricing, market greeks by the adjoint of its calibration). Left:
+- the table in the snapshots (with the Heston parameters and the mixing it was estimated with), refreshed daily or
+  on a trigger;
+- estimation of `E` by the Fokker-Planck PDE of the joint density (Göttker-Schnetmann / Spanderen, QuantLib; van der
+  Stoep et al.): also an independent check of the open short-dated SLV error (see Future development, Equity).
 
 **4. Multi-asset process.**
 - `MultiAssetProcess(StochasticProcess)`: N per-asset models (GBM, local vol, Heston, SLV with stored `E`), each with
@@ -134,6 +128,13 @@ Sensitivities:
       (`calibrate_gaussian_short_rate`), the portfolio mapping (sum of `dV/dp` per underlying, one product), and the
       conditioning of the least-squares Jacobian (par greeks are a projection, not an exact hedge, and can be noisy when
       the Hessian is ill-conditioned, Heston `kappa` / `theta` / `xi`): optional regularisation.
+- [ ] **Heston market vega by structure (IMI style)**: the par vega of a Heston price maps the model greeks through the
+      whole-surface calibration, so a vanilla gets vega on every node (`equity_models`: 1Y 80% put, 0.04 on its own
+      node of 0.69, spread over all maturities, -0.10 at 5Y), dependent on the fit weights and the option set: right
+      for the model, misleading for a vanilla's risk. The IMI Heston (`resources/HestonModel.pdf`, sections 1.2 and 5)
+      splits the parameters: a piecewise-constant `epsilon(t)` fitted exactly to the ATM vol of each expiry (moves only
+      with that ATM vol) and time-independent `kappa, xi, rho, ...` recalibrated rarely and held (model greeks only, no
+      market reading). Option: a Heston with that split, market vega only to the ATM vols up to the product's expiry.
 
 Equity:
 
@@ -149,6 +150,16 @@ Equity:
       downside, the QE log step with a per-particle leverage, the interplay with Feller strongly violated). Probably
       also behind the SLV vs LV gaps in `digital_strip` and `down_and_in_put`. Study in `study/notebooks/heston_slv.ipynb`
       (section 6).
+- [ ] **SLV greeks by smoothing for risk (interim, to discuss)**: the price comes from the Richardson-corrected
+      `E[v | X]` table, the greeks from the 41-node one (the adjoint of the corrected or of a finer estimator blows
+      up: `DEVELOPMENT_LOG.md`). The greeks are those of a slightly smoother model: within 3-5% of the bumps on the
+      node and the parallel vega, up to 0.05 per vol point off the node, and a second path simulation per price
+      (~+40%). Options: the leverage by the Fokker-Planck PDE (deterministic and smooth calibration: exact adjoint,
+      no bias / noise trade-off; see part 3 of `tqstudio`), or bump-and-recalibrate with common random numbers by
+      maturity bucket (desk practice). To decide after studying the model.
+- [ ] **SLV 5Y vega off the node**: the adjoint par vega of a 5Y 80% put has +-0.1-0.2 per vol point on the 3Y-5Y
+      wings (130%-140%) besides 1.03 on its node (total 1.50): not checked against bumps node by node (the tests check
+      the node, a neighbour and the parallel shift). Bump those nodes to tell noise from model.
 - [ ] Heston COS truncation range from the cumulants (`heston_cumulants`, mean +/- 30 sd, `abs(c2)` as a guard): with
       Feller strongly violated the second cumulant can come out negative or inaccurate (Oosterlee-Grzelak, ch. 6, use a
       fixed range `+/- L sqrt(T)` for this reason). Fine on the snapshot (Feller -0.48, `c2 = 1.12` at 5Y, prices = the

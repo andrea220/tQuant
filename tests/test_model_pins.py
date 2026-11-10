@@ -60,7 +60,10 @@ PINS = {
     'vanilla_lv': [20.082009562527, 0.515926372727, 97.166309277369, 128.417816625189, 78.475094840817, -1.465142786815],
     'vanilla_heston': [19.098402190726, 0.558591457995, 91.248605600356, 183.967403910103, 13.502593464935, -2.386649205459],
     'vanilla_dd': [19.89005568691, 0.475998424297, 94.637810614771, 96.662994343986, 26.590914145174, -0.061308643417],
-    'vanilla_slv': [19.463165927289, 0.537332104045, 93.640036276162, 143.978074799629, 54.926747379648, -6.975946325967],
+    # repinned when the leverage moved from the pricing paths to a calibrated E[v | X] table, price on the
+    # Richardson-corrected table, greeks on the 41-node one (was 19.463165927289, 0.537332104045, 93.640036276162,
+    # 143.978074799629, 54.926747379648, -6.975946325967)
+    'vanilla_slv': [19.601883807291, 0.539073753733, 93.490532242752, 147.74109398196, 60.420870026788, -7.682180122143],
     'autocall_lv': [0.626508884383, 0.185697085104, -60.657136253783, 233.925991066973, -0.879028842357, 0.286760035786],
     'autocall_heston': [1.361782349158, 0.141159431188, -54.125855548605, 146.705039792001, -9.183400682061, 1.238948382337],
     'heston_params': [0.059312323705, 0.722280684703, 0.039834245025, 0.451180868984, -0.742564800306],
@@ -201,8 +204,8 @@ class TestPins(unittest.TestCase):
 
     @slow
     def test_heston_slv(self):
-        # the particle leverage amplifies rounding: a 1e-15 relative change of the Heston parameters (eager vs
-        # compiled implicit step) moves these numbers by ~4e-7, so 1e-6 here
+        # the particle calibration amplifies rounding: a 1e-15 relative change of the Heston parameters (eager vs
+        # compiled implicit step) moved these numbers by ~4e-7, so 1e-6 here
         self.check("vanilla_slv", self.vanilla(tq.HestonSLVModel), rtol=1e-6)
 
 

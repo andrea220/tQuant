@@ -1,9 +1,9 @@
 """Equity models as instances (``EquityModel``): ``Model.calibrate`` / ``model.process(equity)`` vs the class path.
 
 - the pricers give the same price with a calibrated instance as with the model class (same paths);
-- local vol and SLV: the same greeks (the vol nodes are read at pricing in both paths);
+- local vol: the same greeks (the vol nodes are read at pricing in both paths);
 - Heston, displaced diffusion: model greeks mapped through the stored calibration Jacobian (``par_greeks``) = the AAD
-  greeks through the calibration of the class path;
+  greeks through the calibration of the class path; SLV: the same through the adjoint of the leverage calibration;
 - models built by hand (no Jacobian), serialization round trip, ticker and argument checks.
 """
 
@@ -142,18 +142,25 @@ class TestDisplacedDiffusionInstance(unittest.TestCase):
 class TestHestonSLVInstance(unittest.TestCase):
     @slow
     def test_instance_equals_class(self):
-        """Heston held in both paths: same price and greeks; the instance round-trips through its tables."""
+        """Heston held in both paths, the same E[v | X] rows (calibrated up to 5Y for the instance, up to the expiry
+        inside the tape for the class): same price; the class greeks (one pass through the leverage calibration) =
+        the instance's direct greeks + dV/dE mapped by the adjoint (par_greeks with the equity); the instance
+        round-trips through its tables."""
         mkt, eq = market()
         model = tq.HestonSLVModel.calibrate(eq)
-        self.assertEqual(model.parameters, {})
+        self.assertEqual(list(model.parameters), ["expectation"])
         p_cls, _, g_cls = price_and_greeks(tq.HestonSLVModel, call(eq), mkt, eq)
-        p_ins, _, g_ins = price_and_greeks(model, call(eq), mkt, eq)
+        p_ins, model_greeks, direct = price_and_greeks(model, call(eq), mkt, eq)
         self.assertAlmostEqual(p_ins / p_cls, 1.0, places=12)
-        assert_greeks_close(self, g_cls, g_ins, rtol=1e-9, atol=1e-10)
+        assert_greeks_close(self, g_cls, tq.par_greeks(model, model_greeks, direct, equity=eq), rtol=1e-6, atol=1e-8)
+        with self.assertRaises(ValueError):
+            tq.par_greeks(model, model_greeks, direct)                        # the adjoint needs the market
         back = tq.HestonSLVModel.from_frames(model.to_frames())
         self.assertEqual(back.settings, model.settings)
         self.assertEqual(float(back.heston.parameters["xi"]), float(model.heston.parameters["xi"]))
         self.assertEqual(back.local_vol.settings, model.local_vol.settings)
+        np.testing.assert_array_equal(back.parameters["expectation"].numpy(), model.parameters["expectation"].numpy())
+        np.testing.assert_array_equal(back.leverage_table["nodes"], model.leverage_table["nodes"])
 
 
 if __name__ == "__main__":

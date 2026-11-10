@@ -88,6 +88,27 @@ class EquityModel(ABC):
         """Process calibrated inside the caller's tape (greeks through the calibration): the factory used by the
         pricers when they are given the model class."""
 
+    def map_model_greeks(self, model_greeks: dict, equity=None) -> dict:
+        """Model greeks mapped to the market inputs, ``{market key: [sum_p dV/dp . dp/d variable]}``: through the
+        stored calibration :attr:`jacobian` (*equity* unused); subclasses calibrated by simulation override it with
+        the adjoint of their calibration.
+
+        Raises:
+            ValueError: If the model has no Jacobian (built by hand).
+        """
+        if self.jacobian is None:
+            raise ValueError(f"{type(self).__name__} has no calibration Jacobian (built by hand): only model greeks")
+        out = {}
+        for name, per_key in self.jacobian.items():
+            g = model_greeks.get(name)
+            if g is None:
+                continue
+            g = np.asarray(g)
+            for key, blocks in per_key.items():
+                mapped = [np.tensordot(g, block, axes=g.ndim) for block in blocks]
+                out[key] = [a + b for a, b in zip(out[key], mapped)] if key in out else mapped
+        return out
+
     # ------------------------------------------------------------------
     # Helpers for the subclasses
     # ------------------------------------------------------------------
@@ -180,40 +201,36 @@ class EquityModel(ABC):
         return f"{type(self).__name__}(ticker={self.ticker!r}, parameters={params})"
 
 
-def par_greeks(model: EquityModel, model_greeks: dict, market_greeks: Optional[dict] = None) -> dict:
-    """Greeks to the market inputs: the direct market greeks plus the model greeks mapped through the calibration
-    Jacobian, ``dV/dm = dV/dm|direct + sum_p dV/dp . dp/dm``.
+def par_greeks(model: EquityModel, model_greeks: dict, market_greeks: Optional[dict] = None, equity=None) -> dict:
+    """Greeks to the market inputs: the direct market greeks plus the model greeks mapped through the calibration,
+    ``dV/dm = dV/dm|direct + sum_p dV/dp . dp/dm`` (:meth:`EquityModel.map_model_greeks`: the stored Jacobian, or
+    the adjoint of the calibration for the models that need the market, e.g. :class:`HestonSLVModel`).
 
     Args:
-        model (EquityModel): The calibrated model (with :attr:`EquityModel.jacobian`).
-        model_greeks (dict): ``{parameter: dV/dp}`` (e.g. ``tape.gradient(price, model.parameters)``).
+        model (EquityModel): The calibrated model.
+        model_greeks (dict): ``{parameter: dV/dp}`` (e.g. ``tape.gradient(price, model.parameters)``); for a portfolio
+            on one underlying, the sum over the trades.
         market_greeks (dict, optional): ``{market key: [dV/d variable]}`` direct greeks
             (e.g. ``tape.gradient(price, equity.risk_factors())``).
+        equity (Equity, optional): The underlying, for the models mapped by the adjoint of their calibration.
 
     Returns:
         dict: ``{market key: [array per variable]}``.
 
     Raises:
-        ValueError: If the model has parameters but no Jacobian (built by hand).
+        ValueError: If the model has parameters but no calibration to map them through (built by hand), or needs
+            *equity* and none is given.
     """
     out = {}
     for key, grads in (market_greeks or {}).items():
         out[key] = [np.zeros(()) if g is None else np.asarray(g) for g in grads]
     if not model.parameters:
         return out
-    if model.jacobian is None:
-        raise ValueError(f"{type(model).__name__} has no calibration Jacobian (built by hand): only model greeks")
-    for name, per_key in model.jacobian.items():
-        g = model_greeks.get(name)
-        if g is None:
-            continue
-        g = np.asarray(g)
-        for key, blocks in per_key.items():
-            mapped = [np.tensordot(g, block, axes=g.ndim) for block in blocks]
-            if key in out:
-                out[key] = [a + b for a, b in zip(out[key], mapped)]
-            else:
-                out[key] = mapped
+    for key, mapped in model.map_model_greeks(model_greeks, equity).items():
+        if key in out:
+            out[key] = [a + b for a, b in zip(out[key], mapped)]
+        else:
+            out[key] = mapped
     return out
 
 

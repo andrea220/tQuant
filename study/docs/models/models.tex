@@ -413,16 +413,21 @@ flat forward smile) towards Heston ($\eta = 1$).
 \begin{enumerate}[nosep]
   \item the local vol from the surface (\S\ref{sec:mp-lv}), exact;
   \item the Heston parameters from the surface (\S\ref{sec:mp-heston}), with $\xi \to \eta\,\xi$;
-  \item the leverage on the simulated paths. $\E[v_t \mid X_t]$ depends on the law of $(X_t, v_t)$, hence on the leverage at
-        earlier times (a McKean SDE): it is built forward in time on the particles \citep[particle method,][]{guyon2012}.
-        At each step:
+  \item the conditional expectation $\E[v_t \mid X_t]$, on a dedicated simulation. It depends on the law of $(X_t, v_t)$, hence
+        on the leverage at earlier times (a McKean SDE): it is built forward in time on particles
+        \citep[particle method,][]{guyon2012} and stored on a grid (50 time rows a year, 41 nodes per row). At each row:
         \begin{enumerate}[nosep]
-          \item 100 nodes span the 0.1\%--99.9\% quantiles of $\ln X_t$ over the paths;
-          \item $\E[v_t \mid \ln X_t]$ at the nodes is the average of $v_t$ with tent (piecewise linear) weights, each path
-                splitting its weight between its two nodes; nodes with few paths are shrunk to the overall mean of $v_t$
-                (a pseudo-count of 5\% of the paths per node), and the result is floored at $10^{-4}$;
-          \item each path gets $L = \sigma_{\mathrm{loc}}/\sqrt{\E[v \mid X]}$ at its own $\ln X_t$ (capped at 10), and the step is taken.
+          \item 41 nodes span the 0.1\%--99.9\% quantiles of $\ln X_t$ over the particles, widened by 1\% of the range (no
+                particle exactly on an end node);
+          \item $\E[v_t \mid \ln X_t]$ at the nodes is the average of $v_t$ with tent (piecewise linear) weights, each particle
+                splitting its weight between its two nodes; nodes with few particles are shrunk to the overall mean of
+                $v_t$ (a pseudo-count of 5\% of the particles per node), and the result is floored at $10^{-4}$;
+          \item the smoother averages over a node spacing $h$, a bias of order $h^2$ (about $-0.6$ vol points at 3Y ATM
+                on the test surface): the estimate used is the Richardson combination $(4\,\E^{h} - \E^{2h})/3$ of the
+                estimates on the nodes and on every other node, which removes the leading term ($-0.2$);
+          \item each particle gets $L = \sigma_{\mathrm{loc}}/\sqrt{\E[v \mid X]}$ at its own $\ln X_t$ (capped at 10), and the step is taken.
         \end{enumerate}
+        Two speeds: the Heston parameters now and then, this table whenever the surface moves (Heston held);
   \item the mixing factor $\eta$ is not determined by the vanillas: it is set to reprice products that depend on the
         dynamics (forward-start options, barriers, cliquets) when quotes exist, or by judgement.
 \end{enumerate}
@@ -430,20 +435,29 @@ The leverage is far from 1 where Heston and the market disagree: at short maturi
 skew and wings that Heston misses; at long maturities it removes the excess curvature of the Heston smile.
 
 \paragraph{Simulation.} QE step for $v$ (\S\ref{sec:mp-heston}), log step of $X$ with $L$ frozen over the step (the Heston
-log-step coefficients scaled per path by $L$), exact martingale correction per path. The leverage is rebuilt on the
-pricing paths at every pricing, in one pass.
+log-step coefficients scaled per path by $L$), exact martingale correction per path. The pricing paths read the stored
+$\E[v \mid X]$ at their own $\ln X_t$ (linear on the nodes, linear in time between rows); $\sigma_{\mathrm{loc}}$ and $F$ come from the market.
 
-\paragraph{Sensitivities.} By convention the Heston parameters are held and the estimate $\E[v \mid X]$ is not
-differentiated; the leverage moves with the market through the local vol (vol nodes) and the forward (spot, repo,
-dividends, curve):
+\paragraph{Sensitivities.} By convention the Heston parameters are held; the leverage moves with the market through
+the local vol (vol nodes), the forward (spot, repo, dividends, curve) and the table $\E[v \mid X]$, recalibrated on the
+moved market:
 \[
-  \text{quotes} \;\to\; \sigma_{\mathrm{loc}}(t, y),\ F(t) \;\to\; L = \sigma_{\mathrm{loc}}/\sqrt{\E[v \mid X]} \;\to\; X_t \;\to\; S_t = F(t)\,X_t \;\to\; \text{payoff}.
+  \text{quotes} \;\to\; \sigma_{\mathrm{loc}}(t, y),\ F(t),\ \E[v \mid X] \;\to\; L = \sigma_{\mathrm{loc}}/\sqrt{\E[v \mid X]} \;\to\; X_t \;\to\; S_t = F(t)\,X_t \;\to\; \text{payoff}.
 \]
-In exact SLV a vanilla does not depend on the Heston parameters (the leverage compensates them), so the convention
-loses nothing for vanillas: their delta and vega per node are close to the local vol ones. For an exotic the dynamics
-is frozen; its sensitivity to the dynamics (to $\eta$, to a Heston recalibration) is a separate model-risk number.
-Differentiating the estimator itself is unstable (the derivative of the smoother with respect to a path's own position
-is the slope between noisy nodes, compounded over the steps).
+Following \citet[ch.~13]{savine2018}: the pricing gives the direct sensitivities and $\partial V/\partial \E$ (including the move of each path
+on the table), and the market sensitivity is $\mathrm{d}V/\mathrm{d}m = \partial V/\partial m + \sum \partial V/\partial \E \cdot \mathrm{d}\E/\mathrm{d}m$, the second term by the adjoint of
+the table's calibration (one backward pass through it; for a portfolio on one underlying the trades' $\partial V/\partial \E$
+summed, one pass). Both terms are needed: holding the table fixed misplaces the vega of a vanilla between the strikes
+of its expiry and, at long maturities, misses part of it (a quarter of the vega of a 5Y put on the test surface). The
+adjoint requires a smooth estimator (few nodes, end nodes off the particles): its exact derivative follows the
+particle noise of each node and grows along the calibration, and with 100 nodes, or with the Richardson-corrected
+estimate, it diverges. Hence smoothing for risk \citep{savine2018}: two tables on the same nodes and particles, the
+corrected one for the price and the 41-node one for the sensitivities (the paths take the value of the first and the
+derivative of the second). Against bump-and-recalibrate of the corrected model the sensitivities agree within 3\% on
+the node of a vanilla and on the parallel vega, and up to 0.05 per vol point on other nodes. In exact
+SLV a vanilla does not depend on the Heston parameters (the leverage compensates them), so the convention loses nothing
+for vanillas: their delta and vega per node are close to the local vol ones. For an exotic the dynamics is frozen; its
+sensitivity to the dynamics (to $\eta$, to a Heston recalibration) is a separate model-risk number.
 
 \paragraph{Limits.}
 \begin{itemize}[nosep]
@@ -451,7 +465,11 @@ is the slope between noisy nodes, compounded over the steps).
   \item \emph{Estimator}: Monte Carlo noise on the vanillas (more paths than local vol), and choices (nodes, kernel,
         shrinkage, floor, cap) that matter in the wings. On a steep equity surface the short-dated downside is not
         repriced exactly (a few tenths of a vol point, systematic: it does not vanish with more particles).
-  \item \emph{Cost}: local vol and a Heston calibration first, then a sort and a smoother per step.
+  \item \emph{Cost}: a Heston calibration now and then, the two tables whenever the surface moves, two path
+        simulations per price, and the adjoint of the calibration for the market sensitivities.
+  \item \emph{Sensitivities of a smoother model}: the greeks are those of the uncorrected estimator, not exactly of the
+        model that prices. A deterministic estimate of $\E[v \mid X]$ (the Fokker--Planck PDE of the joint density) would
+        make the calibration smooth and remove the trade-off.
   \item \emph{Greeks by convention}: the dynamics risk is not in the greeks.
   \item \emph{Inherited}: the interpolation dependence of local vol and Feller violated in the Heston part.
 \end{itemize}

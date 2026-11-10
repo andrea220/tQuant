@@ -35,7 +35,7 @@ An equity model (\code{models/equitymodel.py}) holds \emph{settings} (how it is 
   \item \code{Model.from\_equity(equity, maturity, strike)}: a process calibrated inside the caller's tape (greeks
         through the calibration), the factory the pricers use when given the class;
   \item \code{model.parameters} (model greeks);\\
-        \code{par\_greeks(model, model\_greeks, market\_greeks)}
+        \code{par\_greeks(model, model\_greeks, market\_greeks, equity)}
         ($\partial V/\partial m = \partial V/\partial m|_{\text{direct}} + \sum_p \partial V/\partial p\,\partial p/\partial m$),
         \code{to\_frames()} / \code{from\_frames()} (settings, parameters, Jacobian in long format, report: exact round
         trip; JSON values for the settings).
@@ -50,12 +50,25 @@ An equity model (\code{models/equitymodel.py}) holds \emph{settings} (how it is 
   \code{LocalVolatilityModel} & grid, wings, $g$ floor & none (vegas direct) & \code{LocalVolatilityProcess} \\
   \code{HestonModel} & martingale correction & $v_0, \kappa, \theta, \xi, \rho$ & \code{HestonProcess} \\
   \code{DisplacedDiffusionModel} & slice parameters & $\beta, \sigma$ per piece & \code{DisplacedDiffusionProcess} \\
-  \code{HestonSLVModel} & mixing, smoother, cap & none (Heston held) & \code{HestonSLVProcess} \\
+  \code{HestonSLVModel} & mixing, cap, particles, nodes & $\E[v \mid X]$ table (Heston held) & \code{HestonSLVProcess} \\
   \bottomrule
 \end{tabular}
 \end{center}
 \code{HestonSLVModel} composes a \code{HestonModel} and a \code{LocalVolatilityModel}; its tables nest theirs
-(\code{heston.*}, \code{local\_vol.*}). \code{GeometricBrownianMotion} stays a process with an option-specific
+(\code{heston.*}, \code{local\_vol.*}) plus the nodes of the leverage table. \code{calibrate\_leverage(equity)} (the
+daily step) runs \code{calibrate\_expectation} (particles of its own, normals seeded per row, \code{tf.function}) and
+stores $\E[v \mid X]$ (parameter \code{expectation}, rows $\times$ nodes) and the nodes (\code{leverage\_table});
+with \code{bias\_correction} (default) a second run on the same nodes, Richardson-corrected and outside the tape, is
+stored as \code{leverage\_table["price\_values"]} (frame \code{leverage\_price\_values}). \code{process} reads them
+(one-hot row picks: dense gradient to the table) and \code{HestonSLVProcess.simulate} returns
+\code{X\_risk + stop\_gradient(X\_price - X\_risk)}: the value of the corrected table, the derivative of the
+parameter (smoothing for risk). The calibration and pricing steps are wrapped in \code{tf.recompute\_grad}
+(check-pointing: only the state $(v, \ln X)$ per step on the tape, the step recomputed in the backward pass; 1Y put
+with AAD about 8~s instead of 25--40~s). \code{map\_model\_greeks} (called by
+\code{par\_greeks}, which then needs the \code{equity}) is the adjoint: the calibration re-run on the stored nodes
+inside a tape, up to the last row with a non-zero $\partial V/\partial \E$, one \code{tape.gradient} with \code{output\_gradients}; the
+default \code{EquityModel.map\_model\_greeks} uses the stored Jacobian. \code{HestonSLVModel.from\_equity} calibrates
+Heston and the table inside the pricing tape (same greeks in one pass; tests in \code{tests/test\_slv\_vega.py}). \code{GeometricBrownianMotion} stays a process with an option-specific
 \code{from\_equity} (vol at $(K, T)$).
 
 The Monte Carlo pricers (\code{VanillaMCPricer}, \code{AutocallableMCPricer}) take a model class or an instance

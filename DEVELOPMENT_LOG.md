@@ -265,6 +265,38 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       LV / SLV greeks identical, Heston and DD par greeks through the stored Jacobian = AAD through the calibration
       (rtol 1e-6), serialization, by-hand models, argument checks. Full suite 265 tests green. Notebook `heston_slv`
       on the instances (SLV family for the barrier: one Heston calibration, `HestonSLVModel(heston_model, mixing=e)`).
+- [x] **SLV vega per node (stored `E[v | X]`, adjoint of the leverage calibration)**: the AAD greeks held
+      `E[v | X]` out of the tape, which misplaced the vega of a vanilla (snapshot, TICKER1, 1Y 80% put, per vol point:
+      0.45 on its node vs 0.57 by bump-and-rebuild of the leverage with common random numbers on all 72 nodes, the rest
+      on other strikes of the same expiry; 5Y put: total 1.09 vs 1.47). Now `E[v | X]` is calibrated on its own
+      particles (`calibrate_expectation`, `HestonSLVModel.calibrate_leverage`: 41 nodes per row, 50 rows a year,
+      normals seeded per row, end nodes 1% beyond the quantiles) and stored as the parameter `expectation`; the
+      pricing reads it (differentiable in the path position and the table); `par_greeks(model, ..., equity=eq)` maps
+      `dV/dE` by the adjoint of the calibration (`EquityModel.map_model_greeks` hook, Savine ch. 13); the class path
+      calibrates inside the pricing tape. Found on the way: a node on a particle (the quantile end nodes) is a kink at
+      the calibration point (one-sided AAD slope, 11% off finite differences on the first row; padded). Smoother bias
+      vs adjoint stability: 41 nodes bias the repricing (snapshot, 3Y 80/100/120%: -0.38/-0.61/-0.53 vol points, 1Y ATM
+      -0.32); 101 nodes or the Richardson combination `(4 E_h - E_2h) / 3` (`bias_correction`) remove most of it
+      (-0.13/-0.23/-0.22, 1Y ATM -0.08) but their adjoint blows up (5Y parallel vega 131x the bumps; 101 nodes still
+      wrong at 200k particles: 0.43 vs 0.60); a stop-gradient on the correction inside one table is wrong too (1Y
+      parallel 0.75-0.93x). Adopted: smoothing for risk (Savine), two tables on the same nodes and particles, the
+      corrected one for the value (outside the tape, `leverage_table["price_values"]`), the 41-node one for the
+      derivative (`X_risk + stop_gradient(X_price - X_risk)`). Checks (`tests/test_slv_vega.py`, synthetic market,
+      20k particles): adjoint par vega = central bumps of the two-stage corrected model (both tables recalibrated)
+      within 3% on the node and its neighbour, 5% on the parallel shift (1Y 1.03), 1Y and 5Y puts; off the node up to
+      0.05 per vol point (1Y, strike below: 0.02 vs 0.07), not tested; class path one pass = instance direct + adjoint
+      (rtol 1e-6). Snapshot (default settings): 1Y 80% put vega 0.52
+      on its node, total 0.69 (Black-Scholes 0.69); 5Y 1.03 on the node, total 1.50 (prototype vs bumps: 1.471 vs
+      1.470, node 1.005 vs 1.014; with the two tables: 1Y total 0.687). Times: Heston 3 s now and then, leverage
+      3.2 s (3Y, one table) / 3.5 s (3Y, two tables) / 5.4 s (10Y, two tables), the corrected price run adds ~40% to
+      a pricing (1Y put, default pricer, price + AAD 28-38 s -> 48-52 s, timings noisy), adjoint 3-9 s (1Y) / 50 s
+      (5Y). Check-pointing (Savine ch. 13): the calibration and pricing steps are wrapped in `tf.recompute_grad`
+      (the tape keeps only `(v, ln X)` per step, the step is recomputed in the backward pass); reverse mode had stored
+      every intermediate of every step for every path (memory bound: the forward under the tape took 13 s instead of
+      1 s). Same numbers (1e-15). Snapshot, default settings (50k paths, 252 steps): 1Y 80% put price + AAD 25-40 s
+      -> 8-9 s, adjoint 9 s -> 2-4 s; 5Y put price + AAD 100-150 s -> 9 s, adjoint 50 s -> 7-9 s; price only 3 s;
+      leverage calibration 4-6 s (both tables, to 5Y). SLV pin repinned; notebooks `heston_slv` (step 3 on the stored table,
+      section 6 by calibration particles, greeks) and `equity_models` updated; Models and Pricing, Architecture.
 - [x] **Faster calibrations (implicit step precomputed)**: the implicit-function derivatives of the Heston and
       displaced diffusion calibrations are computed once at the optimum, eagerly, as numbers (`numericalhandles/
       implicit.py`: `optimality_derivatives` = g, H, dg/dz with one backward pass per parameter; `newton_step`;

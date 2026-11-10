@@ -1,7 +1,8 @@
 """HestonSLVModel: leverage on a Heston market, local vol marginals, forward, greeks (Heston held), pricer wiring.
 
-Light by design: given Heston parameters (no calibration in the model tests), a few thousand paths, checks of the
-model's defining properties rather than pricing precision.
+Light by design: given Heston parameters (no Heston calibration in the model tests), the E[v | X] table calibrated
+on 20k particles up to 1Y, a few thousand pricing paths; checks of the model's defining properties rather than pricing
+precision. Vega per node against bumps: tests/test_slv_vega.py.
 """
 
 import unittest
@@ -31,9 +32,12 @@ def normals(n_paths, n_steps, seed=1):
     return tf.random.stateless_normal([n_paths, n_steps, 2], seed=[seed, 0], dtype=tf.float64)
 
 
+LIGHT = dict(horizon=1.0, n_particles=20_000)
+
+
 def slv(eq, mixing=1.0, **kwargs):
-    """SLV on given Heston parameters (TRUTH) and the local vol of *eq*: no calibration."""
-    return tq.HestonSLVModel(tq.HestonModel(**TRUTH), mixing=mixing, **kwargs).process(eq)
+    """SLV on given Heston parameters (TRUTH) and the local vol of *eq*: leverage calibrated on *eq* up to 1Y."""
+    return tq.HestonSLVModel(tq.HestonModel(**TRUTH), mixing=mixing, **{**LIGHT, **kwargs}).process(eq)
 
 
 def autocallable(strike, underlying):
@@ -101,30 +105,34 @@ class TestModel(unittest.TestCase):
     def test_invalid_inputs(self):
         eq = heston_market().get_equity("HES")
         heston = tq.HestonModel(**TRUTH)
-        for kwargs in (dict(mixing=0.0), dict(mixing=1.5), dict(n_nodes=1)):
+        for kwargs in (dict(mixing=0.0), dict(mixing=1.5), dict(n_nodes=1), dict(n_particles=10)):
             with self.assertRaises(ValueError):
                 tq.HestonSLVModel(heston, **kwargs)
-        model = tq.HestonSLVModel(heston).process(eq)
+        model = tq.HestonSLVModel(heston, horizon=0.5, n_particles=2_000).process(eq)
         self.assertEqual((model.size(), model.noise_size()), (2, 2))
         with self.assertRaises(ValueError):
-            model.evolve([0.5, 1.0], tf.zeros([1000, 2], tf.float64))
+            model.evolve([0.25, 0.5], tf.zeros([1000, 2], tf.float64))
         with self.assertRaises(ValueError):
-            model.evolve([0.5, 1.0], normals(50, 2))                       # fewer paths than nodes
+            model.evolve([0.5, 1.0, 1.5], normals(500, 3))                 # steps beyond the table (horizon 0.5)
 
 
 class TestGreeksAndPricers(unittest.TestCase):
-    """SLV risk convention: Heston parameters held, leverage moving with the market (local vol, forward)."""
+    """SLV risk convention: Heston parameters held, leverage moving with the market (local vol, forward, and the
+    E[v | X] table through its calibration)."""
 
     @slow
     def test_vanilla_greeks_reach_the_market(self):
-        """1Y ATM call: AAD delta and vega per node are finite, vega sits on the 1Y nodes, and both are of the
-        Black-Scholes (sticky strike) size (within 15%: particle estimator, few paths)."""
+        """1Y ATM call, leverage calibrated inside the tape (one backward pass through calibration and pricing):
+        AAD delta and vega per node are finite and of the Black-Scholes (sticky strike) size (within 15%: few
+        paths)."""
         mkt, eq = ssvi_equity()
         surface = eq.vol_surface
         K = float(surface.strike[4])
         df = float(eq.discount_curve.discount(1.0))
         with tf.GradientTape() as tape:
-            s_t = slv(eq).evolve(GRID, normals(5_000, len(GRID)), observation_times=[1.0])[:, 0]
+            process = tq.HestonSLVProcess.from_equity(eq, maturity=1.0, heston=tq.HestonModel(**TRUTH).process(eq),
+                                                      n_particles=20_000)
+            s_t = process.evolve(GRID, normals(5_000, len(GRID)), observation_times=[1.0])[:, 0]
             price = df * tf.reduce_mean(tf.maximum(s_t - K, 0.0))
         delta, vega = tape.gradient(price, [eq.spot, surface.volatility_matrix])
         self.assertTrue(np.all(np.isfinite(vega.numpy())))
