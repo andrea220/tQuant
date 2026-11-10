@@ -9,3 +9,7 @@ python-dateutil==2.9.0.post0
 # examples / study notebooks
 matplotlib==3.11.2
 ipykernel==7.4.0
+
+# tqstudio (web app)
+fastapi==0.162.2
+uvicorn==0.54.0

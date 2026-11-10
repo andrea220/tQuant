@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tqstudio</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>tqstudio</h1>
+    <nav><span class="active">Market data</span></nav>
+    <div class="controls">
+      <label for="ticker">Underlying</label>
+      <select id="ticker"></select>
+      <span id="snapshot" class="muted"></span>
+    </div>
+  </header>
+
+  <main>
+    <p id="status" class="muted">Loading…</p>
+
+    <section>
+      <h2>Summary</h2>
+      <div id="summary" class="cards"></div>
+    </section>
+
+    <section>
+      <h2>Forwards and dividends</h2>
+      <div class="grid2">
+        <div id="forwards"></div>
+        <div id="dividends"></div>
+      </div>
+      <div class="grid2">
+        <div id="chart-forward" class="chart"></div>
+        <div id="chart-divyield" class="chart"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Discount curve <span id="curve-name" class="muted"></span></h2>
+      <div class="grid2">
+        <div id="curve"></div>
+        <div id="chart-curve" class="chart"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Implied volatility surface</h2>
+      <div id="vol"></div>
+      <div class="grid2">
+        <div id="chart-smiles" class="chart"></div>
+        <div id="chart-atm" class="chart"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Correlations</h2>
+      <div id="correlations" class="scroll"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
