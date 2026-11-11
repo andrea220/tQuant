@@ -96,3 +96,39 @@ button:disabled { background: #9db0e8; cursor: wait; }
   .side-foot { display: none; }
   .tradepad { grid-template-columns: 1fr; }
 }
+
+/* home */
+.hero p { margin: 0; max-width: 900px; font-size: 15px; color: #2c3547; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.tile { display: block; border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; background: #fbfcfe;
+        color: var(--text); text-decoration: none; transition: border-color 0.15s, box-shadow 0.15s; }
+a.tile:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(53, 99, 233, 0.12); }
+.tile-title { font-size: 16px; font-weight: 650; color: var(--accent); margin-bottom: 6px; display: flex;
+              align-items: center; gap: 8px; }
+.tile-text { color: var(--muted); font-size: 13.5px; }
+.tile.disabled .tile-title { color: var(--muted); }
+code { font-family: Consolas, monospace; font-size: 12.5px; background: #f0f2f6; padding: 1px 5px; border-radius: 4px; }
+
+/* market data: asset classes, selector */
+.asset-tiles { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)); gap: 14px; margin-bottom: 16px; }
+.asset { width: auto; margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left;
+         padding: 16px 18px; background: var(--panel); color: var(--text); border: 1px solid var(--line);
+         border-radius: var(--radius); box-shadow: var(--shadow); cursor: pointer; }
+.asset:hover { background: var(--panel); border-color: var(--accent); }
+.asset.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.asset-name { font-size: 18px; font-weight: 700; }
+.asset-count { font-size: 12.5px; opacity: 0.75; font-weight: 500; }
+.selector { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.selector label { color: var(--muted); font-weight: 600; font-size: 13px; }
+.selector select { width: auto; min-width: 220px; font-weight: 600; }
+.topbar .controls select { min-width: 120px; }
+details summary { cursor: pointer; margin-bottom: 8px; }
+
+/* tradepad: asset class switch */
+.segmented { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 4px; background: #eef1f6;
+             padding: 4px; border-radius: 9px; margin-bottom: 14px; }
+.segmented button { width: auto; margin: 0; padding: 8px 10px; background: transparent; color: var(--muted);
+                    border-radius: 7px; font-weight: 650; }
+.segmented button:hover { background: rgba(255, 255, 255, 0.6); color: var(--text); }
+.segmented button.active { background: #fff; color: var(--accent); box-shadow: var(--shadow); }
+.tradepad .section-label { margin: 16px 0 10px; }

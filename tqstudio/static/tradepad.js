@@ -1,62 +1,90 @@
-// tqstudio Tradepad: define a deal, pick one model, POST /api/price, show valuation, market inputs and the vega map.
+// tqstudio Tradepad: asset class -> product type -> deal form (built from the product's field list, served by
+// /api/tradepad/catalog) -> model -> POST /api/price; shows valuation, details, vega map and rho per pillar.
 
 const $ = (id) => document.getElementById(id);
-const fmt = (x, d = 4) => (x === null || x === undefined ? "–" : Number(x).toFixed(d));
-const pct = (x, d = 2) => (x === null || x === undefined ? "–" : (100 * x).toFixed(d) + "%");
+const fmtValue = (v, d) => (v === null || v === undefined ? "–"
+  : typeof v === "number" ? v.toLocaleString("en-US", { minimumFractionDigits: d ?? 2, maximumFractionDigits: d ?? 2 })
+    : v);
+const AXIS = { gridcolor: "#eef1f6", zerolinecolor: "#c9d0db", linecolor: "#dde2ea" };
+const FONT = { size: 12, family: "Segoe UI, system-ui, sans-serif", color: "#18202f" };
+const state = { catalog: null, cls: null, product: null };
 
-function showFields() {
-  const product = $("product").value;
-  document.querySelectorAll(".digital").forEach((e) => e.classList.toggle("hidden", product !== "Digital"));
-  document.querySelectorAll(".barrier").forEach((e) => e.classList.toggle("hidden", product !== "Barrier"));
+function spec() { return state.catalog.asset_classes[state.cls][state.product]; }
+
+function fieldHtml(f) {
+  const id = `f-${f.name}`;
+  const input = f.type === "select"
+    ? `<select id="${id}">${f.options.map((o) => `<option${o === f.default ? " selected" : ""}>${o}</option>`).join("")}</select>`
+    : `<input id="${id}" type="${f.type}" value="${f.default}"${f.step ? ` step="${f.step}"` : ""}>`;
+  const wide = f.type === "date" || f.name === "ticker" ? " wide" : "";
+  return `<div class="field${wide}"><label for="${id}">${f.label}</label>${input}</div>`;
+}
+
+function showModelFields() {
   document.querySelectorAll(".mc").forEach((e) => e.classList.toggle("hidden", $("model").value !== "Local vol"));
 }
 
-function request() {
-  return {
-    trade: {
-      ticker: $("ticker").value, product: $("product").value, option_type: $("option_type").value,
-      strike_pct: Number($("strike_pct").value), expiry: $("expiry").value, quantity: Number($("quantity").value),
-      payoff: $("payoff").value, cash_amount: Number($("cash_amount").value),
-      barrier_type: $("barrier_type").value, barrier_pct: Number($("barrier_pct").value),
-    },
-    model: $("model").value,
-    n_paths: Number($("n_paths").value),
-  };
+function selectProduct(product) {
+  state.product = product;
+  const s = spec();
+  $("fields").innerHTML = s.fields.map(fieldHtml).join("");
+  $("model").innerHTML = s.models.map((m) => `<option>${m}</option>`).join("");
+  showModelFields();
 }
 
-const cards = (items, big = 0) => items.map(([l, v], i) =>
-  `<div class="card${i < big ? " big" : ""}"><div class="label">${l}</div><div class="value">${v}</div></div>`).join("");
+function selectClass(cls) {
+  state.cls = cls;
+  document.querySelectorAll(".segmented button").forEach((b) => b.classList.toggle("active", b.dataset.cls === cls));
+  const products = Object.keys(state.catalog.asset_classes[cls]);
+  $("product").innerHTML = products.map((p) => `<option>${p}</option>`).join("");
+  selectProduct(products[0]);
+}
+
+function request() {
+  const fields = {};
+  for (const f of spec().fields) {
+    const v = $(`f-${f.name}`).value;
+    fields[f.name] = f.type === "number" ? Number(v) : v;
+  }
+  return { asset_class: state.cls, product: state.product, fields, model: $("model").value,
+    n_paths: Number($("n_paths").value) };
+}
+
+const cards = (items, big = 0) => items.map(([l, v, d], i) =>
+  `<div class="card${i < big ? " big" : ""}"><div class="label">${l}</div><div class="value">${fmtValue(v, d)}</div></div>`).join("");
 
 function render(d) {
-  const t = d.trade, r = d.result;
-  $("model-info").textContent = r.model + (t.n_paths ? ` · ${t.n_paths.toLocaleString()} paths, ${t.n_steps} steps` : "");
-  $("valuation").innerHTML = cards([
-    ["Price", fmt(r.price)], ["Premium (% spot)", pct(r.unit_price / t.spot, 3)], ["Std error", fmt(r.standard_error)],
-    ["Delta", fmt(r.delta)], ["Vega (1 vol pt)", fmt(r.vega)], ["Rho (1 bp)", fmt(r.rho)],
-    ["Calibration", fmt(r.calibration_s, 1) + " s"], ["Pricing", fmt(r.pricing_s, 1) + " s"]], 2);
-  const market = [["Spot", fmt(t.spot, 2)], ["Strike", fmt(t.strike, 2)], ["Expiry", `${t.expiry} (${fmt(t.T, 2)}y)`],
-    ["Forward", fmt(t.forward, 2)], ["Rate (zero)", pct(t.rate, 3)], ["Discount factor", fmt(t.discount_factor, 5)],
-    ["Repo", pct(t.repo, 3)], ["PV dividends", fmt(t.pv_dividends, 2)], ["Impl. div yield", pct(t.implied_div_yield, 3)],
-    ["Vol at strike", pct(t.vol_at_strike)], ["Vol ATM forward", pct(t.vol_atm_forward)]];
-  if (t.barrier !== null) market.splice(2, 0, ["Barrier", fmt(t.barrier, 2)]);
-  $("market").innerHTML = cards(market);
-  vegaMap(r, d.vega_grid);
+  $("model-info").textContent = `${d.product} · ${d.model}`;
+  $("valuation").innerHTML = cards(d.headline, 2);
+  $("info").innerHTML = cards(d.info);
+
+  $("vega-panel").classList.toggle("hidden", !d.vega);
+  if (d.vega) {
+    const v = d.vega;
+    $("vega-title").textContent = v.title;
+    const scale = Math.max(...v.z.flat().map(Math.abs), 1e-12);
+    const text = v.z.map((row) => row.map((x) => (Math.abs(x) >= 0.01 * scale ? x.toPrecision(3) : "")));
+    Plotly.react($("chart-vega"), [{ type: "heatmap", z: v.z, x: v.x, y: v.y, text, texttemplate: "%{text}",
+      colorscale: "RdBu", reversescale: true, zmin: -scale, zmax: scale }],
+    { margin: { l: 60, r: 20, t: 10, b: 50 }, font: FONT, paper_bgcolor: "rgba(0,0,0,0)",
+      xaxis: { title: v.x_title }, yaxis: { title: v.y_title, autorange: "reversed" } },
+    { displaylogo: false, responsive: true });
+  }
+
+  $("rho-panel").classList.toggle("hidden", !d.rho.length);
+  if (d.rho.length) {
+    Plotly.react($("chart-rho"), d.rho.map((r) => ({ type: "bar", name: r.curve, x: r.dates, y: r.rho })),
+      { margin: { l: 60, r: 20, t: 10, b: 50 }, font: FONT, paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+        barmode: "group", showlegend: true, legend: { orientation: "h", y: 1.12 }, xaxis: { title: "pillar", ...AXIS },
+        yaxis: { title: "rho (1 bp)", ...AXIS }, colorway: ["#3563e9", "#e8833a", "#12805c"] },
+      { displaylogo: false, responsive: true });
+    const head = "<tr><th>Curve</th>" + d.rho[0].dates.map((x) => `<th>${x}</th>`).join("") + "<th>Total</th></tr>";
+    const body = d.rho.map((r) => `<tr><td>${r.curve}</td>` + r.rho.map((x) => `<td>${fmtValue(x, 2)}</td>`).join("")
+      + `<td><b>${fmtValue(r.total, 2)}</b></td></tr>`).join("");
+    $("rho-table").innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  }
   $("results-section").classList.remove("hidden");
   $("empty").classList.add("hidden");
-}
-
-function vegaMap(r, g) {
-  const scale = Math.max(...r.vega_nodes.flat().map(Math.abs), 1e-12);
-  const x = g.moneyness.map((m) => `${(100 * m).toFixed(0)}%`);
-  const y = g.expiries.map((t) => `${t.toFixed(2)}y`);
-  const text = r.vega_nodes.map((row) => row.map((v) => (Math.abs(v) >= 0.005 * scale ? v.toFixed(3) : "")));
-  Plotly.react($("chart-vega"), [{
-    type: "heatmap", z: r.vega_nodes, x, y, text, texttemplate: "%{text}", colorscale: "RdBu", reversescale: true,
-    zmin: -scale, zmax: scale, colorbar: { title: { text: "vega" } },
-  }], {
-    margin: { l: 60, r: 20, t: 10, b: 45 }, xaxis: { title: "strike / spot" }, yaxis: { title: "expiry", autorange: "reversed" },
-    font: { size: 12, family: "Segoe UI, system-ui, sans-serif" }, paper_bgcolor: "rgba(0,0,0,0)",
-  }, { displaylogo: false, responsive: true });
 }
 
 async function price() {
@@ -77,20 +105,15 @@ async function price() {
 }
 
 async function init() {
-  const [opts, tick] = await Promise.all([fetch("/api/tradepad/options").then((r) => r.json()),
-    fetch("/api/tickers").then((r) => r.json())]);
-  $("snapshot").textContent = `snapshot ${opts.snapshot}`;
-  $("ticker").innerHTML = tick.tickers.map((t) => `<option>${t}</option>`).join("");
-  $("product").innerHTML = opts.products.map((p) => `<option>${p}</option>`).join("");
-  $("barrier_type").innerHTML = opts.barrier_types.map((b) => `<option>${b}</option>`).join("");
-  $("model").innerHTML = opts.models.map((m) => `<option>${m}</option>`).join("");
-  const expiry = new Date(opts.snapshot);
-  expiry.setFullYear(expiry.getFullYear() + 1);
-  $("expiry").value = expiry.toISOString().slice(0, 10);
-  $("product").addEventListener("change", showFields);
-  $("model").addEventListener("change", showFields);
+  state.catalog = await (await fetch("/api/tradepad/catalog")).json();
+  $("snapshot").textContent = `snapshot ${state.catalog.snapshot}`;
+  const classes = Object.keys(state.catalog.asset_classes);
+  $("asset-classes").innerHTML = classes.map((c) => `<button data-cls="${c}">${c}</button>`).join("");
+  document.querySelectorAll(".segmented button").forEach((b) => b.addEventListener("click", () => selectClass(b.dataset.cls)));
+  $("product").addEventListener("change", () => selectProduct($("product").value));
+  $("model").addEventListener("change", showModelFields);
   $("price").addEventListener("click", price);
-  showFields();
+  selectClass(classes[0]);
 }
 
 init();

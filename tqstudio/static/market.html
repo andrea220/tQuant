@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tqstudio · Market data</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+</head>
+<body>
+  <aside>
+    <div class="brand">tq<span>studio</span></div>
+    <nav><a href="/">Home</a><a class="active" href="/market">Market data</a><a href="/tradepad">Tradepad</a></nav>
+    <div class="side-foot" id="snapshot"></div>
+  </aside>
+
+  <div class="page">
+    <div class="topbar">
+      <h1>Market data</h1>
+      <div class="controls">
+        <label for="snap-date" class="muted">Date</label><select id="snap-date"></select>
+        <label for="snap-set" class="muted">Set</label><select id="snap-set"></select>
+      </div>
+    </div>
+
+    <main>
+      <div class="asset-tiles" id="asset-tiles">
+        <button class="asset" data-class="equity"><span class="asset-name">Equity</span><span class="asset-count" id="count-equity"></span></button>
+        <button class="asset" data-class="rates"><span class="asset-name">Rates</span><span class="asset-count" id="count-rates"></span></button>
+        <button class="asset" data-class="fx"><span class="asset-name">FX</span><span class="asset-count" id="count-fx"></span></button>
+      </div>
+
+      <div class="selector">
+        <label for="item" id="item-label">Underlying</label>
+        <select id="item"></select>
+        <span id="status" class="muted"></span>
+      </div>
+
+      <!-- equity -->
+      <div id="view-equity" class="hidden">
+        <div class="panel"><h2>Summary</h2><div id="eq-summary" class="cards"></div></div>
+        <div class="panel">
+          <h2>Forwards and dividends</h2>
+          <div class="grid2">
+            <div id="eq-forwards" class="hscroll"></div>
+            <div id="eq-dividends" class="scroll"></div>
+          </div>
+          <div class="grid2" style="margin-top: 14px">
+            <div id="eq-chart-forward" class="chart"></div>
+            <div id="eq-chart-divyield" class="chart"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Implied volatility surface</h2>
+          <div id="eq-vol" class="hscroll"></div>
+          <div class="grid2" style="margin-top: 14px">
+            <div id="eq-chart-smiles" class="chart"></div>
+            <div id="eq-chart-atm" class="chart"></div>
+          </div>
+        </div>
+        <div class="grid2">
+          <div class="panel">
+            <h2>Discount curve <span id="eq-curve-name" class="muted"></span></h2>
+            <div id="eq-curve" class="scroll"></div>
+            <div id="eq-chart-curve" class="chart" style="margin-top: 14px"></div>
+          </div>
+          <div class="panel">
+            <h2>Correlations</h2>
+            <div id="eq-correlations" class="scroll" style="max-height: 690px"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- rates -->
+      <div id="view-rates" class="hidden">
+        <div class="panel"><h2>Summary</h2><div id="ir-summary" class="cards"></div></div>
+        <div class="panel">
+          <h2>Curve</h2>
+          <div class="grid2">
+            <div id="ir-tenors" class="hscroll"></div>
+            <div id="ir-chart-curve" class="chart"></div>
+          </div>
+          <details style="margin-top: 12px"><summary class="muted">Pillars</summary><div id="ir-pillars" class="scroll"></div></details>
+        </div>
+        <div class="panel" id="ir-caplet-panel">
+          <h2>Caplet volatilities <span id="ir-caplet-unit" class="muted"></span></h2>
+          <div id="ir-caplet" class="hscroll"></div>
+          <div id="ir-chart-caplet" class="chart" style="margin-top: 14px"></div>
+        </div>
+        <div class="panel" id="ir-swaption-panel">
+          <h2>Swaption volatilities <span id="ir-swaption-unit" class="muted"></span></h2>
+          <div class="grid2">
+            <div><div class="muted" style="margin-bottom: 6px">ATM (expiry x tenor)</div><div id="ir-swaption-atm" class="hscroll"></div></div>
+            <div id="ir-chart-swaption-atm" class="chart"></div>
+          </div>
+          <div class="selector" style="margin-top: 14px">
+            <label for="ir-swaption-tenor">Smile for tenor</label><select id="ir-swaption-tenor"></select>
+          </div>
+          <div id="ir-chart-swaption-smile" class="chart"></div>
+        </div>
+      </div>
+
+      <!-- fx -->
+      <div id="view-fx" class="hidden">
+        <div class="panel"><h2>Summary</h2><div id="fx-summary" class="cards"></div></div>
+        <div class="panel">
+          <h2>Forwards <span class="muted">(covered interest parity)</span></h2>
+          <div class="grid2">
+            <div id="fx-forwards" class="hscroll"></div>
+            <div id="fx-chart-forward" class="chart"></div>
+          </div>
+        </div>
+        <div class="panel" id="fx-vol-panel">
+          <h2>Implied volatility surface</h2>
+          <div id="fx-vol" class="hscroll"></div>
+          <div class="grid2" style="margin-top: 14px">
+            <div id="fx-chart-smiles" class="chart"></div>
+            <div id="fx-chart-atm" class="chart"></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="/static/market.js"></script>
+</body>
+</html>

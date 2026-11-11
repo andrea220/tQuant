@@ -10,7 +10,7 @@
 <body>
   <aside>
     <div class="brand">tq<span>studio</span></div>
-    <nav><a href="/">Market data</a><a class="active" href="/tradepad">Tradepad</a></nav>
+    <nav><a href="/">Home</a><a href="/market">Market data</a><a class="active" href="/tradepad">Tradepad</a></nav>
     <div class="side-foot" id="snapshot"></div>
   </aside>
 
@@ -19,52 +19,44 @@
 
     <main class="tradepad">
       <div class="panel">
-        <h2>Deal</h2>
+        <div class="segmented" id="asset-classes"></div>
         <div class="form">
-          <div class="field wide"><label for="ticker">Underlying</label><select id="ticker"></select></div>
-          <div class="field"><label for="product">Product</label><select id="product"></select></div>
-          <div class="field"><label for="option_type">Type</label>
-            <select id="option_type"><option>Put</option><option>Call</option></select></div>
-          <div class="field"><label for="strike_pct">Strike (% spot)</label>
-            <input id="strike_pct" type="number" step="0.5" value="100"></div>
-          <div class="field"><label for="quantity">Quantity</label>
-            <input id="quantity" type="number" step="1" value="1"></div>
-          <div class="field wide"><label for="expiry">Expiry</label><input id="expiry" type="date"></div>
-          <div class="field digital"><label for="payoff">Digital payoff</label>
-            <select id="payoff"><option>Cash</option><option>Asset</option></select></div>
-          <div class="field digital"><label for="cash_amount">Cash amount</label>
-            <input id="cash_amount" type="number" step="1" value="100"></div>
-          <div class="field barrier"><label for="barrier_type">Barrier type</label><select id="barrier_type"></select></div>
-          <div class="field barrier"><label for="barrier_pct">Barrier (% spot)</label>
-            <input id="barrier_pct" type="number" step="0.5" value="70"></div>
-
-          <div class="section-label">Model</div>
-          <div class="field"><label for="model">Model</label><select id="model"></select></div>
-          <div class="field mc"><label for="n_paths">MC paths</label>
+          <div class="field wide"><label for="product">Product type</label><select id="product"></select></div>
+        </div>
+        <div class="section-label">Deal</div>
+        <div class="form" id="fields"></div>
+        <div class="section-label">Model</div>
+        <div class="form">
+          <div class="field wide"><label for="model">Model</label><select id="model"></select></div>
+          <div class="field wide mc"><label for="n_paths">MC paths</label>
             <select id="n_paths"><option value="20000">20,000</option><option value="50000" selected>50,000</option>
               <option value="100000">100,000</option></select></div>
         </div>
         <button id="price">Price</button>
         <span id="status" class="muted"></span>
-        <p class="note">Black-Scholes: closed forms at the vol of the strike; digitals as a call / put spread on the
-          smile (strikes K &plusmn; 0.5%); barriers with continuous monitoring. Local vol: Monte Carlo on the calibrated
-          local vol (calibrated on first use per underlying, then cached).</p>
+        <p class="note">Market data: latest snapshot. Greeks by AAD to the market risk factors (rho per curve pillar,
+          vega per vol node).</p>
       </div>
 
       <div>
-        <div id="empty" class="panel empty">Define a deal and press <b>Price</b>.</div>
+        <div id="empty" class="panel empty">Pick a product, fill the deal and press <b>Price</b>.</div>
         <div id="results-section" class="hidden">
           <div class="panel">
             <h2>Valuation <span id="model-info" class="pill"></span></h2>
             <div id="valuation" class="cards"></div>
           </div>
           <div class="panel">
-            <h2>Market at expiry</h2>
-            <div id="market" class="cards"></div>
+            <h2>Details</h2>
+            <div id="info" class="cards"></div>
           </div>
-          <div class="panel">
-            <h2>Vega per surface node <span class="muted">(1 vol point, times the quantity)</span></h2>
+          <div class="panel" id="vega-panel">
+            <h2 id="vega-title">Vega</h2>
             <div id="chart-vega" class="chart" style="height: 400px"></div>
+          </div>
+          <div class="panel" id="rho-panel">
+            <h2>Rho per curve pillar <span class="muted">(1 bp)</span></h2>
+            <div id="chart-rho" class="chart"></div>
+            <div id="rho-table" class="hscroll" style="margin-top: 10px"></div>
           </div>
         </div>
       </div>

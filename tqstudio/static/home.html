@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tqstudio · Home</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <aside>
+    <div class="brand">tq<span>studio</span></div>
+    <nav><a class="active" href="/">Home</a><a href="/market">Market data</a><a href="/tradepad">Tradepad</a></nav>
+    <div class="side-foot" id="snapshot"></div>
+  </aside>
+
+  <div class="page">
+    <div class="topbar"><h1>Home</h1></div>
+
+    <main>
+      <div class="panel hero">
+        <h2>tqstudio</h2>
+        <p>Equity derivatives pricing and risk on the <b>tQuant</b> engine: prices are TensorFlow graphs, so the greeks
+          (delta, vega per surface node, rho per curve pillar) come from automatic differentiation, through the model
+          calibrations. Market data come from the latest snapshot; the engine runs on this machine and the pages are
+          opened from any browser on the network.</p>
+      </div>
+
+      <div class="panel">
+        <h2>Pages</h2>
+        <div class="tiles">
+          <a class="tile" href="/market">
+            <div class="tile-title">Market data</div>
+            <div class="tile-text">One underlying at a glance: spot, repo and dividends, forwards and implied dividend
+              yield, discount curve, implied volatility surface (smiles, ATM term structure), correlations.</div>
+          </a>
+          <a class="tile" href="/tradepad">
+            <div class="tile-title">Tradepad</div>
+            <div class="tile-text">Define a vanilla, digital or barrier option and price it with Black-Scholes (closed
+              forms, digitals as a spread on the smile) or local vol (Monte Carlo): price, delta, vega, rho and the vega
+              per surface node.</div>
+          </a>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Documents</h2>
+        <div class="tiles" id="documents"></div>
+        <p class="note">PDFs built from <code>study/docs</code> (<code>latexmk</code>); open in a new tab.</p>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const TEXT = {
+      models: "Models and Pricing: the models as implemented (dynamics, calibration, closed forms, simulation, " +
+        "sensitivities) and the products.",
+      technical: "Architecture: the library's classes and modules, how market data, products, pricers and models " +
+        "connect, AAD and testing.",
+    };
+    fetch("/api/documents").then((r) => r.json()).then(({ snapshot, documents }) => {
+      document.getElementById("snapshot").textContent = `snapshot ${snapshot}`;
+      document.getElementById("documents").innerHTML = documents.map((d) => d.available
+        ? `<a class="tile" href="/documents/${d.key}" target="_blank" rel="noopener">
+             <div class="tile-title">${d.title} <span class="pill">PDF</span></div>
+             <div class="tile-text">${TEXT[d.key] || ""}</div></a>`
+        : `<div class="tile disabled"><div class="tile-title">${d.title}</div>
+             <div class="tile-text">Not built on this machine: run <code>latexmk</code> in <code>study/docs</code>.</div></div>`
+      ).join("");
+    });
+  </script>
+</body>
+</html>
