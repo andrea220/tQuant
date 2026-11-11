@@ -601,6 +601,48 @@ between the two, and models disagree: local and stochastic vol imply different s
 smile-adjusted delta estimated from history or from a model.
 \end{answer}
 
+\begin{question}{\Theory \diff{1}}{Why is there a skew on equities?}
+Why do equity implied vols rise as the strike falls? Was it always like this?
+\end{question}
+\begin{answer}
+Demand for downside protection (investors buy puts, dealers are short them and charge for it), the leverage effect
+(a falling stock raises the debt-to-equity ratio and the volatility), the negative correlation between spot and vol
+(sell-offs come with vol spikes) and crash risk (jumps down, not up). Before the 1987 crash index smiles were roughly
+flat: the skew is the market pricing in that crashes happen.
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{2}}{What the smile says about the distribution}
+What do the slope and the curvature of the smile tell you about the risk-neutral distribution of the stock?
+\nb{volatility\_smile.ipynb}
+\end{question}
+\begin{answer}
+The risk-neutral density is $\partial^2C/\partial K^2$ (undiscounted, Breeden--Litzenberger). A flat smile is the
+lognormal. A negative skew moves mass to the left tail and thins the right one (negative skewness of $\ln S_T$); the
+curvature fattens both tails (excess kurtosis). In the notebook (TICKER1, 1Y, inside the quoted strikes): skewness
+$-0.33$ against $-0.03$ for the lognormal at the ATM vol, kurtosis higher than the lognormal's ($-0.60$ against $-0.91$,
+both truncated to the quoted range); the density stays positive.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Implied against realised volatility}
+Why is implied vol usually above the vol that is then realised? Who earns the difference?
+\end{question}
+\begin{answer}
+The volatility risk premium: option buyers pay for protection against vol spikes and crashes, which hurt most when
+everything else falls, so sellers demand a premium. Short-vol strategies (selling options delta-hedged, selling
+variance swaps) earn it most of the time and lose it in large amounts in crises: a negatively skewed return, like
+selling insurance.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Term structure of vol and skew}
+How do the ATM vol and the skew change with the expiry, in calm markets and in stress?
+\end{question}
+\begin{answer}
+In calm markets the ATM term structure is upward sloping (short vols low, long vols anchored to the long-run
+average); in stress it inverts (short vols spike, long vols move less). The skew flattens with the expiry, roughly
+like $1/\sqrt T$ (the skew in moneyness per unit of $\sigma\sqrt T$ is more stable), because over long horizons jumps
+and short-term spot--vol effects average out.
+\end{answer}
+
 \begin{question}{\Theory \diff{1}}{Butterfly spreads with calls and with puts}
 What is a butterfly spread built with calls? And with puts? Draw the payoff, and say what its price must satisfy.
 \nb{local\_vol.ipynb}
@@ -665,6 +707,117 @@ Consequences:
 \end{question}
 \begin{answer}
 % TODO
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{2}}{No-arbitrage conditions on the surface}
+When is an implied vol surface free of static arbitrage? Why do people interpolate total variance rather than vol?
+\nb{volatility\_smile.ipynb}
+\end{question}
+\begin{answer}
+Butterfly: call prices convex in the strike on each expiry (non-negative density). Calendar: total implied variance
+$w = \sigma^2T$ non-decreasing in $T$ at fixed forward moneyness. (Plus the price bounds and slopes.) Interpolating
+vols linearly in $T$ or $K$ does not preserve either; interpolating $w$ in $T$ at fixed moneyness keeps the calendar
+condition, and parametric slices (SVI, SSVI) come with conditions that exclude butterfly arbitrage. In the notebook:
+the TICKER1 surface passes both checks; lowering the 1Y ATM node by 10 vol points breaks both (min convexity $-0.24$
+at 1Y, total variance at 6M above 1Y).
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Extrapolating the wings}
+Why can you not extrapolate the smile flat, or linearly in strike, forever? What constrains the wings?
+\end{question}
+\begin{answer}
+The wings price the far tails: a flat extrapolation underprices them, a steep linear one creates arbitrage. Lee's
+moment formula bounds the slope of total variance in log-moneyness: $w(k)/|k| \le 2$ in both wings, the limit
+determined by the highest finite moment of $S_T$ (and of $1/S_T$). Products sensitive to the wings (variance swaps,
+deep OTM options, digitals) depend on the extrapolation choice, so it is part of the model.
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{2}}{Local vol against stochastic vol}
+Local vol and a stochastic local vol model both reprice the vanillas. Why do they give different prices for a barrier
+or a forward-start option?
+\nb{volatility\_smile.ipynb}
+\end{question}
+\begin{answer}
+Vanillas depend only on the distribution of $S_T$ at each expiry, which both reproduce. Path-dependent products depend
+on the joint distribution over time, i.e. on how the smile moves: local vol makes the forward smile flatten (the skew
+is concentrated today), stochastic vol keeps a skew in the future. So barriers, cliquets and forward starts differ,
+and the mixing between the two is a model choice the vanillas cannot pin down (model risk). In the notebook (TICKER1,
+1Y): the ATM call is 23.80, 23.87, 23.62 under local vol and SLV at mixing 0.5 and 1.0 (within the Monte Carlo
+error); the up-and-out call 100/120 is 1.57, 1.83, 2.57, the down-and-out put 100/80 1.74, 1.81, 2.12.
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{2}}{Heston parameters and the smile}
+What does each Heston parameter do to the smile? Why does Heston struggle at short expiries?
+\nb{volatility\_smile.ipynb}
+\end{question}
+\begin{answer}
+$v_0$: the short-dated level; $\theta$: the long-dated level; $\kappa$: how fast the term structure goes from one to the
+other (and how fast the skew decays); $\xi$ (vol of vol): the curvature; $\rho$: the skew (negative on equities). The
+diffusion moves too little in a short time, so a steep short-dated skew needs a very large $\xi$, which then
+over-curves the long expiries: jumps (Bates) or a local vol component are added for the short end. In the notebook
+(base set $v_0 = 0.05$, $\kappa = 1.5$, $\theta = 0.06$, $\xi = 0.6$, $\rho = -0.7$): the 90--110 skew is 8.4 vol points at 1M
+against 9.4 in the market, but 5.1 at 1Y against 3.2.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{SABR}
+What are the SABR parameters and why is SABR the standard for rates smiles?
+\end{question}
+\begin{answer}
+$dF = \alpha F^\beta dW_1$, $d\alpha = \nu\alpha\,dW_2$, $d\langle W_1, W_2\rangle = \rho\,dt$: $\alpha$ the vol level, $\beta$
+the backbone (how the ATM vol moves with the forward; 0 normal, 1 lognormal), $\rho$ the skew, $\nu$ the vol of vol
+(the curvature). Hagan's closed-form implied vol makes calibration per expiry fast, and the dynamics (the smile moves
+with the forward) is right for rates; it is fitted slice by slice (each expiry and tenor), not as one dynamic model.
+The expansion is inaccurate for low strikes and long expiries (negative densities), hence shifted or arbitrage-free
+variants.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Stochastic local vol}
+What does stochastic local vol add to local vol and to stochastic vol? What is the mixing?
+\nb{heston\_slv.ipynb}
+\end{question}
+\begin{answer}
+A stochastic variance (Heston) times a leverage function $L(t, S)$ calibrated so that the marginals are those of the
+local vol model (Gy\"ongy): it reprices the vanillas like local vol and has a stochastic-vol dynamics. The mixing scales
+the vol of vol: at 0 the model is local vol, at 1 the full Heston dynamics with the leverage correcting the smile. It is
+set on exotic quotes (barriers, forward starts) or by judgement, since vanillas do not determine it.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Vega of an exotic under different models}
+Why does the same barrier option have a different vega per surface node under Black--Scholes, local vol and SLV?
+Which one do you hedge with?
+\end{question}
+\begin{answer}
+Black--Scholes puts all the vega on the vol of one strike (or of the barrier), local vol spreads it on the nodes the
+paths cross (with signs that can differ by maturity), SLV in between, depending on the dynamics. The vega per node is
+the hedge in vanillas: the model whose dynamics you believe (and that the desk can calibrate daily) gives the hedge;
+the gap between models is model risk, usually reserved. Total vega can agree while the buckets differ a lot.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Vanna and volga}
+What are vanna and volga? Which positions are full of them? What is the vanna--volga method?
+\end{question}
+\begin{answer}
+Vanna $= \partial^2V/\partial S\partial\sigma = \partial\text{vega}/\partial S$, volga $= \partial^2V/\partial\sigma^2$. A risk reversal is mostly
+vanna (it is long vol on one side, short on the other), a butterfly mostly volga (long the wings). The smile is, to first
+order, the market price of vanna and volga: the vanna--volga method (FX) prices an exotic as its Black--Scholes value
+plus the cost of hedging its vanna and volga with the ATM straddle, the 25-delta risk reversal and the butterfly at
+market prices.
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{3}}{The variance swap}
+How is a variance swap replicated? Why is its strike above the at-the-money vol on a skewed surface?
+\nb{volatility\_smile.ipynb}
+\end{question}
+\begin{answer}
+The payoff $\sigma^2_{\text{realised}} - K_{\text{var}}$ is replicated by a delta-hedged log contract, i.e. a static strip of
+out-of-the-money options weighted $1/K^2$:
+\[
+  K_{\text{var}} = \frac{2}{T\,P(0,T)}\Big(\int_0^F \frac{P(K)}{K^2}\,dK + \int_F^\infty \frac{C(K)}{K^2}\,dK\Big).
+\]
+The low strikes weigh most, so on a negative skew $\sqrt{K_{\text{var}}}$ is above the ATM vol, and depends on the wing
+extrapolation (a very steep skew makes the deep puts dominate; single-stock variance swaps are capped for this
+reason). In the notebook (TICKER1, flat extrapolation beyond the quotes): 36.5\% against an ATM of 31.7\% at 3M, 33.3\%
+against 30.0\% at 1Y; a flat smile gives back the ATM vol; keeping only the 70--130\% strikes gives 29.0\% at 1Y.
 \end{answer}
 
 % ─────────────────────────────────────────────────────────────────────────────
