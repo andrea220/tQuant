@@ -32,7 +32,8 @@ def flat_market(vol: float = VOL) -> MarketEnvironment:
     })
 
 
-def make_autocallable(memory=False, coupon_barrier=80.0, autocall_barrier=100.0, payoff_barrier=80.0):
+def make_autocallable(memory=False, coupon_barrier=80.0, autocall_barrier=100.0, payoff_barrier=80.0,
+                      put_strike=100.0, participation=1.0):
     cal = tq.TARGET()
     mf = tq.BusinessDayConvention.ModifiedFollowing
     sg = tq.ScheduleGenerator(cal, mf)
@@ -43,7 +44,7 @@ def make_autocallable(memory=False, coupon_barrier=80.0, autocall_barrier=100.0,
         ccy=tq.Currency.EUR, notional=1.0, start_date=EVAL_DATE, end_date=end, strike=S0,
         coupon_fixing_dates=cfix, coupon_payment_dates=cfix, coupon_rates=[4.0], coupon_barriers=[coupon_barrier],
         memory=memory, autocall_fixing_dates=afix, autocall_payment_dates=afix, autocall_barrier=[autocall_barrier],
-        payoff_barrier=payoff_barrier, underlying="UND",
+        payoff_barrier=payoff_barrier, payoff_participation=participation, underlying="UND", put_strike=put_strike,
     )
 
 
@@ -65,7 +66,8 @@ def numpy_payoff(product, paths, column, fixings, curve):
             coupons += np.where(paid, amount, 0.0) * df
             if d == product.coupon_fixing_dates[-1]:
                 ki = alive & (s < product.payoff_barrier / 100 * K)
-                put += np.where(ki, np.maximum(K - s, 0) / K, 0.0) * df
+                k_put = product.put_strike / 100 * K
+                put += np.where(ki, product.payoff_participation * np.maximum(k_put - s, 0) / K, 0.0) * df
             unpaid = np.where(paid, 0.0, np.where(alive & ~above, unpaid + 1, unpaid))
         if d in product.autocall_fixing_dates:
             j = product.autocall_fixing_dates.index(d)
@@ -87,14 +89,15 @@ class ACTestCase(unittest.TestCase):
 
 class TestHardPayoff(ACTestCase):
     def test_numpy_replica_on_the_same_paths(self):
-        for memory in (False, True):
-            prod = make_autocallable(memory=memory)
+        """Memory on / off, and a put struck at 90% with a 150% participation (put strike below the barrier)."""
+        for memory, put_strike, participation in ((False, 100.0, 1.0), (True, 100.0, 1.0), (False, 90.0, 1.5)):
+            prod = make_autocallable(memory=memory, put_strike=put_strike, participation=participation)
             pricer = self.price(prod)
             column = {d: int(np.searchsorted(pricer.time_grid, t)) for d, t in zip(
                 pricer.date_grid, [DayCounter(DayCounterConvention.Actual365).year_fraction(EVAL_DATE, d)
                                    for d in pricer.date_grid])}
             c, p = numpy_payoff(prod, pricer.paths, column, pricer.date_grid, self.mkt.get_ir_curve(tq.Currency.EUR))
-            with self.subTest(memory=memory):
+            with self.subTest(memory=memory, put_strike=put_strike):
                 self.assertAlmostEqual(float(prod.coupon_pv), c.mean(), places=12)
                 self.assertAlmostEqual(float(prod.put_pv), p.mean(), places=12)
                 self.assertAlmostEqual(float(prod.price), c.mean() - p.mean(), places=12)

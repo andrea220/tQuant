@@ -21,6 +21,7 @@ from datetime import date, timedelta
 
 import numpy as np
 import tensorflow as tf
+from dateutil.relativedelta import relativedelta
 
 import tensorquant as tq
 
@@ -62,6 +63,11 @@ class ModelCache:
 # product catalog: fields and models
 # ----------------------------------------------------------------------------------------------------------------
 
+def _group(name: str, *fields) -> list:
+    """Fields shown together under the heading *name* (a sub-panel of the deal form)."""
+    return [{**f, "group": name} for f in fields]
+
+
 def _select(name, label, options, default=None):
     return {"name": name, "label": label, "type": "select", "options": list(options),
             "default": default if default is not None else (list(options) or [None])[0]}
@@ -94,6 +100,7 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
     """Asset classes -> product types -> ``{fields, models}`` for the market *mkt* (the form of the Tradepad)."""
     tickers = equity_tickers(mkt)
     one_year = date(mkt.evaluation_date.year + 1, mkt.evaluation_date.month, mkt.evaluation_date.day).isoformat()
+    three_years = date(mkt.evaluation_date.year + 3, mkt.evaluation_date.month, mkt.evaluation_date.day).isoformat()
     underlying = _select("ticker", "Underlying", tickers)
     option = [underlying, _select("option_type", "Type", ["Put", "Call"]), _number("strike_pct", "Strike (% spot)", 100.0, 0.5),
               _date("expiry", "Expiry", one_year), _number("quantity", "Quantity", 1.0)]
@@ -144,15 +151,21 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
                          "models": ["Analytic (swaption cube)"]},
         },
         "Exotics": {
-            "Autocallable": {"fields": [underlying, _number("notional", "Notional", 100.0),
-                                        _select("maturity", "Maturity", ["1Y", "2Y", "3Y", "5Y"], "3Y"),
-                                        _select("frequency", "Observations", ["3M", "6M", "1Y"], "6M"),
-                                        _number("coupon", "Coupon per period (%)", 4.0, 0.25),
-                                        _number("coupon_barrier", "Coupon barrier (%)", 80.0, 1.0),
-                                        _number("autocall_barrier", "Autocall barrier (%)", 100.0, 1.0),
-                                        _select("memory", "Memory coupon", ["Yes", "No"]),
-                                        _number("put_barrier", "Put barrier (%)", 70.0, 1.0)],
-                             "models": ["Local vol"]},
+            "Autocallable": {"fields": [underlying]
+                             + _group("Deal parameters", _number("notional", "Notional", 100.0),
+                                      _date("maturity", "Maturity", three_years))
+                             + _group("Coupon", _select("coupon_type", "Type", ["Standard", "Memory"]),
+                                      _number("coupon", "Coupon per period (%)", 4.0, 0.25),
+                                      _number("coupon_barrier", "Coupon barrier (%)", 80.0, 1.0),
+                                      _select("coupon_frequency", "Frequency", ["3M", "6M", "1Y"], "6M"))
+                             + _group("Final redemption", _number("put_barrier", "Put barrier (%)", 70.0, 1.0),
+                                      _number("put_strike", "Put strike (%)", 100.0, 1.0),
+                                      _number("put_participation", "Put participation (%)", 100.0, 5.0))
+                             + _group("Early redemption (autocall)",
+                                      _number("autocall_barrier", "Autocall barrier (%)", 100.0, 1.0),
+                                      _select("autocall_frequency", "Frequency", ["3M", "6M", "1Y"], "6M"),
+                                      _select("first_autocall", "First observation", ["3M", "6M", "1Y", "2Y"], "1Y")),
+                             "models": ["Local vol"], "create_trade": True},
         },
     }
     return {"snapshot": mkt.evaluation_date.isoformat(), "asset_classes": products}
@@ -181,18 +194,44 @@ def _equity_option(mkt, f: dict, kind: str):
                             barrier_type=tq.BarrierType(f["barrier_type"]), underlying=eq.ticker)
 
 
+def _months(term: str) -> int:
+    return int(term[:-1]) * (12 if term.endswith("Y") else 1)
+
+
+def _backward_dates(today: date, maturity: date, months: int) -> list:
+    """Observation dates rolled backward from the maturity every *months* (each from the unadjusted maturity, then
+    Modified Following): the maturity is always an observation and schedules of different frequencies align."""
+    out, k = [], 0
+    while True:
+        d = maturity - relativedelta(months=k * months)
+        if d <= today:
+            return sorted(set(out))
+        out.append(CAL.adjust(d, MF))
+        k += 1
+
+
 def _autocallable(mkt, f: dict):
+    """Phoenix autocallable struck at the market spot: coupons on their own schedule (standard or memory), autocall
+    observations from the first observation date to maturity, capital-at-risk put (barrier, strike, participation)."""
     eq = mkt.get_equity(f["ticker"])
-    sg = tq.ScheduleGenerator(CAL, MF)
-    end = CAL.advance(mkt.evaluation_date, int(f["maturity"][:-1]), tq.TimeUnit.Years, MF)
-    step = int(f["frequency"][:-1]) * (12 if f["frequency"].endswith("Y") else 1)
-    fixings = sg.generate(mkt.evaluation_date, end, step, tq.TimeUnit.Months)[1:]
+    today = mkt.evaluation_date
+    maturity = date.fromisoformat(f["maturity"])
+    end = CAL.adjust(maturity, MF)
+    if end <= today:
+        raise ValueError("the maturity must be after the pricing date")
+    first = CAL.advance(today, _months(f["first_autocall"]), tq.TimeUnit.Months, MF)
+    if first >= end:
+        raise ValueError("the first autocall observation must be before the maturity")
+    coupons = _backward_dates(today, maturity, _months(f["coupon_frequency"]))
+    autocalls = [d for d in _backward_dates(today, maturity, _months(f["autocall_frequency"])) if d >= first]
     return tq.AutocallableOption(
-        ccy=eq.currency, notional=float(f["notional"]), start_date=mkt.evaluation_date, end_date=end,
-        strike=float(f.get("_ref_spot", eq.spot)), coupon_fixing_dates=fixings, coupon_payment_dates=fixings,
-        coupon_rates=[float(f["coupon"])], coupon_barriers=[float(f["coupon_barrier"])], memory=f["memory"] == "Yes",
-        autocall_fixing_dates=fixings, autocall_payment_dates=fixings, autocall_barrier=[float(f["autocall_barrier"])],
-        payoff_barrier=float(f["put_barrier"]), underlying=eq.ticker)
+        ccy=eq.currency, notional=float(f["notional"]), start_date=today, end_date=end,
+        strike=float(f.get("_ref_spot", eq.spot)), coupon_fixing_dates=coupons, coupon_payment_dates=coupons,
+        coupon_rates=[float(f["coupon"])], coupon_barriers=[float(f["coupon_barrier"])],
+        memory=f["coupon_type"] == "Memory", autocall_fixing_dates=autocalls, autocall_payment_dates=autocalls,
+        autocall_barrier=[float(f["autocall_barrier"])], payoff_barrier=float(f["put_barrier"]),
+        payoff_participation=float(f["put_participation"]) / 100, put_strike=float(f["put_strike"]),
+        underlying=eq.ticker)
 
 
 def _ibor(ccy):
@@ -321,6 +360,38 @@ def market_inputs(mkt: tq.MarketEnvironment, request: dict) -> dict:
     if end is not None:
         info.append(["Maturity", end.isoformat(), None])
     return {"editable": {}, "info": info}
+
+
+def describe_trade(mkt: tq.MarketEnvironment, request: dict) -> dict:
+    """The trade built from the deal fields, before pricing: its main terms and, for the autocallable, the schedule
+    (one row per fixing: fixing date, autocall date when it is an autocall observation, payment date, coupon
+    barrier and coupon amount in % of the strike / notional).
+
+    Returns:
+        dict: ``summary`` (``[label, value, decimals]``) and ``schedule`` (list of rows, or ``None``).
+    """
+    _, f = _fields(mkt, request)
+    if request.get("product") != "Autocallable":
+        return {"summary": [], "schedule": None}
+    product = _autocallable(mkt, f)
+    table = product.schedule_dataframe()
+    schedule = []
+    for _, row in table.iterrows():
+        coupon = row["coupon_rate_pct"] is not None and row["coupon_rate_pct"] == row["coupon_rate_pct"]
+        autocall = row["autocall_barrier_pct"] is not None and row["autocall_barrier_pct"] == row["autocall_barrier_pct"]
+        schedule.append({"fixing_date": row["fixing_date"].isoformat(),
+                         "autocall_date": row["fixing_date"].isoformat() if autocall else None,
+                         "payment_date": row["payment_date"].isoformat(),
+                         "coupon_barrier": float(row["coupon_barrier_pct"]) if coupon else None,
+                         "coupon_amount": float(row["coupon_rate_pct"]) if coupon else None,
+                         "autocall_barrier": float(row["autocall_barrier_pct"]) if autocall else None})
+    summary = [["Strike (initial fixing)", float(product.strike), 2], ["Maturity", product.end_date.isoformat(), None],
+               ["Notional", float(product.notional), 2], ["Coupon type", "Memory" if product.memory else "Standard", None],
+               ["Put", f"barrier {product.payoff_barrier:g}%, strike {product.put_strike:g}%, "
+                       f"participation {100 * product.payoff_participation:g}%", None],
+               ["Coupons / autocall dates", f"{len(product.coupon_fixing_dates)} / {len(product.autocall_fixing_dates)}",
+                None]]
+    return {"summary": summary, "schedule": schedule}
 
 
 @contextmanager

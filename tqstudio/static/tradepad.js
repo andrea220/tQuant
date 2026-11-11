@@ -15,10 +15,67 @@ const spec = () => state.catalog.asset_classes[state.cls][state.product];
 
 // any change of an input clears the results: a price on screen always matches the inputs shown
 function invalidate() {
+  if (state.tradeReady || !$("trade-panel").classList.contains("hidden")) {
+    state.tradeReady = false;
+    $("trade-panel").classList.add("hidden");
+  }
+  updatePriceButton();
+  staleValuation();
   if ($("results-section").classList.contains("hidden")) return;
   $("results-section").classList.add("hidden");
   $("empty").classList.remove("hidden");
-  $("empty").innerHTML = "Inputs changed: press <b>Price</b>.";
+  $("empty").innerHTML = spec().create_trade ? "Inputs changed: press <b>Create trade</b>, then <b>Price</b>."
+    : "Inputs changed: press <b>Price</b>.";
+}
+
+// products with a schedule (autocallable) are created first: the trade is shown, then it can be priced
+function updatePriceButton() {
+  const needsTrade = Boolean(state.catalog && state.product && spec().create_trade);
+  $("create").classList.toggle("hidden", !needsTrade);
+  $("price").disabled = needsTrade && !state.tradeReady;
+}
+
+// the valuation bar in the header: always there, values blanked ("–") as soon as an input changes
+function staleValuation() {
+  const bar = $("valuation-bar");
+  if (bar.classList.contains("stale") || !$("valuation").children.length) return;
+  bar.classList.add("stale");
+  $("valuation").querySelectorAll(".value").forEach((e) => { e.textContent = "–"; });
+  $("model-info").textContent = "Inputs changed";
+  $("override-info").classList.add("hidden");
+}
+
+function clearValuation() {
+  $("valuation-bar").classList.remove("stale");
+  $("valuation").innerHTML = "";
+  $("model-info").textContent = "No valuation yet";
+  $("override-info").classList.add("hidden");
+}
+
+const pct = (x, d = 2) => (x === null || x === undefined ? "" : `${Number(x).toFixed(d)}%`);
+
+async function createTrade() {
+  $("status").textContent = "Creating the trade…";
+  try {
+    const res = await fetch("/api/tradepad/trade", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dealRequest()) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    $("trade-summary").innerHTML = data.summary.map(([l, v, d]) =>
+      `<div><span class="muted">${l}</span><b>${fmtValue(v, d)}</b></div>`).join("");
+    const rows = data.schedule || [];
+    $("trade-schedule").innerHTML = rows.length ? `<table><thead><tr><th>Fixing Date</th><th>Autocall Date</th>
+      <th>Payment Date</th><th>Coupon Barrier</th><th>Coupon Amount</th><th>Autocall Barrier</th></tr></thead><tbody>${
+      rows.map((r) => `<tr><td>${r.fixing_date}</td><td>${r.autocall_date || ""}</td><td>${r.payment_date}</td>
+        <td>${pct(r.coupon_barrier)}</td><td>${pct(r.coupon_amount)}</td><td>${pct(r.autocall_barrier)}</td></tr>`).join("")
+    }</tbody></table>` : "";
+    $("trade-panel").classList.remove("hidden");
+    state.tradeReady = true;
+    updatePriceButton();
+    $("status").textContent = "";
+  } catch (e) {
+    $("status").innerHTML = `<span class="error">Error: ${e.message}</span>`;
+  }
 }
 
 // ---------- form ----------
@@ -44,9 +101,23 @@ function renderForm(keep = {}) {
   const dateField = `<div class="field wide"><label for="pricing-date">Pricing date</label><select id="pricing-date">${
     state.dates.map((d) => `<option${d === state.date ? " selected" : ""}>${d}</option>`).join("")}</select></div>`;
   $("head-fields").innerHTML = fieldHtml(head, keep[head.name]) + dateField;
-  $("fields").innerHTML = rest.map((f) => fieldHtml(f, keep[f.name])).join("");
+  // fields with a group are drawn as sub-panels (in order of first appearance), the others as one grid
+  const groups = [];
+  for (const f of rest) {
+    const g = groups.find((x) => x.name === (f.group || ""));
+    if (g) g.fields.push(f); else groups.push({ name: f.group || "", fields: [f] });
+  }
+  $("fields").innerHTML = groups.map((g) => {
+    const body = g.fields.map((f) => fieldHtml(f, keep[f.name])).join("");
+    return g.name ? `<div class="subpanel"><div class="subpanel-title">${g.name}</div><div class="form deal-form">${body}</div></div>`
+      : `<div class="form deal-form">${body}</div>`;
+  }).join("");
   $("model").innerHTML = s.models.map((m) => `<option>${m}</option>`).join("");
   showModelFields();
+  state.tradeReady = false;
+  $("trade-panel").classList.add("hidden");
+  updatePriceButton();
+  clearValuation();
   $("pricing-date").addEventListener("change", () => changeDate($("pricing-date").value));
   $(`f-${head.name}`).addEventListener("change", () => { state.edited = {}; refreshMarket(); });
   rest.forEach((f) => $(`f-${f.name}`).addEventListener("change", refreshMarket));
@@ -147,7 +218,9 @@ function render(d) {
   const ov = Object.entries(d.overrides || {});
   $("override-info").classList.toggle("hidden", !ov.length);
   $("override-info").textContent = ov.map(([k, v]) => k === "vol" ? `vol ${(100 * v).toFixed(2)}%` : `spot ${v}`).join(" · ");
-  $("valuation").innerHTML = cards(d.headline, 2);
+  $("valuation-bar").classList.remove("stale");
+  $("valuation").innerHTML = d.headline.map(([l, v, dd], i) =>
+    `<div class="vb-card${i === 0 ? " main" : ""}"><div class="label">${l}</div><div class="value">${fmtValue(v, dd)}</div></div>`).join("");
   $("info").innerHTML = cards(d.info);
 
   $("vega-panel").classList.toggle("hidden", !d.vega);
@@ -194,6 +267,7 @@ async function price() {
     $("status").innerHTML = `<span class="error">Error: ${e.message}</span>`;
   } finally {
     $("price").disabled = false;
+    updatePriceButton();
   }
 }
 
@@ -207,6 +281,7 @@ async function init() {
   $("product").addEventListener("change", () => selectProduct($("product").value));
   $("model").addEventListener("change", showModelFields);
   $("price").addEventListener("click", price);
+  $("create").addEventListener("click", createTrade);
   $("reset-market").addEventListener("click", () => { state.edited = {}; invalidate(); loadMarket(); });
   for (const id of ["inputs-left", "deal-panel"]) {
     $(id).addEventListener("input", invalidate);

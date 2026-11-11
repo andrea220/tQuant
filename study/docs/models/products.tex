@@ -109,11 +109,11 @@ sensitivities). Discrete monitoring checks the barrier on the dates, the indicat
 \subsection{Autocallable}\label{sec:mp-autocallable}
 A strike $K$ (the barriers in \% of it); coupon fixings $t_i$ with rates $c_i$, barriers $B^c_i$ and payment dates $p_i$, with or
 without memory; autocall fixings $u_j$ with barriers $B^a_j$; at the last coupon fixing a put knocked in below $B^p$ (observed
-at that date only), with participation $\pi$. Valued on the investor's side, coupons minus put, per unit notional; on each
+at that date only), with strike $K_p$ (by default $K$) and participation $\pi$. Valued on the investor's side, coupons minus put, per unit notional; on each
 path, with $\alpha$ = 1 until the first autocall and $m$ the coupons unpaid so far:
 \[
   V = N\,\E\Big[\sum_i \alpha_{t_i}\,\mathbb 1\{S_{t_i} \ge B^c_i\}\,c_i(1 + m_{t_i})\,P(0,p_i)
-  \;-\; \alpha_T\,\mathbb 1\{S_T < B^p\}\,\pi\,\frac{(K - S_T)^+}{K}\,P(0,p_n)\Big],
+  \;-\; \alpha_T\,\mathbb 1\{S_T < B^p\}\,\pi\,\frac{(K_p - S_T)^+}{K}\,P(0,p_n)\Big],
 \]
 $m$ reset when a coupon is paid and increased by one when it is missed ($m \equiv 0$ without memory); $\alpha$ set to 0 when
 $S_{u_j} \ge B^a_j$. Monte Carlo on a model of \S\ref{sec:mp-models} (local vol by default), on the fixing dates merged with a

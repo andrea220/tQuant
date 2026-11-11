@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 import tensorquant as tq
 
 from .views.market import catalog, equity_tickers, fx_view, market_view, rates_view, snapshots
-from .views.tradepad import ModelCache, market_inputs, price_trade
+from .views.tradepad import ModelCache, describe_trade, market_inputs, price_trade
 from .views.tradepad import catalog as tradepad_catalog
 
 ROOT = Path(__file__).resolve().parent
@@ -134,6 +134,14 @@ def tradepad_products(date: Optional[str] = None) -> dict:
         return engine.tradepad(tradepad_catalog, date)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/tradepad/trade")
+def tradepad_trade(request: dict = Body(...)) -> dict:
+    try:
+        return engine.tradepad(describe_trade, request.get("date"), request)
+    except (KeyError, ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.post("/api/tradepad/market")

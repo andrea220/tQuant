@@ -46,6 +46,7 @@ class AutocallableOption(Product):
         payoff_participation: float = 1.0,
         payoff_type: str = "put",
         underlying: Optional[str] = None,
+        put_strike: float = 100.0,
     ) -> None:
         """
         Initialize an AutocallableOption.
@@ -83,6 +84,7 @@ class AutocallableOption(Product):
         # parametri di payoff scalar
         self.payoff_barrier = float(payoff_barrier)
         self.payoff_participation = float(payoff_participation)
+        self.put_strike = float(put_strike)       # strike of the redemption put, % of the strike (initial level)
         self.memory = memory
 
         # vettori coupon/barriere (con broadcast)

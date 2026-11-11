@@ -15,7 +15,8 @@ class AutocallableMCPricer(Pricer):
     memory, autocall, capital-at-risk put at maturity), from the **investor's side**:
 
     ``NPV = notional * E[ sum_i coupon_i P(0, pay_i) - put P(0, T) ]``,
-    ``put = participation * max(K - S_T, 0) / K`` if ``S_T <= payoff barrier`` and not called.
+    ``put = participation * max(K_put - S_T, 0) / K`` if ``S_T <= payoff barrier`` and not called (``K`` the
+    strike (initial level), the reference of every barrier; ``K_put = put_strike % * K``, default ``K``).
 
     The model is a class, built from the market at every pricing call
     (``model.from_equity(market_env.get_equity(product.underlying), maturity, strike)``, greeks through the
@@ -150,7 +151,8 @@ class AutocallableMCPricer(Pricer):
                 coupon_pv = coupon_pv + alive * above * amount * df_pay
                 if d == last_coupon and product.redemption_payoff is not None:
                     below = 1.0 - self._above(s, product.payoff_barrier / 100.0 * strike, strike)
-                    put = product.payoff_participation * tf.maximum(strike - s, 0.0) / strike
+                    k_put = getattr(product, "put_strike", 100.0) / 100.0 * strike
+                    put = product.payoff_participation * tf.maximum(k_put - s, 0.0) / strike
                     put_pv = put_pv + alive * below * put * df_pay
                 # memory: reset when paid, +1 when missed (alive paths)
                 unpaid = alive * (1.0 - above) * (unpaid + 1.0) + (1.0 - alive) * unpaid
