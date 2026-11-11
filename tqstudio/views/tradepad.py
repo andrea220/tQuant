@@ -6,15 +6,21 @@ fields. Equity options: Black-Scholes closed forms (digitals as a vanilla spread
 Carlo on the calibrated local vol, cached per underlying); autocallables: local vol Monte Carlo; rates products:
 analytic pricers (discounting, Bachelier / Black on caplet vols and on the swaption cube). Greeks by AAD to the market
 risk factors: delta, vega per vol node, rho per curve pillar.
+
+Market inputs of a deal (:func:`market_inputs`: spot, vol at the strike, rate and curve at the expiry) can be
+overridden at pricing (equity: ``spot``, ``vol``): the spot replaces the market spot, the vol shifts the whole surface
+in parallel so that the vol at the strike is the given one; the market is restored after the pricing.
 """
 
 from __future__ import annotations
 
 import math
 import time
-from datetime import date
+from contextlib import contextmanager
+from datetime import date, timedelta
 
 import numpy as np
+import tensorflow as tf
 
 import tensorquant as tq
 
@@ -31,14 +37,14 @@ IBOR = "6M"              # the Ibor index of the rates products (curve IR:<ccy>:
 
 
 class ModelCache:
-    """Calibrated model instances per ``(ticker, model)``, with their calibration time."""
+    """Calibrated model instances per ``(snapshot, ticker, model)``, with their calibration time."""
 
     def __init__(self):
         self._models: dict = {}
 
-    def get(self, eq, name: str) -> tuple:
+    def get(self, eq, name: str, snapshot: str = "") -> tuple:
         """``(model, seconds spent calibrating now)``: 0 when it was already calibrated."""
-        key = (eq.ticker, name)
+        key = (snapshot, eq.ticker, name)
         if key in self._models:
             return self._models[key], 0.0
         t0 = time.perf_counter()
@@ -102,21 +108,13 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
 
     products = {
         "Equity": {
-            "Vanilla": {"fields": option, "models": equity_models},
+            "Vanilla": {"fields": option[:2] + [_select("exercise", "Exercise", ["European", "American"])] + option[2:],
+                        "models": equity_models},
             "Digital": {"fields": option + [_select("payoff", "Payoff", ["Cash", "Asset"]),
                                             _number("cash_amount", "Cash amount", 100.0)], "models": equity_models},
             "Barrier": {"fields": option + [_select("barrier_type", "Barrier type", [b.value for b in tq.BarrierType]),
                                             _number("barrier_pct", "Barrier (% spot)", 70.0, 0.5)],
                         "models": equity_models},
-            "Autocallable": {"fields": [underlying, _number("notional", "Notional", 100.0),
-                                        _select("maturity", "Maturity", ["1Y", "2Y", "3Y", "5Y"], "3Y"),
-                                        _select("frequency", "Observations", ["3M", "6M", "1Y"], "6M"),
-                                        _number("coupon", "Coupon per period (%)", 4.0, 0.25),
-                                        _number("coupon_barrier", "Coupon barrier (%)", 80.0, 1.0),
-                                        _number("autocall_barrier", "Autocall barrier (%)", 100.0, 1.0),
-                                        _select("memory", "Memory coupon", ["Yes", "No"]),
-                                        _number("put_barrier", "Put barrier (%)", 70.0, 1.0)],
-                             "models": ["Local vol"]},
         },
         "Rates": {
             "Deposit": {"fields": rates_common("ois") + [_select("term", "Term", SHORT_TERMS, "6M"),
@@ -145,6 +143,17 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
                                                                _number("strike", "Strike (%)", 2.8, 0.05)],
                          "models": ["Analytic (swaption cube)"]},
         },
+        "Exotics": {
+            "Autocallable": {"fields": [underlying, _number("notional", "Notional", 100.0),
+                                        _select("maturity", "Maturity", ["1Y", "2Y", "3Y", "5Y"], "3Y"),
+                                        _select("frequency", "Observations", ["3M", "6M", "1Y"], "6M"),
+                                        _number("coupon", "Coupon per period (%)", 4.0, 0.25),
+                                        _number("coupon_barrier", "Coupon barrier (%)", 80.0, 1.0),
+                                        _number("autocall_barrier", "Autocall barrier (%)", 100.0, 1.0),
+                                        _select("memory", "Memory coupon", ["Yes", "No"]),
+                                        _number("put_barrier", "Put barrier (%)", 70.0, 1.0)],
+                             "models": ["Local vol"]},
+        },
     }
     return {"snapshot": mkt.evaluation_date.isoformat(), "asset_classes": products}
 
@@ -155,14 +164,15 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
 
 def _equity_option(mkt, f: dict, kind: str):
     eq = mkt.get_equity(f["ticker"])
-    s0 = float(eq.spot)
+    s0 = float(f.get("_ref_spot", eq.spot))   # strikes on the market spot, not on an override
     expiry = date.fromisoformat(f["expiry"])
     if expiry <= mkt.evaluation_date:
         raise ValueError("the expiry must be after the snapshot date")
     option_type = tq.OptionType.Call if f["option_type"] == "Call" else tq.OptionType.Put
     common = (eq.currency, mkt.evaluation_date, expiry, option_type, s0 * float(f["strike_pct"]) / 100)
     if kind == "Vanilla":
-        return tq.VanillaOption(*common, underlying=eq.ticker)
+        exercise = tq.ExerciseType.American if f.get("exercise") == "American" else tq.ExerciseType.European
+        return tq.VanillaOption(*common, underlying=eq.ticker, exercise_type=exercise)
     if kind == "Digital":
         payoff = tq.PayoffType.AssetOrNothing if f.get("payoff") == "Asset" else tq.PayoffType.CashOrNothing
         return tq.DigitalOption(*common, payoff_type=payoff, cash_amount=float(f.get("cash_amount", 1.0)),
@@ -179,7 +189,7 @@ def _autocallable(mkt, f: dict):
     fixings = sg.generate(mkt.evaluation_date, end, step, tq.TimeUnit.Months)[1:]
     return tq.AutocallableOption(
         ccy=eq.currency, notional=float(f["notional"]), start_date=mkt.evaluation_date, end_date=end,
-        strike=float(eq.spot), coupon_fixing_dates=fixings, coupon_payment_dates=fixings,
+        strike=float(f.get("_ref_spot", eq.spot)), coupon_fixing_dates=fixings, coupon_payment_dates=fixings,
         coupon_rates=[float(f["coupon"])], coupon_barriers=[float(f["coupon_barrier"])], memory=f["memory"] == "Yes",
         autocall_fixing_dates=fixings, autocall_payment_dates=fixings, autocall_barrier=[float(f["autocall_barrier"])],
         payoff_barrier=float(f["put_barrier"]), underlying=eq.ticker)
@@ -259,17 +269,127 @@ def _tenor(t: float) -> str:
 
 
 # ----------------------------------------------------------------------------------------------------------------
+# market inputs and overrides
+# ----------------------------------------------------------------------------------------------------------------
+
+def _fields(mkt, request: dict) -> tuple:
+    spec = catalog(mkt)["asset_classes"].get(request.get("asset_class"), {}).get(request.get("product"))
+    if spec is None:
+        raise ValueError(f"unknown product {request.get('asset_class')} / {request.get('product')}")
+    fields = {fld["name"]: fld["default"] for fld in spec["fields"]}
+    fields.update(request.get("fields", {}))
+    return spec, fields
+
+
+def _equity_strike_expiry(mkt, kind: str, f: dict) -> tuple:
+    """Strike and expiry the market inputs refer to (the autocallable: its initial fixing and final date)."""
+    product = _autocallable(mkt, f) if kind == "Autocallable" else _equity_option(mkt, f, kind)
+    return float(product.strike), product.end_date
+
+
+def market_inputs(mkt: tq.MarketEnvironment, request: dict) -> dict:
+    """Market data the deal of *request* uses: equity: spot, vol at the strike and expiry, zero rate of the discount
+    curve at the expiry (and its name), forward, PV of the dividends, repo; rates: the curves and their zero rates
+    at the maturity.
+
+    Returns:
+        dict: ``editable`` (``{spot, vol}`` for equity, else ``{}``) and ``info`` (``[label, value, decimals]``).
+    """
+    _, f = _fields(mkt, request)
+    if request["asset_class"] in ("Equity", "Exotics"):
+        eq = mkt.get_equity(f["ticker"])
+        strike, expiry = _equity_strike_expiry(mkt, request["product"], f)
+        T = eq.year_fraction(expiry)
+        curve = eq.discount_curve
+        _, ccy, name, _ = curve.name.split(":")
+        return {"editable": {"spot": float(eq.spot), "vol": float(eq.vol_surface.volatility(strike=strike, tenor=T))},
+                "info": [["Rate (zero, %)", 100 * float(curve.zero_rate(T)), 3], ["Curve", f"{ccy} {name}", None],
+                         ["Forward", float(eq.forward(T)), 2], ["PV dividends", float(eq.pv_dividends(T)), 2],
+                         ["Repo (%)", 100 * float(eq.repo), 3], ["Strike", strike, 2],
+                         ["Expiry", f"{expiry.isoformat()} ({T:.2f}y)", None]]}
+    product = _rates_product(mkt, f, request["product"])
+    end = getattr(product, "end_date", None) or getattr(product, "expiry", None)
+    if end is None and hasattr(product, "swap"):
+        end = product.swap.end_date
+    ccy = f["ccy"]
+    info = []
+    for key in sorted(k for k in mkt.risk_factors() if k.startswith(f"IR:{ccy}:") and k.endswith(":SPOT")):
+        _, _, name, _ = key.split(":")
+        curve = mkt.get_ir_curve(tq.Currency[ccy], name)
+        if end is not None:
+            info.append([f"{ccy} {name} zero at maturity (%)", 100 * float(curve.zero_rate(end)), 3])
+    if end is not None:
+        info.append(["Maturity", end.isoformat(), None])
+    return {"editable": {}, "info": info}
+
+
+@contextmanager
+def _overridden(eq, overrides: dict, strike: float, T: float):
+    """Temporarily set the spot and shift the vol surface so that the vol at (strike, T) is ``overrides["vol"]``."""
+    spot0 = float(eq.spot)
+    matrix = eq.vol_surface.volatility_matrix
+    vols0 = matrix.numpy().copy()
+    try:
+        if overrides.get("spot") is not None:
+            eq.spot.assign(float(overrides["spot"]))
+        if overrides.get("vol") is not None:
+            shift = float(overrides["vol"]) - float(eq.vol_surface.volatility(strike=strike, tenor=T))
+            matrix.assign(vols0 + shift)
+        yield
+    finally:
+        eq.spot.assign(spot0)
+        matrix.assign(vols0)
+
+
+# ----------------------------------------------------------------------------------------------------------------
 # pricing
 # ----------------------------------------------------------------------------------------------------------------
 
+def _vanilla_gamma_theta(mkt, eq, f, kind, make_pricer, analytic: bool) -> tuple:
+    """Gamma and theta (per calendar day) of one unit. Closed form: gamma by second-order AAD on the spot, theta
+    ``-dV/dT`` by AAD on the pricer's time to maturity. Monte Carlo (the pathwise second derivative of a kinked
+    payoff is zero): gamma as the difference of the AAD deltas at the spot +- 1%, theta as the change of the price
+    with the expiry one day shorter, on the same random numbers."""
+    spot = eq.spot
+    if analytic:
+        option = _equity_option(mkt, f, kind)
+        pricer = make_pricer(option)
+        with tf.GradientTape() as outer:
+            pricer.price(option, mkt, autodiff=True)
+            delta = pricer.tape.gradient(option.price, spot)
+        gamma = float(outer.gradient(delta, spot))
+        option = _equity_option(mkt, f, kind)
+        pricer = make_pricer(option)
+        pricer.price(option, mkt, autodiff=True)
+        theta = -float(pricer.tape.gradient(option.price, option.time_to_maturity)) / 365
+        return gamma, theta
+    s0, h = float(spot), 0.01 * float(spot)
+    deltas = []
+    try:
+        for x in (s0 + h, s0 - h):
+            spot.assign(x)
+            option = _equity_option(mkt, f, kind)
+            pricer = make_pricer(option)
+            pricer.price(option, mkt, autodiff=True)
+            deltas.append(float(pricer.tape.gradient(option.price, spot)))
+    finally:
+        spot.assign(s0)
+    option = _equity_option(mkt, f, kind)
+    make_pricer(option).price(option, mkt)
+    shorter = _equity_option(mkt, {**f, "expiry": (date.fromisoformat(f["expiry"]) - timedelta(days=1)).isoformat()}, kind)
+    make_pricer(option).price(shorter, mkt)
+    return (deltas[0] - deltas[1]) / (2 * h), float(shorter.price) - float(option.price)
+
+
 def _price_equity(mkt, cache, kind, f, model, n_paths, seed) -> dict:
     eq = mkt.get_equity(f["ticker"])
+    snap = mkt.evaluation_date.isoformat()
     s0 = float(eq.spot)
     calibration_s = 0.0
     if kind == "Autocallable":
         product = _autocallable(mkt, f)
         qty = 1.0
-        instance, calibration_s = cache.get(eq, "Local vol")
+        instance, calibration_s = cache.get(eq, "Local vol", snap)
         pricer = tq.AutocallableMCPricer(model=instance, n_paths=int(n_paths), seed=int(seed))
     else:
         product = _equity_option(mkt, f, kind)
@@ -279,7 +399,10 @@ def _price_equity(mkt, cache, kind, f, model, n_paths, seed) -> dict:
             pricer = tq.BlackScholesPricer(dividend_model="discrete" if eq.dividend_model == "discrete" else "continuous",
                                            digital_spread=DIGITAL_SPREAD if kind == "Digital" else None)
         else:
-            instance, calibration_s = cache.get(eq, model)
+            if product.exercise_type == tq.ExerciseType.American:
+                raise ValueError("American exercise is priced with Black-Scholes (Bjerksund-Stensland) only: the local "
+                                 "vol Monte Carlo has no early exercise")
+            instance, calibration_s = cache.get(eq, model, snap)
             T = eq.year_fraction(product.end_date)
             pricer = tq.VanillaMCPricer(model=instance, n_paths=int(n_paths),
                                         n_steps=max(MIN_STEPS, math.ceil(STEPS_PER_YEAR * T)), seed=int(seed))
@@ -312,6 +435,18 @@ def _price_equity(mkt, cache, kind, f, model, n_paths, seed) -> dict:
         info.append(["Vol at strike (%)", 100 * float(eq.vol_surface.volatility(strike=float(product.strike), tenor=T)), 2])
     if instance is not None:
         info.append(["Monte Carlo", f"{int(n_paths):,} paths", None])
+    if kind == "Vanilla":           # the desk's view: delta, gamma, theta, vega, rho as numbers, no maps or timings
+        T_steps = max(MIN_STEPS, math.ceil(STEPS_PER_YEAR * T))
+        if instance is None:
+            make = lambda o: tq.BlackScholesPricer(
+                dividend_model="discrete" if eq.dividend_model == "discrete" else "continuous")
+        else:
+            make = lambda o: tq.VanillaMCPricer(model=instance, n_paths=int(n_paths), n_steps=T_steps, seed=int(seed))
+        gamma, theta = _vanilla_gamma_theta(mkt, eq, f, kind, make, analytic=instance is None)
+        by_label = {h[0]: h for h in headline}
+        headline = [by_label["Price"], by_label["Premium (% spot)"], by_label["Delta"], ["Gamma", qty * gamma, 6],
+                    ["Theta (1 day)", qty * theta, 4], by_label["Vega (1 vol pt)"], by_label["Rho (1 bp)"]]
+        vega, rho = None, []
     return {"headline": headline, "info": info, "vega": vega, "rho": rho}
 
 
@@ -368,7 +503,8 @@ def _price_rates(mkt, kind, f) -> dict:
 
 def price_trade(mkt: tq.MarketEnvironment, cache: ModelCache, request: dict, n_paths: int = 50_000,
                 seed: int = 1) -> dict:
-    """Price ``request = {asset_class, product, fields, model}``.
+    """Price ``request = {asset_class, product, fields, model, overrides}`` (``overrides``: equity ``spot`` / ``vol``,
+    see :func:`_overridden`).
 
     Returns:
         dict: ``headline`` and ``info`` (``[label, value, decimals]``), ``vega`` (map: ``z``, axes, ``total``, or
@@ -377,16 +513,18 @@ def price_trade(mkt: tq.MarketEnvironment, cache: ModelCache, request: dict, n_p
     Raises:
         ValueError: Unknown asset class, product or model, or invalid fields.
     """
-    spec = catalog(mkt)["asset_classes"].get(request.get("asset_class"), {}).get(request.get("product"))
-    if spec is None:
-        raise ValueError(f"unknown product {request.get('asset_class')} / {request.get('product')}")
+    spec, fields = _fields(mkt, request)
     model = request.get("model") or spec["models"][0]
     if model not in spec["models"]:
         raise ValueError(f"model {model} not available for {request['product']}: {spec['models']}")
-    fields = {fld["name"]: fld["default"] for fld in spec["fields"]}
-    fields.update(request.get("fields", {}))
-    if request["asset_class"] == "Equity":
-        out = _price_equity(mkt, cache, request["product"], fields, model, n_paths, seed)
+    overrides = {k: v for k, v in (request.get("overrides") or {}).items() if v is not None}
+    if request["asset_class"] in ("Equity", "Exotics"):
+        eq = mkt.get_equity(fields["ticker"])
+        strike, expiry = _equity_strike_expiry(mkt, request["product"], fields)
+        fields["_ref_spot"] = float(eq.spot)       # the deal's strikes stay on the market spot under an override
+        with _overridden(eq, overrides, strike, eq.year_fraction(expiry)):
+            out = _price_equity(mkt, cache, request["product"], fields, model, n_paths, seed)
     else:
         out = _price_rates(mkt, request["product"], fields)
-    return {**out, "model": model, "product": request["product"]}
+    return {**out, "model": model, "product": request["product"], "overrides": overrides,
+            "snapshot": mkt.evaluation_date.isoformat()}

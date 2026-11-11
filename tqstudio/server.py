@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 import tensorquant as tq
 
 from .views.market import catalog, equity_tickers, fx_view, market_view, rates_view, snapshots
-from .views.tradepad import ModelCache, price_trade
+from .views.tradepad import ModelCache, market_inputs, price_trade
 from .views.tradepad import catalog as tradepad_catalog
 
 ROOT = Path(__file__).resolve().parent
@@ -48,9 +48,10 @@ class Engine:
 
     def snapshot(self, day: Optional[str], calibration_set: Optional[str]) -> tq.MarketEnvironment:
         """The market of a snapshot (``None``: the latest date / set), evaluation date set (call under the lock)."""
-        mkt = self.markets.get((day, calibration_set)) if day and calibration_set else None
+        mkt = self.markets.get((day or None, calibration_set or None))
         if mkt is None:
             mkt = self._load(day, calibration_set)
+            self.markets[(day or None, calibration_set or None)] = mkt      # also under the requested key
         tq.Settings.evaluation_date = mkt.evaluation_date
         return mkt
 
@@ -63,9 +64,15 @@ class Engine:
             return self.views[cache_key]
 
     def price(self, request: dict) -> dict:
+        """Tradepad pricing on the snapshot of ``request["date"]`` (latest set of that date; latest when absent)."""
         with self.lock:
-            tq.Settings.evaluation_date = self.market.evaluation_date
-            return price_trade(self.market, self.models, request, n_paths=int(request.get("n_paths", 50_000)))
+            mkt = self.snapshot(request.get("date"), None)
+            return price_trade(mkt, self.models, request, n_paths=int(request.get("n_paths", 50_000)))
+
+    def tradepad(self, build, day: Optional[str] = None, request: Optional[dict] = None):
+        with self.lock:
+            mkt = self.snapshot(day, None)
+            return build(mkt) if request is None else build(mkt, request)
 
 
 engine = Engine(MARKET_DATA)
@@ -122,10 +129,19 @@ def market_fx(pair: str, date: Optional[str] = None, set: Optional[str] = None) 
 
 
 @app.get("/api/tradepad/catalog")
-def tradepad_products() -> dict:
-    with engine.lock:
-        tq.Settings.evaluation_date = engine.market.evaluation_date
-        return tradepad_catalog(engine.market)
+def tradepad_products(date: Optional[str] = None) -> dict:
+    try:
+        return engine.tradepad(tradepad_catalog, date)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/tradepad/market")
+def tradepad_market(request: dict = Body(...)) -> dict:
+    try:
+        return engine.tradepad(market_inputs, request.get("date"), request)
+    except (KeyError, ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.post("/api/price")

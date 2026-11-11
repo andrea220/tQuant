@@ -1,5 +1,6 @@
-// tqstudio Tradepad: asset class -> product type -> deal form (built from the product's field list, served by
-// /api/tradepad/catalog) -> model -> POST /api/price; shows valuation, details, vega map and rho per pillar.
+// tqstudio Tradepad: asset class -> product type -> underlying / currency -> pricing date -> market inputs (spot and
+// vol editable for equity) -> deal fields (from the product's field list, /api/tradepad/catalog) -> model ->
+// POST /api/price; shows valuation, details, vega map and rho per pillar.
 
 const $ = (id) => document.getElementById(id);
 const fmtValue = (v, d) => (v === null || v === undefined ? "–"
@@ -7,17 +8,50 @@ const fmtValue = (v, d) => (v === null || v === undefined ? "–"
     : v);
 const AXIS = { gridcolor: "#eef1f6", zerolinecolor: "#c9d0db", linecolor: "#dde2ea" };
 const FONT = { size: 12, family: "Segoe UI, system-ui, sans-serif", color: "#18202f" };
-const state = { catalog: null, cls: null, product: null };
+// market: the snapshot values of the editable inputs; edited: inputs the user changed (kept until reset)
+const state = { catalog: null, dates: [], date: null, cls: null, product: null, market: {}, edited: {} };
 
-function spec() { return state.catalog.asset_classes[state.cls][state.product]; }
+const spec = () => state.catalog.asset_classes[state.cls][state.product];
 
-function fieldHtml(f) {
+// any change of an input clears the results: a price on screen always matches the inputs shown
+function invalidate() {
+  if ($("results-section").classList.contains("hidden")) return;
+  $("results-section").classList.add("hidden");
+  $("empty").classList.remove("hidden");
+  $("empty").innerHTML = "Inputs changed: press <b>Price</b>.";
+}
+
+// ---------- form ----------
+function fieldHtml(f, value) {
   const id = `f-${f.name}`;
+  const v = value ?? f.default;
   const input = f.type === "select"
-    ? `<select id="${id}">${f.options.map((o) => `<option${o === f.default ? " selected" : ""}>${o}</option>`).join("")}</select>`
-    : `<input id="${id}" type="${f.type}" value="${f.default}"${f.step ? ` step="${f.step}"` : ""}>`;
+    ? `<select id="${id}">${f.options.map((o) => `<option${String(o) === String(v) ? " selected" : ""}>${o}</option>`).join("")}</select>`
+    : `<input id="${id}" type="${f.type}" value="${v}"${f.step ? ` step="${f.step}"` : ""}>`;
   const wide = f.type === "date" || f.name === "ticker" ? " wide" : "";
   return `<div class="field${wide}"><label for="${id}">${f.label}</label>${input}</div>`;
+}
+
+function currentValues() {
+  const out = {};
+  document.querySelectorAll("[id^='f-']").forEach((e) => { out[e.id.slice(2)] = e.value; });
+  return out;
+}
+
+function renderForm(keep = {}) {
+  const s = spec();
+  const [head, ...rest] = s.fields;                                   // underlying (or currency) first
+  const dateField = `<div class="field wide"><label for="pricing-date">Pricing date</label><select id="pricing-date">${
+    state.dates.map((d) => `<option${d === state.date ? " selected" : ""}>${d}</option>`).join("")}</select></div>`;
+  $("head-fields").innerHTML = fieldHtml(head, keep[head.name]) + dateField;
+  $("fields").innerHTML = rest.map((f) => fieldHtml(f, keep[f.name])).join("");
+  $("model").innerHTML = s.models.map((m) => `<option>${m}</option>`).join("");
+  showModelFields();
+  $("pricing-date").addEventListener("change", () => changeDate($("pricing-date").value));
+  $(`f-${head.name}`).addEventListener("change", () => { state.edited = {}; refreshMarket(); });
+  rest.forEach((f) => $(`f-${f.name}`).addEventListener("change", refreshMarket));
+  state.edited = {};
+  refreshMarket();
 }
 
 function showModelFields() {
@@ -26,10 +60,7 @@ function showModelFields() {
 
 function selectProduct(product) {
   state.product = product;
-  const s = spec();
-  $("fields").innerHTML = s.fields.map(fieldHtml).join("");
-  $("model").innerHTML = s.models.map((m) => `<option>${m}</option>`).join("");
-  showModelFields();
+  renderForm();
 }
 
 function selectClass(cls) {
@@ -40,21 +71,82 @@ function selectClass(cls) {
   selectProduct(products[0]);
 }
 
-function request() {
+async function loadCatalog() {
+  state.catalog = await (await fetch(`/api/tradepad/catalog?date=${state.date}`)).json();
+  $("snapshot").textContent = `snapshot ${state.catalog.snapshot}`;
+}
+
+async function changeDate(day) {
+  const keep = currentValues();
+  state.date = day;
+  await loadCatalog();
+  if (!state.catalog.asset_classes[state.cls][state.product]) { selectClass(state.cls); return; }
+  renderForm(keep);
+}
+
+// ---------- market inputs ----------
+const EDITABLE = { spot: { label: "Spot", scale: 1, step: 0.01, digits: 2 },
+  vol: { label: "Vol at strike (%)", scale: 100, step: 0.1, digits: 2 } };
+
+function dealRequest() {
   const fields = {};
   for (const f of spec().fields) {
     const v = $(`f-${f.name}`).value;
     fields[f.name] = f.type === "number" ? Number(v) : v;
   }
-  return { asset_class: state.cls, product: state.product, fields, model: $("model").value,
-    n_paths: Number($("n_paths").value) };
+  return { asset_class: state.cls, product: state.product, fields, date: state.date };
 }
 
+let marketTimer = null;
+function refreshMarket() {
+  clearTimeout(marketTimer);
+  marketTimer = setTimeout(loadMarket, 200);
+}
+
+async function loadMarket() {
+  try {
+    const res = await fetch("/api/tradepad/market", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dealRequest()) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    state.market = data.editable;
+    $("market-edit").innerHTML = Object.entries(data.editable).map(([k, v]) => {
+      const e = EDITABLE[k];
+      const shown = state.edited[k] ?? v * e.scale;
+      return `<div class="field"><label for="m-${k}">${e.label}</label><input id="m-${k}" type="number" step="${e.step}" `
+        + `value="${Number(shown).toFixed(e.digits)}" class="${state.edited[k] !== undefined ? "edited" : ""}"></div>`;
+    }).join("");
+    Object.keys(data.editable).forEach((k) => $(`m-${k}`).addEventListener("input", (ev) => {
+      state.edited[k] = Number(ev.target.value);
+      ev.target.classList.add("edited");
+      $("reset-market").classList.remove("hidden");
+    }));
+    $("reset-market").classList.toggle("hidden", !Object.keys(state.edited).length);
+    $("market-info").innerHTML = data.info.map(([l, v, d]) =>
+      `<div><span class="muted">${l}</span><b>${fmtValue(v, d)}</b></div>`).join("");
+  } catch (e) {
+    $("market-info").innerHTML = `<span class="error">${e.message}</span>`;
+  }
+}
+
+function overrides() {
+  const out = {};
+  for (const [k, v] of Object.entries(state.edited)) {
+    const e = EDITABLE[k];
+    if (Math.abs(v - state.market[k] * e.scale) > 1e-9) out[k] = v / e.scale;
+  }
+  return out;
+}
+
+// ---------- pricing ----------
 const cards = (items, big = 0) => items.map(([l, v, d], i) =>
   `<div class="card${i < big ? " big" : ""}"><div class="label">${l}</div><div class="value">${fmtValue(v, d)}</div></div>`).join("");
 
 function render(d) {
-  $("model-info").textContent = `${d.product} · ${d.model}`;
+  $("model-info").textContent = `${d.product} · ${d.model} · ${d.snapshot}`;
+  const ov = Object.entries(d.overrides || {});
+  $("override-info").classList.toggle("hidden", !ov.length);
+  $("override-info").textContent = ov.map(([k, v]) => k === "vol" ? `vol ${(100 * v).toFixed(2)}%` : `spot ${v}`).join(" · ");
   $("valuation").innerHTML = cards(d.headline, 2);
   $("info").innerHTML = cards(d.info);
 
@@ -91,8 +183,9 @@ async function price() {
   $("price").disabled = true;
   $("status").textContent = $("model").value === "Local vol" ? "Pricing… (first use calibrates the local vol)" : "Pricing…";
   try {
+    const body = { ...dealRequest(), model: $("model").value, n_paths: Number($("n_paths").value), overrides: overrides() };
     const res = await fetch("/api/price", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request()) });
+      body: JSON.stringify(body) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
     render(data);
@@ -105,14 +198,21 @@ async function price() {
 }
 
 async function init() {
-  state.catalog = await (await fetch("/api/tradepad/catalog")).json();
-  $("snapshot").textContent = `snapshot ${state.catalog.snapshot}`;
+  state.dates = (await (await fetch("/api/snapshots")).json()).snapshots.map((s) => s.date);
+  state.date = state.dates[0];
+  await loadCatalog();
   const classes = Object.keys(state.catalog.asset_classes);
   $("asset-classes").innerHTML = classes.map((c) => `<button data-cls="${c}">${c}</button>`).join("");
   document.querySelectorAll(".segmented button").forEach((b) => b.addEventListener("click", () => selectClass(b.dataset.cls)));
   $("product").addEventListener("change", () => selectProduct($("product").value));
   $("model").addEventListener("change", showModelFields);
   $("price").addEventListener("click", price);
+  $("reset-market").addEventListener("click", () => { state.edited = {}; invalidate(); loadMarket(); });
+  for (const id of ["inputs-left", "deal-panel"]) {
+    $(id).addEventListener("input", invalidate);
+    $(id).addEventListener("change", invalidate);
+    $(id).addEventListener("click", (ev) => { if (ev.target.closest(".segmented button")) invalidate(); });
+  }
   selectClass(classes[0]);
 }
 

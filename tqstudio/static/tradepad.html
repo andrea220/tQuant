@@ -18,35 +18,47 @@
     <div class="topbar"><h1>Tradepad</h1></div>
 
     <main class="tradepad">
-      <div class="panel">
+      <!-- left: what is priced and on which market -->
+      <div class="panel" id="inputs-left">
         <div class="segmented" id="asset-classes"></div>
         <div class="form">
           <div class="field wide"><label for="product">Product type</label><select id="product"></select></div>
         </div>
-        <div class="section-label">Deal</div>
-        <div class="form" id="fields"></div>
-        <div class="section-label">Model</div>
-        <div class="form">
-          <div class="field wide"><label for="model">Model</label><select id="model"></select></div>
-          <div class="field wide mc"><label for="n_paths">MC paths</label>
-            <select id="n_paths"><option value="20000">20,000</option><option value="50000" selected>50,000</option>
-              <option value="100000">100,000</option></select></div>
-        </div>
-        <button id="price">Price</button>
-        <span id="status" class="muted"></span>
-        <p class="note">Market data: latest snapshot. Greeks by AAD to the market risk factors (rho per curve pillar,
-          vega per vol node).</p>
+        <div class="form" id="head-fields" style="margin-top: 12px"></div>
+
+        <div class="section-label">Market <button id="reset-market" class="link hidden" type="button">reset to market</button></div>
+        <div class="form" id="market-edit"></div>
+        <div id="market-info" class="mini-info"></div>
+        <p class="note">Spot and vol can be edited to reprice: the spot replaces the market spot (strikes stay on the
+          market spot), the vol shifts the whole surface in parallel so that the vol at the strike is the one entered.</p>
       </div>
 
+      <!-- right: the deal, then the results -->
       <div>
-        <div id="empty" class="panel empty">Pick a product, fill the deal and press <b>Price</b>.</div>
+        <div class="panel" id="deal-panel">
+          <h2>Deal</h2>
+          <div class="form deal-form" id="fields"></div>
+          <div class="section-label">Model</div>
+          <div class="form deal-form">
+            <div class="field"><label for="model">Model</label><select id="model"></select></div>
+            <div class="field mc"><label for="n_paths">MC paths</label>
+              <select id="n_paths"><option value="20000">20,000</option><option value="50000" selected>50,000</option>
+                <option value="100000">100,000</option></select></div>
+          </div>
+          <div class="price-row">
+            <button id="price">Price</button>
+            <span id="status" class="muted"></span>
+          </div>
+        </div>
+
+        <div id="empty" class="panel empty">Fill the deal and press <b>Price</b>.</div>
         <div id="results-section" class="hidden">
           <div class="panel">
-            <h2>Valuation <span id="model-info" class="pill"></span></h2>
+            <h2>Valuation <span id="model-info" class="pill"></span> <span id="override-info" class="pill warn hidden"></span></h2>
             <div id="valuation" class="cards"></div>
           </div>
           <div class="panel">
-            <h2>Details</h2>
+            <h2>Pricing details</h2>
             <div id="info" class="cards"></div>
           </div>
           <div class="panel" id="vega-panel">
