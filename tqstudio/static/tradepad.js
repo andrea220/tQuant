@@ -6,6 +6,17 @@ const $ = (id) => document.getElementById(id);
 const fmtValue = (v, d) => (v === null || v === undefined ? "–"
   : typeof v === "number" ? v.toLocaleString("en-US", { minimumFractionDigits: d ?? 2, maximumFractionDigits: d ?? 2 })
     : v);
+// numeric inputs are text fields in en-US format ("." decimals, "," thousands) whatever the browser locale
+const parseNum = (text) => Number(String(text).replace(/,/g, "").trim());
+const fmtInput = (v, d) => (d === undefined
+  ? Number(v).toLocaleString("en-US", { maximumFractionDigits: 10 })
+  : Number(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }));
+document.addEventListener("focusout", (ev) => {           // re-format a numeric field when leaving it
+  const e = ev.target;
+  if (e.matches && e.matches("input[data-num]") && Number.isFinite(parseNum(e.value))) {
+    e.value = fmtInput(parseNum(e.value), e.dataset.digits === undefined ? undefined : Number(e.dataset.digits));
+  }
+});
 const AXIS = { gridcolor: "#eef1f6", zerolinecolor: "#c9d0db", linecolor: "#dde2ea" };
 const FONT = { size: 12, family: "Segoe UI, system-ui, sans-serif", color: "#18202f" };
 // market: the snapshot values of the editable inputs; edited: inputs the user changed (kept until reset)
@@ -24,7 +35,7 @@ function invalidate() {
   if ($("results-section").classList.contains("hidden")) return;
   $("results-section").classList.add("hidden");
   $("empty").classList.remove("hidden");
-  $("empty").innerHTML = spec().create_trade ? "Inputs changed: press <b>Create trade</b>, then <b>Price</b>."
+  $("empty").innerHTML = spec().create_trade ? "Inputs changed: press <b>Build trade</b>, then <b>Price</b>."
     : "Inputs changed: press <b>Price</b>.";
 }
 
@@ -55,7 +66,7 @@ function clearValuation() {
 const pct = (x, d = 2) => (x === null || x === undefined ? "" : `${Number(x).toFixed(d)}%`);
 
 async function createTrade() {
-  $("status").textContent = "Creating the trade…";
+  $("status").textContent = "Building the trade…";
   try {
     const res = await fetch("/api/tradepad/trade", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(dealRequest()) });
@@ -84,7 +95,9 @@ function fieldHtml(f, value) {
   const v = value ?? f.default;
   const input = f.type === "select"
     ? `<select id="${id}">${f.options.map((o) => `<option${String(o) === String(v) ? " selected" : ""}>${o}</option>`).join("")}</select>`
-    : `<input id="${id}" type="${f.type}" value="${v}"${f.step ? ` step="${f.step}"` : ""}>`;
+    : f.type === "number"
+      ? `<input id="${id}" type="text" inputmode="decimal" data-num value="${fmtInput(v)}">`
+      : `<input id="${id}" type="${f.type}" value="${v}">`;
   const wide = f.type === "date" || f.name === "ticker" ? " wide" : "";
   return `<div class="field${wide}"><label for="${id}">${f.label}</label>${input}</div>`;
 }
@@ -163,7 +176,7 @@ function dealRequest() {
   const fields = {};
   for (const f of spec().fields) {
     const v = $(`f-${f.name}`).value;
-    fields[f.name] = f.type === "number" ? Number(v) : v;
+    fields[f.name] = f.type === "number" ? parseNum(v) : v;
   }
   return { asset_class: state.cls, product: state.product, fields, date: state.date };
 }
@@ -184,20 +197,44 @@ async function loadMarket() {
     $("market-edit").innerHTML = Object.entries(data.editable).map(([k, v]) => {
       const e = EDITABLE[k];
       const shown = state.edited[k] ?? v * e.scale;
-      return `<div class="field"><label for="m-${k}">${e.label}</label><input id="m-${k}" type="number" step="${e.step}" `
-        + `value="${Number(shown).toFixed(e.digits)}" class="${state.edited[k] !== undefined ? "edited" : ""}"></div>`;
+      return `<div class="field"><label for="m-${k}">${e.label}</label><input id="m-${k}" type="text" inputmode="decimal" `
+        + `data-num data-digits="${e.digits}" value="${fmtInput(shown, e.digits)}" `
+        + `class="${state.edited[k] !== undefined ? "edited" : ""}"></div>`;
     }).join("");
     Object.keys(data.editable).forEach((k) => $(`m-${k}`).addEventListener("input", (ev) => {
-      state.edited[k] = Number(ev.target.value);
+      state.edited[k] = parseNum(ev.target.value);
       ev.target.classList.add("edited");
       $("reset-market").classList.remove("hidden");
     }));
     $("reset-market").classList.toggle("hidden", !Object.keys(state.edited).length);
     $("market-info").innerHTML = data.info.map(([l, v, d]) =>
       `<div><span class="muted">${l}</span><b>${fmtValue(v, d)}</b></div>`).join("");
+    renderDividends(data);
   } catch (e) {
     $("market-info").innerHTML = `<span class="error">${e.message}</span>`;
   }
+}
+
+// equity products: the underlying's dividends with ex-date up to the expiry
+function renderDividends(data) {
+  const show = state.cls === "Equity" && data.dividends !== undefined;
+  $("div-panel").classList.toggle("hidden", !show);
+  if (!show) return;
+  const rows = data.dividends;
+  const model = data.dividend_model || {};
+  if (!rows.length) {
+    $("div-total").textContent = "";
+    $("div-table").innerHTML = model.model === "continuous"
+      ? `<p class="muted">Continuous dividend yield ${fmtValue(100 * model.yield, 3)}%.</p>`
+      : '<p class="muted">No dividends before the expiry.</p>';
+    return;
+  }
+  const total = rows.reduce((a, r) => a + r.amount, 0), pv = rows.reduce((a, r) => a + r.pv, 0);
+  $("div-total").textContent = `(${rows.length}: total ${fmtValue(total, 4)}, PV ${fmtValue(pv, 4)})`;
+  $("div-table").innerHTML = `<table><thead><tr><th>Ex date</th><th>Pay date</th><th>Amount</th><th>% spot</th>
+    <th>PV</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${r.ex_date}</td><td>${r.pay_date}</td>
+    <td>${fmtValue(r.amount, 4)}</td><td>${fmtValue(r.pct_spot, 2)}%</td><td>${fmtValue(r.pv, 4)}</td></tr>`).join("")
+    }</tbody></table>`;
 }
 
 function overrides() {
@@ -222,6 +259,16 @@ function render(d) {
   $("valuation").innerHTML = d.headline.map(([l, v, dd], i) =>
     `<div class="vb-card${i === 0 ? " main" : ""}"><div class="label">${l}</div><div class="value">${fmtValue(v, dd)}</div></div>`).join("");
   $("info").innerHTML = cards(d.info);
+  const sens = d.sensitivities;
+  $("sens-panel").classList.toggle("hidden", !sens);
+  if (sens) {
+    $("sens-qty").textContent = `(quantity ${fmtValue(sens.quantity, 2)})`;
+    $("sens-table").innerHTML = `<table><thead><tr><th>Greek</th><th>Unit</th><th>Per unit</th>
+      <th>Equivalent (x size)</th></tr></thead><tbody>${sens.rows.map((r) => {
+      const d = r.greek === "Gamma" ? 6 : 4;
+      return `<tr><td>${r.greek}</td><td>${r.unit}</td><td>${fmtValue(r.per_unit, d)}</td><td><b>${fmtValue(r.equivalent, 0)}</b></td></tr>`;
+    }).join("")}</tbody></table>`;
+  }
 
   $("vega-panel").classList.toggle("hidden", !d.vega);
   if (d.vega) {

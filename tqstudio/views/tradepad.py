@@ -341,11 +341,23 @@ def market_inputs(mkt: tq.MarketEnvironment, request: dict) -> dict:
         T = eq.year_fraction(expiry)
         curve = eq.discount_curve
         _, ccy, name, _ = curve.name.split(":")
-        return {"editable": {"spot": float(eq.spot), "vol": float(eq.vol_surface.volatility(strike=strike, tenor=T))},
+        s0 = float(eq.spot)
+        dividends = []                                 # discrete dividends with ex-date up to the expiry
+        if eq.dividends is not None:
+            pays = eq.dividends.payment_dates or eq.dividends.ex_dates
+            for ex, pay, amount in zip(eq.dividends.ex_dates, pays, eq.dividends.amounts):
+                if ex <= expiry:
+                    dividends.append({"ex_date": ex.isoformat(), "pay_date": pay.isoformat(), "amount": float(amount),
+                                      "pct_spot": 100 * float(amount) / s0,
+                                      "pv": float(amount) * float(curve.discount(pay))})
+        div_model = {"model": eq.dividend_model,
+                     "yield": None if eq.div_yield is None else float(eq.div_yield)}
+        return {"editable": {"spot": s0, "vol": float(eq.vol_surface.volatility(strike=strike, tenor=T))},
                 "info": [["Rate (zero, %)", 100 * float(curve.zero_rate(T)), 3], ["Curve", f"{ccy} {name}", None],
                          ["Forward", float(eq.forward(T)), 2], ["PV dividends", float(eq.pv_dividends(T)), 2],
                          ["Repo (%)", 100 * float(eq.repo), 3], ["Strike", strike, 2],
-                         ["Expiry", f"{expiry.isoformat()} ({T:.2f}y)", None]]}
+                         ["Expiry", f"{expiry.isoformat()} ({T:.2f}y)", None]],
+                "dividends": dividends, "dividend_model": div_model}
     product = _rates_product(mkt, f, request["product"])
     end = getattr(product, "end_date", None) or getattr(product, "expiry", None)
     if end is None and hasattr(product, "swap"):
@@ -518,7 +530,14 @@ def _price_equity(mkt, cache, kind, f, model, n_paths, seed) -> dict:
         headline = [by_label["Price"], by_label["Premium (% spot)"], by_label["Delta"], ["Gamma", qty * gamma, 6],
                     ["Theta (1 day)", qty * theta, 4], by_label["Vega (1 vol pt)"], by_label["Rho (1 bp)"]]
         vega, rho = None, []
-    return {"headline": headline, "info": info, "vega": vega, "rho": rho}
+    sensitivities = None
+    if kind != "Autocallable":                      # greeks per unit and the equivalent (times the size)
+        units = {"Delta": "per 1 of spot", "Gamma": "per 1 of spot", "Theta (1 day)": "per calendar day",
+                 "Vega (1 vol pt)": "per vol point", "Rho (1 bp)": "per bp"}
+        rows = [{"greek": label, "unit": units[label], "per_unit": None if value is None or not qty else value / qty,
+                 "equivalent": value} for label, value, _ in headline if label in units]
+        sensitivities = {"quantity": qty, "rows": rows}
+    return {"headline": headline, "info": info, "vega": vega, "rho": rho, "sensitivities": sensitivities}
 
 
 def _price_rates(mkt, kind, f) -> dict:

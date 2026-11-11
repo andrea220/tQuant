@@ -177,3 +177,8 @@ button.secondary:hover { background: var(--accent-soft); }
 .vb-card.main .value { font-size: 20px; color: var(--accent); }
 .valuation-bar.stale .value { color: var(--muted); }
 @media (max-width: 1000px) { .tradepad-top { flex-wrap: wrap; } }
+
+/* tradepad: Build / Price under the asset classes */
+#inputs-left .price-row { margin: 0 0 4px; }
+#inputs-left .price-row button { flex: 1; min-width: 0; }
+.status-line { min-height: 18px; margin-bottom: 8px; font-size: 12.5px; }

@@ -28,6 +28,11 @@
       <!-- left: what is priced and on which market -->
       <div class="panel" id="inputs-left">
         <div class="segmented" id="asset-classes"></div>
+        <div class="price-row">
+          <button id="create" class="secondary hidden">Build trade</button>
+          <button id="price">Price</button>
+        </div>
+        <div id="status" class="muted status-line"></div>
         <div class="form">
           <div class="field wide"><label for="product">Product type</label><select id="product"></select></div>
         </div>
@@ -36,8 +41,16 @@
         <div class="section-label">Market <button id="reset-market" class="link hidden" type="button">reset to market</button></div>
         <div class="form" id="market-edit"></div>
         <div id="market-info" class="mini-info"></div>
-        <p class="note">Spot and vol can be edited to reprice: the spot replaces the market spot (strikes stay on the
-          market spot), the vol shifts the whole surface in parallel so that the vol at the strike is the one entered.</p>
+        <p class="note">Edit spot and vol to reprice the same contract: the strike does not move, and the vol entered is
+          the one used at the strike (the whole surface shifts in parallel).</p>
+
+        <div class="section-label">Model</div>
+        <div class="form">
+          <div class="field wide"><label for="model">Model</label><select id="model"></select></div>
+          <div class="field wide mc"><label for="n_paths">MC paths</label>
+            <select id="n_paths"><option value="20000">20,000</option><option value="50000" selected>50,000</option>
+              <option value="100000">100,000</option></select></div>
+        </div>
       </div>
 
       <!-- right: the deal, then the results -->
@@ -45,18 +58,11 @@
         <div class="panel" id="deal-panel">
           <h2>Deal</h2>
           <div id="fields"></div>
-          <div class="section-label">Model</div>
-          <div class="form deal-form">
-            <div class="field"><label for="model">Model</label><select id="model"></select></div>
-            <div class="field mc"><label for="n_paths">MC paths</label>
-              <select id="n_paths"><option value="20000">20,000</option><option value="50000" selected>50,000</option>
-                <option value="100000">100,000</option></select></div>
-          </div>
-          <div class="price-row">
-            <button id="create" class="secondary hidden">Create trade</button>
-            <button id="price">Price</button>
-            <span id="status" class="muted"></span>
-          </div>
+        </div>
+
+        <div class="panel hidden" id="div-panel">
+          <h2>Dividends to maturity <span id="div-total" class="muted"></span></h2>
+          <div id="div-table" class="hscroll"></div>
         </div>
 
         <div class="panel hidden" id="trade-panel">
@@ -70,6 +76,10 @@
           <div class="panel">
             <h2>Pricing details</h2>
             <div id="info" class="cards"></div>
+          </div>
+          <div class="panel hidden" id="sens-panel">
+            <h2>Sensitivities <span id="sens-qty" class="muted"></span></h2>
+            <div id="sens-table" class="hscroll"></div>
           </div>
           <div class="panel" id="vega-panel">
             <h2 id="vega-title">Vega</h2>
