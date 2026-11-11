@@ -111,6 +111,24 @@ calibrated on its own particles and stored, read at pricing, market greeks by th
   results. Not the simulated cubes (paths x dates x factors: tens of GB on a large portfolio): the stateless seeds
   reproduce them exactly; save a cube only on request (audit), binary (parquet / zarr) in a git-ignored `runs/`.
 
+**7. Trades and portfolios** (replicate the Murex portfolios: tens of trades).
+- One Pydantic model per instrument template, on a common header (`trade_id`, `murex_id`, portfolio, book,
+  template, status, trade date, currency, notional, buy / sell) plus the template's fields, nested where natural (the
+  autocallable's coupon / final redemption / autocall sections and schedule, a swap's legs): a JSON document parses
+  straight into a validated object. Each model builds the existing `tensorquant` `Product` (`build_product`), so the
+  pricers do not change.
+- Storage behind a small `TradeStore` (`load`, `save`, `get`, `query`), the rest of the code unaware of it: one JSON
+  file per template (`{trade_id: trade}`, sorted keys, indented: readable git diffs), atomic writes (temporary file +
+  rename) under the server lock, since all writes go through the `tqstudio` process. Versions (amendments,
+  cancellations) as a history per template or through git. Move to SQLite (indexed header columns + JSON payload)
+  only if volumes or concurrent writers grow: same models, another `TradeStore`.
+- Tradepad: the form generated from the models' JSON schema (replacing the hand-written field lists), save / load /
+  amend trades from the page, portfolio views on the store.
+- Import from Murex: an extract (datamart report / CSV) mapped onto the templates; CSV only as the exchange format.
+- Live (seasoned) trades: historical fixings (underlying, date, value) and the trade state (initial fixing, past
+  coupon observations, memory of the unpaid coupons, autocalls already triggered) used by the pricers; today they
+  price every trade as if it started on the pricing date.
+
 **Order of work.** 1 (calibration objects, pinned by tests) -> 2 (Heston `eps(t)`) -> 4 on GBM / local vol / Heston
 -> 5-6 minimal `tqstudio` on two underlyings -> 3 (SLV with stored `E`, after the short-dated SLV error is
 understood) -> local correlation.
