@@ -10,6 +10,201 @@ Write put--call parity for an underlying paying discrete dividends.
 $C - P = S_0 - \mathrm{PV}(\text{div}) - K\,P(0,T)$.
 \end{answer}
 
+\begin{question}{\Theory \Practice \diff{1}}{The forward implied by put--call parity}
+You see the prices of a call and a put on the same strike and expiry. How do you get the forward? And if the discount
+factor is not known either?
+\nb{collar\_and\_implied\_forward.ipynb}
+\end{question}
+\begin{answer}
+Parity in forward form, $C(K) - P(K) = P(0,T)\,(F - K)$, gives $F = K + (C - P)/P(0,T)$ with $P(0,T)$ from the curve.
+$C - P$ is linear in $K$ with slope $-P(0,T)$ and intercept $P(0,T)\,F$: with two or more strikes a straight-line fit
+of $C - P$ against $K$ gives both the implied discount factor and the forward (in practice over the liquid strikes near
+the money, which also averages out the bid--ask noise). Only European options: for American ones parity is an
+inequality. In the notebook (1Y calls and puts on TICKER1 from 80\% to 120\% of spot, \code{BlackScholesPricer}): slope
+$-0.977816$, forward $232.263$, both equal to the curve's discount factor and to \code{eq.forward(T)} to $10^{-6}$
+(the quotes are model prices, so parity holds exactly).
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{2}}{Put--call parity for American options}
+Does put--call parity hold for American options? What can you say about $C_A - P_A$?
+\nb{collar\_and\_implied\_forward.ipynb}
+\end{question}
+\begin{answer}
+No: early exercise turns the equality into bounds. With dividends of present value $D$,
+\[
+  S_0 - D - K \;\le\; C_A - P_A \;\le\; S_0 - K\,P(0,T).
+\]
+Upper bound: the put can be exercised early ($P_A \ge P_E$) while the call gains from early exercise only to capture a
+dividend. Lower bound: a call plus $K + D$ in cash is worth at least a put plus the stock, whenever the put is
+exercised. The European $C_E - P_E$ lies inside the band. In the notebook (spot 100, a dividend of 2, 3\% rate, 25\% vol,
+Bjerksund--Stensland): at $K = 100$, $C_A - P_A = 0.76$ in $[-2.00, 2.96]$, against $C_E - P_E = 0.99$; the gap is
+the put's early-exercise premium (0.23), which grows with the strike (1.06 at 120).
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{3}}{The implied forward from American options}
+Single-stock options are American. How do you get the implied forward (or repo) from their quotes?
+\nb{collar\_and\_implied\_forward.ipynb}
+\end{question}
+\begin{answer}
+Not from European parity: $K + (C_A - P_A)/P(0,T)$ is biased by the early-exercise premia (mostly the put's). With
+rates and dividends known, the forward is a function of the repo: for a trial repo, imply the vol from the American
+call and from the American put at the same strike with an American model (tree, Bjerksund--Stensland); the implied repo
+is the one at which the two implied vols coincide, since a single forward and a single vol must price both. Use the
+strikes near the money, where both are liquid. Alternatively, de-Americanise each quote (subtract the model's
+early-exercise premium) and apply European parity, iterating because the premium depends on the forward. In the
+notebook (true repo 1\%): European parity gives a forward of $99.85$ instead of $100.01$; equal implied vols give the
+repo of $1.000\%$, the vol of $25.00\%$ and the true forward.
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{2}}{The implied repo}
+What is the repo of a stock and why does it exist? How do you get the repo implied in a forward?
+\nb{collar\_and\_implied\_forward.ipynb}
+\end{question}
+\begin{answer}
+The repo is the fee for lending the stock: a short seller (e.g.\ a dealer hedging a long call, or an arbitrageur selling
+the stock against the forward) must borrow it and pay that fee to the lender, so whoever holds the stock earns it. It
+lowers the forward like a dividend yield: $F = (S_0 - \mathrm{PV}(\text{div}))\,e^{-q_{\text{repo}}T}/P(0,T)$, hence
+\[
+  q_{\text{repo}} = -\frac{1}{T}\ln\frac{F\,P(0,T)}{S_0 - \mathrm{PV}(\text{div})}.
+\]
+Hard-to-borrow stocks have a high repo (forward well below the carry). The forward from options gives only the
+combination of dividends and repo: the implied repo also absorbs the error in the dividend forecast and any funding
+spread, which is why the option market is read as an implied dividend / repo pair. In the notebook (TICKER1, implied
+forwards at every expiry of the surface, \code{eq.pv\_dividends(T)}): $0.046\%$ at every expiry, the snapshot's repo.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Implied dividends or implied repo?}
+The option market gives you the forward. Can you tell from it how much is dividends and how much is repo? How do
+desks separate them?
+\end{question}
+\begin{answer}
+No: the forward depends only on the combination $(S_0 - \mathrm{PV}(\text{div}))\,e^{-q_{\text{repo}}T}$. The two are
+separated with other markets: dividends from dividend futures / swaps (index dividends are traded) or analysts'
+forecasts, the repo from the securities-lending market (borrow fees); what is left in the option-implied forward is
+then attributed to the other. The term structure helps too: dividends are jumps at the ex-dates, the repo a smooth
+rate, so implied forwards just before and after an ex-date isolate the dividend.
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{2}}{Conversion and reversal}
+Call and put prices violate put--call parity. Which arbitrage do you set up, with which cash flows? Why does the repo
+matter more on one side than on the other?
+\nb{collar\_and\_implied\_forward.ipynb}
+\end{question}
+\begin{answer}
+If $C - P > P(0,T)(F - K)$ (call rich), a \emph{conversion}: buy the stock, buy the put, sell the call. At $T$ the
+stock is delivered for $K$ whatever $S_T$; meanwhile the stock pays the dividends and can be lent for the repo. The
+locked profit today is $(C - P) - P(0,T)(F - K)$. If $C - P$ is too low, a \emph{reversal}: short the stock, sell the
+put, buy the call. The short seller pays the dividends and the borrow fee (repo): a reversal that ignores it sees a
+fake arbitrage worth exactly the fee, so on hard-to-borrow stocks $C - P$ sits below the zero-repo parity without any
+arbitrage. In the notebook (spot 100, repo 1\%): a call 0.40 rich gives a conversion worth 0.40 today; computing the
+forward without the repo shows an apparent reversal profit of 0.975, the PV of the borrow fee.
+\end{answer}
+
+\begin{question}{\Theory \diff{1}}{Synthetic forward and synthetic stock}
+How do you build a long forward with options? And a synthetic long or short stock? When does a trader prefer them to
+the stock?
+\end{question}
+\begin{answer}
+Long call and short put with the same strike and expiry pay $S_T - K$: a forward struck at $K$, worth
+$P(0,T)(F - K)$ today. Adding a zero-coupon bond paying $K$ gives a synthetic stock (without dividends and repo,
+which are in $F$). The synthetic short (long put, short call) avoids borrowing the stock: no locate, no recall risk.
+It is not free: the borrow cost is priced into the options through the forward (puts dearer, calls cheaper).
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{2}}{Box spread}
+What does a box spread pay, what is it worth, and what is it used for? Does it still work with American options?
+\nb{collar\_and\_implied\_forward.ipynb}
+\end{question}
+\begin{answer}
+Long call $K_1$, short call $K_2$, long put $K_2$, short put $K_1$ (a bull call spread plus a bear put spread) pays
+$K_2 - K_1$ at $T$ in every state: it is a zero-coupon bond, worth $(K_2 - K_1)\,P(0,T)$, independent of spot,
+dividends, repo and vol. Box quotes give the rate implied in the option market, $r = -\ln(\text{box}/(K_2 - K_1))/T$
+(a financing trade: a short box borrows at that rate). With American options the short legs can be exercised early,
+so the box is no longer riskless and its price is not the discounted strike difference. In the notebook (TICKER1, 1Y,
+$K_1 = 90\%$, $K_2 = 110\%$ of spot): European box $46.753 = (K_2 - K_1)P(0,T)$, implied rate $2.2434\%$ = the curve's
+zero rate; the American box costs $47.478$.
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{1}}{A call and a put with the same strike}
+Why do a call and a put with the same strike and expiry have the same gamma and the same vega? Why is
+$\Delta_C - \Delta_P$ not exactly 1?
+\nb{collar\_and\_implied\_forward.ipynb}
+\end{question}
+\begin{answer}
+Differentiate parity, $C - P = P(0,T)(F - K)$: the right side does not depend on the vol and is linear in the spot,
+so vegas and gammas are equal and $\Delta_C - \Delta_P = P(0,T)\,\partial F/\partial S = e^{-q T}$ ($q$ the repo, or repo
+plus dividend yield; cash dividends do not scale with the spot). In the notebook (TICKER1, 1Y, strike at the forward,
+AAD): gamma $0.005788$ and vega $0.8959$ for both, $\Delta_C - \Delta_P = 0.999540 = e^{-0.046\% \cdot 1}$.
+\end{answer}
+
+\begin{question}{\Theory \diff{1}}{Which is dearer, the call or the put struck at spot?}
+For the same expiry, is a call struck at today's spot worth more or less than the put?
+\end{question}
+\begin{answer}
+$C(S_0) - P(S_0) = P(0,T)\,(F - S_0)$: the call is dearer when the forward is above the spot (rates above dividends
+and repo), the put when dividends push the forward below it. On TICKER1 the 1Y forward is $232.26$ against a spot of
+$239.07$: the put struck at spot is worth $6.66$ more than the call. The options at the money for the distribution
+are struck at $F$ (see \emph{Where is at-the-money?}).
+\end{answer}
+
+\begin{question}{\Theory \diff{1}}{The value of a forward contract during its life}
+You entered a forward at $K$ some time ago. What is it worth today? Why not $S_t - K$?
+\end{question}
+\begin{answer}
+$V_t = P(t,T)\,(F_t - K)$, with $F_t$ the forward for $T$ today: the contract pays $S_T - K$ at $T$, and the payment of
+$K$ is discounted. $S_t - K$ would ignore that $K$ is paid only at $T$ (funding), that the holder of the forward does
+not receive the dividends paid before $T$ and does not earn the repo: all of these are in $F_t$.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Forward or futures price?}
+Is the futures price on a stock or index the same as the forward price? When does the difference matter?
+\end{question}
+\begin{answer}
+Futures are marked to market daily: the futures price is the risk-neutral expectation $\E^{\Q}[S_T]$ under the
+money-market numeraire, the forward is the expectation under the $T$-forward measure. They coincide with
+deterministic rates; otherwise they differ by the covariance between the underlying and the rates (gains on the
+margin are reinvested at the rates of that moment). For equities the correlation and the rate vol are small and the
+difference is negligible; it matters for long-dated interest-rate futures (the convexity adjustment).
+\end{answer}
+
+\begin{question}{\Theory \diff{1}}{A higher dividend is announced}
+A company announces a dividend higher than expected. What happens to the forward, the calls and the puts? Who gains?
+\end{question}
+\begin{answer}
+The forward falls by the PV of the extra dividend over $P(0,T)$ for every expiry after the ex-date. Calls lose value,
+puts gain, roughly by the delta times the forward move. Long puts and short calls gain. A conversion (long stock, short
+call, long put) is long the dividends: it receives the higher dividend on the stock while the options it traded
+priced the old one, so it gains, and a reversal loses. That is why desks mark dividends explicitly and hedge them with
+dividend futures.
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{2}}{Early exercise of an American call and dividends}
+Is it ever optimal to exercise an American call early? On a stock without dividends? And just before an ex-dividend
+date?
+\nb{collar\_and\_implied\_forward.ipynb}
+\end{question}
+\begin{answer}
+Without dividends, never: $C_A \ge C_E \ge S - K\,P(0,T) > S - K$, alive the call is worth more than exercised (the upper
+parity bound). With a dividend $D$ at $t_d$, just before the ex-date the holder compares $S - K$ with the call on the
+stock after the drop $S - D$ (no dividends left, so worth the European call). Exercise pays when $D$ exceeds the interest
+saved on the strike plus the time value given up; necessary condition $D > K\,(1 - P(t_d, T))$. Deep in the money calls
+are exercised first. In the notebook (spot 120, three months left, 3\% rate, 25\% vol): with $D = 2$ the 80 and 100
+calls are exercised (keeping them is worth 38.60 and 19.26), the 110 call is not (11.12 against 10); with $D = 0.5$,
+below $K(1 - P) \approx 0.6$--$0.8$, none is.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Covered interest parity and the cross-currency basis}
+How is an FX forward priced? Why do market FX forwards not match the parity computed from the two OIS curves?
+\end{question}
+\begin{answer}
+The same carry argument: borrow in one currency, convert, lend in the other. With $S$ the price of one unit of the base
+currency in the quote currency, $F = S\,P_{\text{base}}(0,T)/P_{\text{quote}}(0,T)$ (covered interest parity). Since
+2008 market forwards deviate from the parity on OIS curves: dollar funding demand and the balance-sheet cost of the
+arbitrage (banks' capital and leverage constraints) leave a persistent \emph{cross-currency basis}. Desks therefore
+discount foreign cash flows on basis-adjusted curves (consistent with the collateral currency), built from FX forwards
+and cross-currency swaps.
+\end{answer}
+
 \begin{question}{\Practice \diff{1}}{Sensitivities of the forward}
 Compute by AAD the sensitivities of the 1Y forward of TICKER1 to spot, repo, dividend amounts and curve pillars, and
 check them in closed form. Why are only a few pillars non-zero? \nb{equity\_underlying.ipynb}
@@ -161,6 +356,21 @@ $S_0 e^{-qT}\Nc(d_1)$ is the value of receiving the stock if exercised, and
 $\Nc(d_1)$ (times $e^{-qT}$) is the delta.
 \end{answer}
 
+\begin{question}{\Theory \Practice \diff{1}}{Protecting a gain: the zero-cost collar}
+You bought a stock at 15 and today it trades at 19. You want to be sure that in one year it is worth no less than
+the 15 you paid, and you accept giving up part of the upside. How do you do it without paying anything today?
+\nb{collar\_and\_implied\_forward.ipynb}
+\end{question}
+\begin{answer}
+Buy the 1Y put struck at 15 (the floor) and sell a 1Y call struck at $K_c$ chosen so that $C(K_c) = P(15)$: a
+\emph{zero-cost collar}. At expiry the position is worth $\min(\max(S_T, 15), K_c)$: below 15 the put pays the
+difference, above $K_c$ the call takes the excess. $K_c$ comes from solving the Black--Scholes call price for the
+strike (it is decreasing in $K$, so a one-dimensional root search). On an equity skew the put is priced at a higher
+vol than the call, so the call must be struck closer to the money: the protection costs more upside. In the notebook
+(no dividends, flat 2.5\% rate): with a flat 30\% vol the put costs $0.526$ and $K_c = 26.48$ (139\% of spot); with a
+skew (36\% at 15, 27\% from 25) the put costs $0.813$ and $K_c = 23.69$ (125\%).
+\end{answer}
+
 \begin{question}{\Theory \diff{2}}{Gamma close to expiry}
 What happens to gamma and theta of an at-the-money option as $T \to 0$, and of an out-of-the-money one?
 \nb{black\_scholes.ipynb}
@@ -237,8 +447,159 @@ ex-date that enters the option life (lower escrowed spot, higher equivalent yiel
 American put is worth $K - S$: delta $-1$.
 \end{answer}
 
+\begin{question}{\Theory \diff{1}}{Is the delta the probability of exercise?}
+What are $N(d_1)$ and $N(d_2)$ in the Black--Scholes formula? Which one is the probability of ending in the money?
+\end{question}
+\begin{answer}
+$N(d_2)$ is the risk-neutral probability that the call ends in the money, $\Q(S_T > K)$ (the cash digital is
+$P(0,T)N(d_2)$). $N(d_1)$ is the same probability under the measure with the stock as numeraire, and $e^{-qT}N(d_1)$
+is the delta. They differ by $\sigma\sqrt T$ in the argument: the delta is close to the exercise probability only for
+short expiries or low vol, and above it (the call gains more where the stock is high). Neither is the real-world
+probability.
+\end{answer}
+
+\begin{question}{\Theory \diff{1}}{The delta of an at-the-money call}
+Why is the delta of an at-the-money call about 0.5 but not exactly? Is it above or below?
+\end{question}
+\begin{answer}
+At $K = F$, $d_1 = \tfrac12\sigma\sqrt T > 0$, so the forward delta $N(d_1)$ is slightly above 0.5 (0.56 for 30\% vol
+and 1Y), growing with $\sigma\sqrt T$; the spot delta is $e^{-qT}N(d_1)$. Struck at the spot instead of the forward,
+the carry moves it further: above 0.5 when $F > S_0$, possibly below when dividends make $F < S_0$. The put delta is the
+call delta minus $e^{-qT}$.
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{2}}{Vega and gamma across expiries}
+How do vega and gamma of an at-the-money option depend on the expiry? What does a book long the back months and short
+the front months bet on?
+\nb{vanilla\_options.ipynb}
+\end{question}
+\begin{answer}
+At the money vega $= S e^{-qT}n(d_1)\sqrt T$ grows like $\sqrt T$, gamma $= e^{-qT}n(d_1)/(S\sigma\sqrt T)$ falls like
+$1/\sqrt T$: long-dated options carry the vega, short-dated the gamma. Long back months and short front months is
+long vega and short gamma: it gains if implied vols rise, loses on large daily moves (a calendar spread). In the
+notebook (TICKER1, strike at each forward): vega 0.27 at 1M, 0.90 at 1Y, 1.53 at 5Y per vol point; gamma
+$\times\sqrt T \approx 0.005$ at every expiry; vega$/\sqrt T$ falls from 0.95 to 0.69 at 5Y (lower long-dated vol and
+the dividend discount).
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{2}}{Theta and gamma}
+Why does a long option position lose money every day? How much, roughly, for an at-the-money option?
+\nb{vanilla\_options.ipynb}
+\end{question}
+\begin{answer}
+The Black--Scholes equation, $\Theta + \tfrac12\sigma^2S^2\Gamma + (r - q)S\Delta = rV$: a delta-hedged long option earns
+$\tfrac12\Gamma S^2\sigma^2\,dt$ on the moves (at the implied vol) and pays the same as theta, so long gamma is short theta
+and the hedged position breaks even only if the realised vol equals the implied. At the money with no carry
+$\Theta \approx -V/(2T)$ per year. In the notebook (TICKER1, 1Y call at the forward): the equation holds to rounding
+(sum $0.6071 = rV$); theta $-0.025$ a day, of which the gamma part $-\tfrac12\sigma^2S^2\Gamma = -0.0368$, matching the
+rule of thumb $-0.0371$; the 5\% dividend carry gives back the rest.
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{1}}{The at-the-money approximation}
+Price an at-the-money forward call in your head. When is the approximation good?
+\nb{vanilla\_options.ipynb}
+\end{question}
+\begin{answer}
+At $K = F$, $C = P(0,T)F\,(N(\tfrac12\sigma\sqrt T) - N(-\tfrac12\sigma\sqrt T)) \approx P(0,T)F\,\sigma\sqrt T/\sqrt{2\pi}
+\approx 0.4\,\sigma\sqrt T\,P(0,T)F$. It is linear in the vol, so the ATM vega is about price / vol, and the error grows
+with $\sigma\sqrt T$: 0.04\% at 10\% vol and 1Y, 0.4\% at 30\% vol and 1Y, 1.9\% at 30\% and 5Y, 7.5\% at 60\% and 5Y
+(the approximation overprices).
+\end{answer}
+
+\begin{question}{\Theory \Practice \diff{1}}{Straddle and strangle}
+What does a long straddle bet on? Where are its breakevens? And a strangle? What changes if you delta-hedge it?
+\nb{vanilla\_options.ipynb}
+\end{question}
+\begin{answer}
+Straddle: call and put at the same strike, payoff $|S_T - K|$; unhedged it gains if the stock ends beyond
+$K \pm$ premium, a bet on a large move in either direction. Strangle: OTM put and OTM call, cheaper, needs a larger move.
+Delta-hedged, the straddle is a bet on realised against implied vol: the daily breakeven move is about
+$\sigma\sqrt{1/252}$ of the spot. In the notebook (TICKER1, 1Y at the forward, 30\% vol): straddle 54.12 (22.6\% of
+spot), breakevens 178.1 and 286.4, daily breakeven move 1.89\% (4.51); hedged mean P\&L $-17.9$, $-0.1$, $+17.5$ for a
+realised vol of 20\%, 30\%, 40\%.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Calendar spread}
+What does a calendar spread (short the near expiry, long the far one, same strike) bet on? Can it have a negative
+price?
+\end{question}
+\begin{answer}
+It is long vega (the far option has more) and short gamma (the near one has more): it gains if implied vols rise or
+the stock stays near the strike, loses on a large move before the near expiry. At the same strike in forward-moneyness
+terms, the far call is worth at least the near one when the total implied variance $\sigma^2T$ grows with $T$; a
+negative calendar is a calendar arbitrage (total variance decreasing in $T$), which a clean vol surface excludes.
+\end{answer}
+
+\begin{question}{\Theory \diff{1}}{Vertical spreads}
+What is the most a call spread (long $K_1$, short $K_2 > K_1$) can be worth? What does a very tight one price?
+\end{question}
+\begin{answer}
+It pays between 0 and $K_2 - K_1$, so $0 \le C(K_1) - C(K_2) \le P(0,T)(K_2 - K_1)$: call prices decrease in the strike
+with slope above $-P(0,T)$. Divided by $K_2 - K_1$ and with $K_2 \to K_1$ it tends to $-\partial C/\partial K$, the
+cash digital: this is how desks price and hedge digitals, on the smile (see \emph{Digital options and the skew}).
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Pin risk}
+You are short a call struck at 100 expiring tomorrow and the stock is at 100. What is the risk, and how is it managed?
+\end{question}
+\begin{answer}
+Near expiry at the strike the delta jumps between 0 and 1 (gamma explodes): you do not know whether you will be
+assigned, so whether you will be short the stock on Monday. A move after the close (or the counterparty's exercise
+decision) leaves an unhedged position over the weekend. Desks reduce it by closing or rolling the position before
+expiry, hedging with a partial delta, or spreading strikes; on physically settled options it is a real delivery risk.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Vega buckets and P\&L explain}
+Why does a desk look at vega per expiry (and per strike) rather than total vega? How is the daily P\&L of an option
+book explained?
+\end{question}
+\begin{answer}
+Vols of different expiries and strikes do not move together (the front moves more than the back, the skew
+steepens in sell-offs): a book flat in total vega can lose on a term-structure or skew move. So vega is bucketed on
+the surface nodes and hedged with options of matching expiry and strike. P\&L explain: $\Delta\,\delta S + \tfrac12\Gamma\,
+\delta S^2 + \sum \text{vega}_{ij}\,\delta\sigma_{ij} + \Theta\,\delta t + \rho\,\delta r$ + dividends and repo, plus
+the unexplained residual (higher orders, cross terms, model and data changes), which has to stay small.
+\end{answer}
+
+\begin{question}{\Theory \diff{1}}{No-arbitrage bounds on option prices}
+What bounds must call prices satisfy? A quote violates one: what do you do?
+\end{question}
+\begin{answer}
+$\max(S_0e^{-qT} - K\,P(0,T), 0) \le C \le S_0e^{-qT}$ (with discrete dividends $S_0 - \mathrm{PV}(\text{div})$ in
+place of $S_0e^{-qT}$), decreasing in $K$ with slope in $[-P(0,T), 0]$ (vertical spreads), convex in $K$ (butterflies
+non-negative), non-decreasing in $T$ at fixed forward moneyness (calendars). A violation is traded with the matching
+structure: below the intrinsic forward value buy the call and sell the forward; a negative butterfly, buy it. In
+practice first check the quote (stale, wide bid--ask, American exercise, dividends).
+\end{answer}
+
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Volatility: smile, local vol, displaced diffusion}
+
+\begin{question}{\Theory \Practice \diff{2}}{Risk reversal and butterfly at 25 delta}
+What are the 25-delta risk reversal and butterfly? What do they measure on the smile?
+\nb{vanilla\_options.ipynb}
+\end{question}
+\begin{answer}
+The 25-delta call and put are the strikes with call delta 0.25 and put delta $-0.25$, each at its own vol. Risk
+reversal $\sigma_{25C} - \sigma_{25P}$: the skew (negative on equities, where puts are dearer). Butterfly
+$\tfrac12(\sigma_{25C} + \sigma_{25P}) - \sigma_{\text{ATM}}$: the convexity, the wings over the at-the-money. Quoting
+by delta keeps the comparison across expiries meaningful (the same delta is a wider strike range at longer
+expiries). In the notebook (TICKER1, forward deltas): RR $-6.1$ vol points at 1M, $-4.9$ at 1Y, $-3.0$ at 5Y; BF 2.4,
+1.0, 0.3; at 1Y the 25-delta strikes are 84\% and 126\% of the forward.
+\end{answer}
+
+\begin{question}{\Theory \diff{2}}{Sticky strike or sticky delta?}
+When the spot moves, how does the smile move? What does it change for the delta?
+\end{question}
+\begin{answer}
+Sticky strike: the vol of each strike stays put, the smile does not move with the spot; the Black--Scholes delta at
+the strike's vol is the hedge. Sticky delta (sticky moneyness): the smile moves with the spot, each moneyness keeps its
+vol. On a negative skew they give different deltas: under sticky delta a fall in the spot moves a fixed strike to a
+higher moneyness $K/S$, where the skew gives a lower vol, so $\partial\sigma_K/\partial S > 0$ and the delta of a long
+option gains $\text{vega}\cdot\partial\sigma_K/\partial S$. Which regime holds is empirical (equity smiles often sit
+between the two, and models disagree: local and stochastic vol imply different smile dynamics); desks use a
+smile-adjusted delta estimated from history or from a model.
+\end{answer}
 
 \begin{question}{\Theory \diff{1}}{Butterfly spreads with calls and with puts}
 What is a butterfly spread built with calls? And with puts? Draw the payoff, and say what its price must satisfy.
