@@ -116,7 +116,10 @@ path, with $\alpha$ = 1 until the first autocall and $m$ the coupons unpaid so f
   \;-\; \alpha_T\,\mathbb 1\{S_T < B^p\}\,\pi\,\frac{(K_p - S_T)^+}{K}\,P(0,p_n)\Big],
 \]
 $m$ reset when a coupon is paid and increased by one when it is missed ($m \equiv 0$ without memory); $\alpha$ set to 0 when
-$S_{u_j} \ge B^a_j$. Monte Carlo on a model of \S\ref{sec:mp-models} (local vol by default), on the fixing dates merged with a
+$S_{u_j} \ge B^a_j$. \emph{Forward start}: with a strike date $t_0$ after today, $K = S_{t_0}$ is fixed on each path and every
+barrier and $K_p$ are in \% of it; the payoff depends on $S_t / S_{t_0}$ only, so the price hardly depends on today's spot
+(no delta with a lognormal model and no cash dividends) and is driven by the smile after $t_0$ (the forward smile).
+Monte Carlo on a model of \S\ref{sec:mp-models} (local vol by default), on the fixing dates (and $t_0$) merged with a
 weekly grid. Each indicator is a sigmoid of width $\varepsilon K$ so that delta and vega exist pathwise. With the autocall out
 of reach and no put, the product is a strip of digitals; with no coupons, a put knocked in at expiry
 (\S\ref{sec:mp-digital}, \S\ref{sec:mp-barrier}).

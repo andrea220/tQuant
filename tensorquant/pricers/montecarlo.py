@@ -17,6 +17,8 @@ class AutocallableMCPricer(Pricer):
     ``NPV = notional * E[ sum_i coupon_i P(0, pay_i) - put P(0, T) ]``,
     ``put = participation * max(K_put - S_T, 0) / K`` if ``S_T <= payoff barrier`` and not called (``K`` the
     strike (initial level), the reference of every barrier; ``K_put = put_strike % * K``, default ``K``).
+    Forward start (``product.strike_date`` after the evaluation date): ``K = S(strike_date)`` on each path, the
+    strike date is simulated with the fixings. A strike date already past needs the fixed level in ``strike``.
 
     The model is a class, built from the market at every pricing call
     (``model.from_equity(market_env.get_equity(product.underlying), maturity, strike)``, greeks through the
@@ -94,8 +96,13 @@ class AutocallableMCPricer(Pricer):
 
         eval_date = Settings.evaluation_date
         daycounter = eq.vol_surface.daycounter
+        strike_date = getattr(product, "strike_date", None)
+        forward_start = strike_date is not None and strike_date > eval_date
+        if product.strike is None and not forward_start:
+            raise ValueError(f"strike date {strike_date} is not after the evaluation date {eval_date}: the strike "
+                             "fixing is needed (strike)")
         fixings = sorted(d for d in set(product.coupon_fixing_dates) | set(product.autocall_fixing_dates)
-                         if d > eval_date)
+                         | ({strike_date} if forward_start else set()) if d > eval_date)
         if not fixings:
             return tf.constant(0.0, dtype=DTYPE)
         fixing_times = np.array([daycounter.year_fraction(eval_date, d) for d in fixings])
@@ -103,14 +110,16 @@ class AutocallableMCPricer(Pricer):
         time_grid = np.unique(np.concatenate([uniform, fixing_times]))
         column = {d: i for i, d in enumerate(fixings)}     # paths are returned at the fixings only
 
-        model = bind(self._model, eq, product.end_date, float(product.strike))
+        model = bind(self._model, eq, product.end_date,
+                     float(product.strike) if product.strike is not None else float(eq.spot))
         k = model.noise_size()
         dw = tf.random.stateless_normal([self._n_paths, len(time_grid)] + ([k] if k > 1 else []),
                                         seed=[self._seed, 0], dtype=DTYPE)
         paths = model.evolve(tf.constant(time_grid, DTYPE), dw, observation_times=fixing_times)
         self.paths, self.time_grid, self.date_grid = paths, fixing_times, fixings
 
-        coupon_pv, put_pv = self._payoff(product, paths, column, fixings, eq.discount_curve)
+        strike = paths[:, column[strike_date]] if forward_start else float(product.strike)
+        coupon_pv, put_pv = self._payoff(product, paths, column, fixings, eq.discount_curve, strike)
         total = coupon_pv - put_pv
         product.coupon_pv = tf.reduce_mean(coupon_pv)
         product.put_pv = tf.reduce_mean(put_pv)
@@ -127,9 +136,9 @@ class AutocallableMCPricer(Pricer):
             return tf.cast(s >= barrier, DTYPE)
         return tf.sigmoid((s - barrier) / (self._eps * strike))
 
-    def _payoff(self, product, paths, column, fixings, curve):
-        """Path-wise discounted coupons and put, per unit notional (``[n_paths]`` each)."""
-        strike = float(product.strike)
+    def _payoff(self, product, paths, column, fixings, curve, strike):
+        """Path-wise discounted coupons and put, per unit notional (``[n_paths]`` each); *strike* a number or, for a
+        forward start, the spot at the strike date on each path."""
         coupon_index = {d: i for i, d in enumerate(product.coupon_fixing_dates)}
         autocall_index = {d: i for i, d in enumerate(product.autocall_fixing_dates)}
         last_coupon = product.coupon_fixing_dates[-1]

@@ -30,7 +30,7 @@ class AutocallableOption(Product):
         notional: float,
         start_date: datetime.date,
         end_date: datetime.date,
-        strike: float,
+        strike: Optional[float],
         # --- COUPON LEG ---
         coupon_fixing_dates: Sequence[datetime.date],
         coupon_payment_dates: Sequence[datetime.date],
@@ -47,6 +47,7 @@ class AutocallableOption(Product):
         payoff_type: str = "put",
         underlying: Optional[str] = None,
         put_strike: float = 100.0,
+        strike_date: Optional[datetime.date] = None,
     ) -> None:
         """
         Initialize an AutocallableOption.
@@ -54,11 +55,29 @@ class AutocallableOption(Product):
         Tutte le schedule (coupon/autocall fixing e payment) sono passate dall'esterno,
         così puoi costruirle con `ScheduleGenerator` nel modo che preferisci
         (incluso merge con altre date di discretizzazione per il modello).
+
+        Forward start: with a ``strike_date`` after ``start_date`` the strike (initial level) is the spot fixed on that
+        date, so ``strike`` is ``None``; every barrier and the put strike are in % of it, and the coupon and autocall
+        fixings must follow it. Otherwise ``strike`` is the initial level, already known.
+
+        Raises:
+            ValueError: If the strike is missing for a trade struck on or before ``start_date``, given for a future
+                strike date, or a fixing is not after the strike date.
         """
         super().__init__(ccy=ccy, start_date=start_date, end_date=end_date)
 
+        forward_start = strike_date is not None and strike_date > start_date
+        if forward_start and strike is not None:
+            raise ValueError("forward start: the strike is the spot fixed on the strike date, do not give a level")
+        if strike is None and strike_date is None:
+            raise ValueError("strike missing: give the initial level or a strike date")
+        if strike_date is not None:
+            early = [d for d in list(coupon_fixing_dates) + list(autocall_fixing_dates) if d <= strike_date]
+            if early:
+                raise ValueError(f"coupon / autocall fixings on or before the strike date {strike_date}: {early[0]}")
         self.notional = notional
-        self.strike = strike
+        self.strike = None if strike is None else float(strike)
+        self.strike_date = strike_date
         self.underlying = underlying
 
         # schedule principali

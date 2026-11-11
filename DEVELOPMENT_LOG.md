@@ -311,6 +311,15 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       SLV vanilla (1e-6: the Heston parameters move by ~1e-15 relative, eager vs compiled, and the particle leverage
       amplifies it to ~4e-7, also in the old code); bump-and-recalibrate tests and par greeks = AAD unchanged. Only
       first order through the calibration (as before, the Hessian was held constant).
+- [x] **Forward-starting autocallable**: `AutocallableOption(strike_date=...)` (strike `None` for a future strike date,
+      fixings checked to follow it; `put_strike` in % of the initial level, default 100); `AutocallableMCPricer`
+      simulates the strike date with the fixings and uses `K = S(t0)` path by path for every barrier, the put strike and
+      the smoothing width; a past strike date without the fixed level raises (live trades: roadmap, tqstudio item 7).
+      Checks (`tests/test_autocallable_mc.py`): strike date today = the spot-starting price (1e-12), numpy replica on the
+      same paths with `K = S(t0)` (1e-12), flat GBM forward start = `P(0, t0)` x the spot-starting autocallable within
+      3 SE, AAD delta below 1e-10 under GBM (paths and strike scale together), schedule validation. Tradepad: strike
+      date in the deal parameters, schedules after it. TICKER1, local vol, 3Y after a 1Y strike date: -5.00 per 100
+      with delta 0.05 (cash dividends), against -5.66 and delta 0.22 for the trade struck today.
 
 ## 5. Market data I/O
 

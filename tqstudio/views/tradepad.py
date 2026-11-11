@@ -153,6 +153,7 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
         "Exotics": {
             "Autocallable": {"fields": [underlying]
                              + _group("Deal parameters", _number("notional", "Notional", 100.0),
+                                      _date("strike_date", "Strike date", mkt.evaluation_date.isoformat()),
                                       _date("maturity", "Maturity", three_years))
                              + _group("Coupon", _select("coupon_type", "Type", ["Standard", "Memory"]),
                                       _number("coupon", "Coupon per period (%)", 4.0, 0.25),
@@ -211,22 +212,30 @@ def _backward_dates(today: date, maturity: date, months: int) -> list:
 
 
 def _autocallable(mkt, f: dict):
-    """Phoenix autocallable struck at the market spot: coupons on their own schedule (standard or memory), autocall
-    observations from the first observation date to maturity, capital-at-risk put (barrier, strike, participation)."""
+    """Phoenix autocallable: coupons on their own schedule (standard or memory), autocall observations from the first
+    observation date to maturity, capital-at-risk put (barrier, strike, participation). Struck at the market spot
+    when the strike date is the pricing date; forward start when it is later (the strike is the spot fixed then,
+    the schedules follow the strike date)."""
     eq = mkt.get_equity(f["ticker"])
     today = mkt.evaluation_date
+    strike_date = CAL.adjust(date.fromisoformat(f.get("strike_date") or today.isoformat()), MF)
+    if strike_date < today:
+        raise ValueError("strike date before the pricing date: a live trade needs the historical strike fixing "
+                         "(not supported yet)")
+    forward_start = strike_date > today
     maturity = date.fromisoformat(f["maturity"])
     end = CAL.adjust(maturity, MF)
-    if end <= today:
-        raise ValueError("the maturity must be after the pricing date")
-    first = CAL.advance(today, _months(f["first_autocall"]), tq.TimeUnit.Months, MF)
+    if end <= strike_date:
+        raise ValueError("the maturity must be after the strike date")
+    first = CAL.advance(strike_date, _months(f["first_autocall"]), tq.TimeUnit.Months, MF)
     if first >= end:
         raise ValueError("the first autocall observation must be before the maturity")
-    coupons = _backward_dates(today, maturity, _months(f["coupon_frequency"]))
-    autocalls = [d for d in _backward_dates(today, maturity, _months(f["autocall_frequency"])) if d >= first]
+    coupons = _backward_dates(strike_date, maturity, _months(f["coupon_frequency"]))
+    autocalls = [d for d in _backward_dates(strike_date, maturity, _months(f["autocall_frequency"])) if d >= first]
     return tq.AutocallableOption(
         ccy=eq.currency, notional=float(f["notional"]), start_date=today, end_date=end,
-        strike=float(f.get("_ref_spot", eq.spot)), coupon_fixing_dates=coupons, coupon_payment_dates=coupons,
+        strike=None if forward_start else float(f.get("_ref_spot", eq.spot)), strike_date=strike_date,
+        coupon_fixing_dates=coupons, coupon_payment_dates=coupons,
         coupon_rates=[float(f["coupon"])], coupon_barriers=[float(f["coupon_barrier"])],
         memory=f["coupon_type"] == "Memory", autocall_fixing_dates=autocalls, autocall_payment_dates=autocalls,
         autocall_barrier=[float(f["autocall_barrier"])], payoff_barrier=float(f["put_barrier"]),
@@ -323,7 +332,8 @@ def _fields(mkt, request: dict) -> tuple:
 def _equity_strike_expiry(mkt, kind: str, f: dict) -> tuple:
     """Strike and expiry the market inputs refer to (the autocallable: its initial fixing and final date)."""
     product = _autocallable(mkt, f) if kind == "Autocallable" else _equity_option(mkt, f, kind)
-    return float(product.strike), product.end_date
+    strike = product.strike if product.strike is not None else float(f.get("_ref_spot", mkt.get_equity(f["ticker"]).spot))
+    return float(strike), product.end_date              # forward start: the spot (the strike is not known yet)
 
 
 def market_inputs(mkt: tq.MarketEnvironment, request: dict) -> dict:
@@ -397,7 +407,10 @@ def describe_trade(mkt: tq.MarketEnvironment, request: dict) -> dict:
                          "coupon_barrier": float(row["coupon_barrier_pct"]) if coupon else None,
                          "coupon_amount": float(row["coupon_rate_pct"]) if coupon else None,
                          "autocall_barrier": float(row["autocall_barrier_pct"]) if autocall else None})
-    summary = [["Strike (initial fixing)", float(product.strike), 2], ["Maturity", product.end_date.isoformat(), None],
+    strike = (f"fixed on {product.strike_date.isoformat()} (forward start)" if product.strike is None
+              else float(product.strike))
+    summary = [["Strike (initial fixing)", strike, 2], ["Strike date", product.strike_date.isoformat(), None],
+               ["Maturity", product.end_date.isoformat(), None],
                ["Notional", float(product.notional), 2], ["Coupon type", "Memory" if product.memory else "Standard", None],
                ["Put", f"barrier {product.payoff_barrier:g}%, strike {product.put_strike:g}%, "
                        f"participation {100 * product.payoff_participation:g}%", None],
@@ -513,6 +526,9 @@ def _price_equity(mkt, cache, kind, f, model, n_paths, seed) -> dict:
             ["Forward", float(eq.forward(T)), 2], ["Rate (zero, %)", 100 * float(eq.discount_curve.zero_rate(T)), 3],
             ["Discount factor", float(eq.discount_curve.discount(T)), 5], ["PV dividends", float(eq.pv_dividends(T)), 2],
             ["Vol ATM fwd (%)", 100 * float(eq.vol_surface.volatility(strike=float(eq.forward(T)), tenor=T)), 2]]
+    if kind == "Autocallable":
+        info.insert(1, ["Strike", float(product.strike) if product.strike is not None
+                        else f"S({product.strike_date.isoformat()}), forward start", 2])
     if kind != "Autocallable":
         info.insert(1, ["Strike", float(product.strike), 2])
         info.append(["Vol at strike (%)", 100 * float(eq.vol_surface.volatility(strike=float(product.strike), tenor=T)), 2])

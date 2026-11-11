@@ -52,7 +52,8 @@ def numpy_payoff(product, paths, column, fixings, curve):
     """Independent hard-barrier replica (numpy), investor's side: (coupons, put) per path."""
     s_all = paths.numpy()
     n = s_all.shape[0]
-    K = product.strike
+    forward_start = getattr(product, "strike_date", None) is not None and product.strike_date in column
+    K = s_all[:, column[product.strike_date]] if forward_start else product.strike
     alive, unpaid = np.ones(n, bool), np.zeros(n)
     coupons, put = np.zeros(n), np.zeros(n)
     for d in fixings:
@@ -233,6 +234,83 @@ class TestGreeks(ACTestCase):
         self.price(lv, model=tq.LocalVolatilityModel)
         se = float(np.hypot(float(gbm.standard_error), float(lv.standard_error)))
         self.assertLess(abs(float(gbm.price) - float(lv.price)), 4 * se)
+
+
+def make_forward_start(start_years=1, tenor_years=3, strike_date=None, strike=None):
+    """Autocallable struck at a future date: coupons every 6M after the strike date, autocalls from one year after
+    it; barriers and put strike in % of the spot fixed at the strike date."""
+    cal = tq.TARGET()
+    mf = tq.BusinessDayConvention.ModifiedFollowing
+    sg = tq.ScheduleGenerator(cal, mf)
+    t0 = strike_date or cal.advance(EVAL_DATE, start_years, tq.TimeUnit.Years, mf)
+    end = cal.advance(t0, tenor_years, tq.TimeUnit.Years, mf)
+    cfix = sg.generate(t0, end, 6, tq.TimeUnit.Months)[1:]
+    afix = sg.generate(cal.advance(t0, 1, tq.TimeUnit.Years, mf), end, 6, tq.TimeUnit.Months)
+    return tq.AutocallableOption(
+        ccy=tq.Currency.EUR, notional=1.0, start_date=EVAL_DATE, end_date=end, strike=strike,
+        coupon_fixing_dates=cfix, coupon_payment_dates=cfix, coupon_rates=[4.0], coupon_barriers=[80.0],
+        memory=True, autocall_fixing_dates=afix, autocall_payment_dates=afix, autocall_barrier=[100.0],
+        payoff_barrier=70.0, underlying="UND", strike_date=t0,
+    )
+
+
+class TestForwardStart(ACTestCase):
+    """Forward-starting autocallable: the strike K = S(t0) is fixed on a future strike date t0, every barrier and the
+    put strike are in % of it."""
+
+    def column(self, pricer):
+        dc = DayCounter(DayCounterConvention.Actual365)
+        return {d: int(np.searchsorted(pricer.time_grid, dc.year_fraction(EVAL_DATE, d))) for d in pricer.date_grid}
+
+    def test_strike_date_today_is_the_spot_starting_product(self):
+        spot_start, struck_today = make_autocallable(), make_autocallable()
+        struck_today.strike_date = EVAL_DATE
+        self.price(spot_start)
+        self.price(struck_today)
+        self.assertAlmostEqual(float(struck_today.price), float(spot_start.price), places=12)
+
+    def test_numpy_replica_with_the_strike_fixed_on_the_path(self):
+        prod = make_forward_start()
+        pricer = self.price(prod)
+        self.assertIn(prod.strike_date, pricer.date_grid)
+        column = self.column(pricer)
+        c, p = numpy_payoff(prod, pricer.paths, column, pricer.date_grid, self.mkt.get_ir_curve(tq.Currency.EUR))
+        self.assertAlmostEqual(float(prod.coupon_pv), c.mean(), places=12)
+        self.assertAlmostEqual(float(prod.put_pv), p.mean(), places=12)
+
+    def test_flat_gbm_value_is_the_discounted_spot_start(self):
+        """Flat rate, no dividends or repo, flat vol: the payoff depends on S_t / S(t0) only, so the forward start is
+        worth P(0, t0) times the same autocallable starting today (within 3 SE: different paths)."""
+        fwd = make_forward_start(start_years=1, tenor_years=3)
+        spot = make_forward_start(tenor_years=3, strike_date=EVAL_DATE, strike=S0)
+        self.price(fwd, model=tq.GeometricBrownianMotion, n_paths=8_000, seed=11)
+        self.price(spot, model=tq.GeometricBrownianMotion, n_paths=8_000, seed=12)
+        t0 = DayCounter(DayCounterConvention.Actual365).year_fraction(EVAL_DATE, fwd.strike_date)
+        df = np.exp(-RATE * t0)
+        se = float(np.hypot(float(fwd.standard_error), df * float(spot.standard_error)))
+        self.assertLess(abs(float(fwd.price) - df * float(spot.price)), 3 * se)
+
+    def test_no_delta_under_gbm(self):
+        """Paths and strike scale together with the spot: the payoff, smoothed digitals included, does not move."""
+        prod = make_forward_start()
+        pricer = self.price(prod, model=tq.GeometricBrownianMotion, eps=0.01, autodiff=True)
+        delta = float(pricer.tape.gradient(prod.price, self.mkt.get_eq_spot("UND")))
+        self.assertLess(abs(delta), 1e-10)
+
+    def test_invalid_schedules(self):
+        t0 = date(2027, 5, 17)
+        with self.assertRaises(ValueError):            # a coupon fixing before the strike date
+            tq.AutocallableOption(ccy=tq.Currency.EUR, notional=1.0, start_date=EVAL_DATE, end_date=date(2029, 5, 15),
+                                  strike=None, coupon_fixing_dates=[date(2026, 11, 16), date(2029, 5, 15)],
+                                  coupon_payment_dates=[date(2026, 11, 16), date(2029, 5, 15)], coupon_rates=[4.0],
+                                  coupon_barriers=[80.0], memory=False, autocall_fixing_dates=[date(2029, 5, 15)],
+                                  autocall_payment_dates=[date(2029, 5, 15)], autocall_barrier=[100.0],
+                                  payoff_barrier=70.0, underlying="UND", strike_date=t0)
+        with self.assertRaises(ValueError):            # a future strike date with a strike level already given
+            make_forward_start(strike=S0)
+        prod = make_forward_start(strike_date=date(2026, 1, 15))
+        with self.assertRaises(ValueError):            # strike date in the past: the fixing is not known here
+            self.price(prod)
 
 
 if __name__ == "__main__":
