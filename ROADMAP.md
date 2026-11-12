@@ -133,6 +133,31 @@ calibrated on its own particles and stored, read at pricing, market greeks by th
 -> 5-6 minimal `tqstudio` on two underlyings -> 3 (SLV with stored `E`, after the short-dated SLV error is
 understood) -> local correlation.
 
+## Real market data (`marketdata/`, started)
+
+Done: `marketdata/mdbuild` (self-contained, own `requirements.txt`): universe of Bloomberg tickers
+(`config/universe.yaml`), Desktop API source, 10-year split-adjusted price history in Parquet (incremental),
+snapshots under `marketdata/live/` (git-ignored) with equity spots, Bloomberg dividend projections, FX spots, rate
+fixings and correlations of daily log returns. Left:
+- [x] Rate curves from Bloomberg: the snapshot stores the ICVS curve members (`ir_quotes.csv`: EUR ESTR S514,
+      EUR 6M S45, USD SOFR S490, GBP SONIA S141, mid quotes) and tQuant bootstraps them on load
+      (`bootstrap_from_quotes`, market conventions; every instrument repriced to 1e-15 on 2026-11-12).
+- [x] Curves bootstrapped right after the download (`mdbuild` calls tQuant `bootstrap_snapshot` when installed):
+      `ir_curves.csv` plus the Jacobian (`ir_curves_jacobian.csv`) and the quote DV01s (`ir_calibration.csv`) for the
+      par sensitivities; loading a snapshot 0.5 s instead of 63 s. Calendars `UnitedStates` (Fed) and
+      `UnitedKingdom` for SOFR / SONIA.
+- [ ] Curve bootstrap speed (66 s at download): one tape per instrument and per Newton iteration; price all the
+      instruments in one tape / `tf.function`. Check the curves against the internal service once available.
+- [ ] Par sensitivities from the stored Jacobian: `dV/dq = dV/dr . (-J^-1) . diag(dNPV_i/dq_i)` per curve, in the
+      Tradepad and the portfolio views.
+- [ ] Vol surfaces (equity, caps / swaptions, FX) from the internal service (`mdbuild/internal.py`): no BVOL.
+- [ ] Repo: no source yet (empty, i.e. zero); dividend pay dates: the projections have none (pay date = ex-date).
+- [ ] Correlations: daily closes of different markets are asynchronous (Milan vs New York closes): same-day
+      returns understate the cross-market correlation; weekly returns or lagged terms as an option. Window choice:
+      on the first snapshot (2026-11-12) ENI is negatively correlated with the Italian banks over the last year
+      (-0.3) after ten years at +0.3 / +0.8: a regime the 252-day window takes in full.
+- [ ] tQuant / tqstudio reading the live snapshots once curves and vols are there (they read the synthetic ones now).
+
 ## Future development (not prioritised)
 
 Sensitivities:

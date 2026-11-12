@@ -5,14 +5,14 @@ The data come from ``tensorquant.markethandles.synthetic.generate_market_data`` 
 Nelson-Siegel OIS curves (ESTR, SONIA, SOFR), EURUSD/GBPUSD spots and SSVI vol surfaces, equity
 correlations. Same values on each run; all dates are relative to the evaluation date.
 
-Usage: python marketdata/generate_synthetic.py
+Usage: python marketdata/synthetic/generate_synthetic.py (needs tensorquant)
 """
 
 import sys
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))   # the repository (tensorquant)
 
 from tensorquant.markethandles.synthetic import generate_market_data
 
@@ -21,7 +21,7 @@ SEED = 42
 
 def main() -> None:
     now = datetime.now()
-    out_dir = Path(__file__).resolve().parent / now.strftime("%Y%m%d") / now.strftime("%H%M")
+    out_dir = Path(__file__).resolve().parents[1] / now.strftime("%Y%m%d") / now.strftime("%H%M")   # marketdata/
     out_dir.mkdir(parents=True, exist_ok=True)
     for name, frame in generate_market_data(now.date(), SEED).items():
         frame.to_csv(out_dir / name, index=False)

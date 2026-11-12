@@ -154,9 +154,15 @@ function renderFx(d) {
     ["Points", (r) => fmt(r.points, 1)], [`DF ${s.base}`, (r) => fmt(r.df_base, 5)],
     [`DF ${s.quote}`, (r) => fmt(r.df_quote, 5)]], d.forwards);
   const fc = d.forward_curve;
-  plot("fx-chart-forward", [{ x: fc.T, y: fc.forward, mode: "lines" },
-    { x: [0, fc.T[fc.T.length - 1]], y: [s.spot, s.spot], mode: "lines", line: { dash: "dash", color: "#888" } }],
-  `${s.base}${s.quote} forward`, "T (years)", "");
+  if (!fc) {                        // a currency without its curve: spot only
+    $("fx-forwards").innerHTML = `<p class="muted">No forwards: the ${s.base_curve === "missing" ? s.base : s.quote} curve is not in this snapshot.</p>`;
+    Plotly.purge($("fx-chart-forward"));
+  } else {
+    const fc = d.forward_curve;
+    plot("fx-chart-forward", [{ x: fc.T, y: fc.forward, mode: "lines" },
+      { x: [0, fc.T[fc.T.length - 1]], y: [s.spot, s.spot], mode: "lines", line: { dash: "dash", color: "#888" } }],
+    `${s.base}${s.quote} forward`, "T (years)", "");
+  }
   const v = d.vol;
   $("fx-vol-panel").classList.toggle("hidden", !v);
   if (v) {
@@ -214,7 +220,7 @@ async function loadSnapshot(wantedClass, wantedItem) {
   $("status").textContent = "Loading snapshot…";
   const res = await fetch(`/api/catalog?${query()}`);
   state.catalog = await res.json();
-  $("snapshot").textContent = `snapshot ${state.date} · ${state.set}`;
+  $("snapshot").textContent = `${state.source} · ${state.date} · ${state.set}`;
   for (const c of Object.keys(CLASSES)) {
     const n = state.catalog[c].length;
     $(`count-${c}`).textContent = `${n} ${CLASSES[c].noun}`;
@@ -231,7 +237,9 @@ function fillSets(wanted) {
 
 async function init() {
   const p = new URLSearchParams(location.search);
-  state.snapshots = (await (await fetch("/api/snapshots")).json()).snapshots;
+  const snaps = await (await fetch("/api/snapshots")).json();
+  state.snapshots = snaps.snapshots;
+  state.source = snaps.source;
   $("snap-date").innerHTML = state.snapshots.map((s) => `<option>${s.date}</option>`).join("");
   state.date = state.snapshots.some((s) => s.date === p.get("date")) ? p.get("date") : state.snapshots[0].date;
   $("snap-date").value = state.date;

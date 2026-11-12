@@ -1,0 +1,8 @@
+# marketdata: market data snapshots (Bloomberg, internal service). Independent of tensorquant.
+# Install: pip install -r marketdata/requirements.txt
+--extra-index-url https://blpapi.bloomberg.com/repository/releases/python/simple/
+blpapi==3.26.10.1
+pandas==2.2.2
+numpy==2.5.4
+pyarrow==26.0.1
+PyYAML==6.0.3

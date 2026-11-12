@@ -1,0 +1,26 @@
+# Bloomberg Desktop API (the terminal on this machine)
+bloomberg:
+  host: localhost
+  port: 8194
+  timeout_ms: 30000
+
+# Bloomberg fields (check them with FLDS on the terminal)
+fields:
+  price: PX_LAST            # spot (equity, FX) and fixing value (rates, in %)
+  currency: CRNCY
+  name: NAME
+  last_update: LAST_UPDATE_DT
+  dividends: BDVD_ALL_PROJECTIONS   # Bloomberg dividend projections: ex-date, amount per share (no pay date)
+  curve_rates: CURVE_TENOR_RATES    # ICVS curve members: tenor, ticker, bid / mid / ask yield (%), last update
+
+history:
+  years: 10                 # daily closes of the whole universe, kept in history/prices.parquet
+  adjust_splits: true       # prices adjusted for splits only (price returns), whatever the terminal's DPDF settings
+  adjust_dividends: false
+
+correlation:
+  window_days: 252          # log returns of the last window (dates common to all the factors)
+
+output:
+  snapshots: live           # marketdata/live/<yyyymmdd>/<hhmm>/ (git-ignored: licensed data)
+  history: history          # marketdata/history/ (git-ignored)

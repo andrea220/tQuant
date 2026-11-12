@@ -157,7 +157,7 @@ function selectClass(cls) {
 
 async function loadCatalog() {
   state.catalog = await (await fetch(`/api/tradepad/catalog?date=${state.date}`)).json();
-  $("snapshot").textContent = `snapshot ${state.catalog.snapshot}`;
+  $("snapshot").textContent = `${state.source || ""} · ${state.catalog.snapshot}`;
 }
 
 async function changeDate(day) {
@@ -319,7 +319,9 @@ async function price() {
 }
 
 async function init() {
-  state.dates = (await (await fetch("/api/snapshots")).json()).snapshots.map((s) => s.date);
+  const snaps = await (await fetch("/api/snapshots")).json();
+  state.dates = snaps.snapshots.map((s) => s.date);
+  state.source = snaps.source;
   state.date = state.dates[0];
   await loadCatalog();
   const classes = Object.keys(state.catalog.asset_classes);

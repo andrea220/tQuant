@@ -169,6 +169,8 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
                              "models": ["Local vol"], "create_trade": True},
         },
     }
+    products["Rates"] = {name: spec for name, spec in products["Rates"].items()      # products with data only
+                         if next(f for f in spec["fields"] if f["name"] == "ccy")["options"]}
     return {"snapshot": mkt.evaluation_date.isoformat(), "asset_classes": products}
 
 
@@ -362,7 +364,10 @@ def market_inputs(mkt: tq.MarketEnvironment, request: dict) -> dict:
                                       "pv": float(amount) * float(curve.discount(pay))})
         div_model = {"model": eq.dividend_model,
                      "yield": None if eq.div_yield is None else float(eq.div_yield)}
-        return {"editable": {"spot": s0, "vol": float(eq.vol_surface.volatility(strike=strike, tenor=T))},
+        editable = {"spot": s0}
+        if eq.vol_surface is not None:
+            editable["vol"] = float(eq.vol_surface.volatility(strike=strike, tenor=T))
+        return {"editable": editable,
                 "info": [["Rate (zero, %)", 100 * float(curve.zero_rate(T)), 3], ["Curve", f"{ccy} {name}", None],
                          ["Forward", float(eq.forward(T)), 2], ["PV dividends", float(eq.pv_dividends(T)), 2],
                          ["Repo (%)", 100 * float(eq.repo), 3], ["Strike", strike, 2],
@@ -626,6 +631,9 @@ def price_trade(mkt: tq.MarketEnvironment, cache: ModelCache, request: dict, n_p
     overrides = {k: v for k, v in (request.get("overrides") or {}).items() if v is not None}
     if request["asset_class"] in ("Equity", "Exotics"):
         eq = mkt.get_equity(fields["ticker"])
+        if eq.vol_surface is None:
+            raise ValueError(f"no implied vol surface for {eq.ticker} in this snapshot (vols are not in the real data "
+                             "yet)")
         strike, expiry = _equity_strike_expiry(mkt, request["product"], fields)
         fields["_ref_spot"] = float(eq.spot)       # the deal's strikes stay on the market spot under an override
         with _overridden(eq, overrides, strike, eq.year_fraction(expiry)):

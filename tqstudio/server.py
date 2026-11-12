@@ -6,6 +6,7 @@ Run from the repository root (``python -m tqstudio``); colleagues on the same ne
 
 from __future__ import annotations
 
+import os
 import threading
 from datetime import date
 from pathlib import Path
@@ -22,7 +23,8 @@ from .views.tradepad import ModelCache, describe_trade, market_inputs, price_tra
 from .views.tradepad import catalog as tradepad_catalog
 
 ROOT = Path(__file__).resolve().parent
-MARKET_DATA = ROOT.parent / "marketdata"
+DATA_SOURCE = os.environ.get("TQSTUDIO_DATA", "live")   # live: Bloomberg snapshots; synthetic: generated ones
+MARKET_DATA = ROOT.parent / "marketdata" / ("live" if DATA_SOURCE == "live" else "")
 DOCS_BUILD = ROOT.parent / "study" / "docs" / "build"      # LaTeX builds (latexmk in study/docs; not in git)
 DOCUMENTS = {"models": ("Models and Pricing", "models_and_pricing.pdf"),
              "technical": ("Architecture", "architecture.pdf")}
@@ -96,7 +98,7 @@ def tickers() -> dict:
 
 @app.get("/api/snapshots")
 def list_snapshots() -> dict:
-    return {"snapshots": snapshots(MARKET_DATA)}
+    return {"source": DATA_SOURCE, "snapshots": snapshots(MARKET_DATA)}
 
 
 def _view(kind: str, key: str, day: Optional[str], calibration_set: Optional[str], build) -> dict:
@@ -162,7 +164,7 @@ def price(request: dict = Body(...)) -> dict:
 
 @app.get("/api/documents")
 def documents() -> dict:
-    return {"snapshot": engine.market.evaluation_date.isoformat(),
+    return {"snapshot": engine.market.evaluation_date.isoformat(), "source": DATA_SOURCE,
             "documents": [{"key": k, "title": title, "available": (DOCS_BUILD / name).is_file()}
                           for k, (title, name) in DOCUMENTS.items()]}
 

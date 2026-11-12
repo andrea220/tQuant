@@ -57,8 +57,8 @@
       technical: "Architecture: the library's classes and modules, how market data, products, pricers and models " +
         "connect, AAD and testing.",
     };
-    fetch("/api/documents").then((r) => r.json()).then(({ snapshot, documents }) => {
-      document.getElementById("snapshot").textContent = `snapshot ${snapshot}`;
+    fetch("/api/documents").then((r) => r.json()).then(({ snapshot, source, documents }) => {
+      document.getElementById("snapshot").textContent = `${source} · ${snapshot}`;
       document.getElementById("documents").innerHTML = documents.map((d) => d.available
         ? `<a class="tile" href="/documents/${d.key}" target="_blank" rel="noopener">
              <div class="tile-title">${d.title} <span class="pill">PDF</span></div>

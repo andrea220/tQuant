@@ -1,0 +1,125 @@
+"""Build a snapshot: the tables of ``MarketEnvironment.from_folder`` (``eq_spot.csv``, ``eq_dividends.csv``,
+``fx_spot.csv``, ``correlations.csv``) plus ``ir_fixings.csv`` and ``snapshot_info.json``, from a source and the
+universe. Curves and vols come later from the internal service (``internal.py``)."""
+
+from __future__ import annotations
+
+import json
+from datetime import date, datetime
+from pathlib import Path
+
+import pandas as pd
+
+from .history import correlations, update_history
+from .universe import Curve, Instrument
+
+
+def _to_date(value) -> date:
+    return pd.Timestamp(value).date()
+
+
+def _months(tenor: str) -> int:
+    n, unit = int(tenor[:-1]), tenor[-1].upper()
+    return {"W": 0, "M": n, "Y": 12 * n}[unit] if unit != "W" else 0
+
+
+def curve_quotes(source, curves: list[Curve], field: str) -> pd.DataFrame:
+    """Quotes of the curve members (mid, decimal), one row per instrument: ``ccy, curve, tenor, instrument, quote,
+    bloomberg, last_update``. Instruments: the index fixing (``fixing``, a deposit on its tenor: overnight on OIS
+    curves, the Ibor tenor on Ibor curves), then OIS curves ``ois``, Ibor curves the FRAs up to 18M (``fra``, ending at
+    the tenor, starting one index tenor earlier) and ``swap``."""
+    rows = []
+    for c in curves:
+        members = source.bulk(c.bbg, field)
+        if members.empty:
+            raise ValueError(f"curve {c.ccy} {c.name}: no members from {c.bbg}")
+        for _, m in members.iterrows():
+            tenor, ticker = str(m["Tenor"]).strip(), str(m["Tenor Ticker"]).strip()
+            if ticker.endswith("Index"):                  # the index fixing (overnight or Ibor): a deposit
+                instrument = "fixing"
+            elif c.kind == "ois":
+                instrument = "ois"
+            elif tenor[-1].upper() == "M" and _months(tenor) <= 18 or tenor.upper() == "18M":
+                instrument = "fra"
+            else:
+                instrument = "swap"
+            rows.append({"ccy": c.ccy, "curve": c.name, "tenor": tenor, "instrument": instrument,
+                         "quote": round(float(m["Mid Yield"]) / 100.0, 10), "bloomberg": ticker,
+                         "last_update": str(m.get("Last Update", ""))})
+    return pd.DataFrame(rows, columns=["ccy", "curve", "tenor", "instrument", "quote", "bloomberg", "last_update"])
+
+
+def build_tables(source, universe: list[Instrument], fields: dict, today: date, history: pd.DataFrame,
+                 window: int, curves: list[Curve] = ()) -> dict[str, pd.DataFrame]:
+    """Snapshot tables of *universe* on *today* (``{file name: frame}``)."""
+    tickers = [i.bbg for i in universe]
+    ref = source.reference(tickers, [fields["price"], fields["currency"], fields["name"], fields["last_update"]])
+    tables: dict[str, pd.DataFrame] = {}
+
+    equities = [i for i in universe if i.kind == "equity"]
+    currency = {i.bbg: str(ref.loc[i.bbg, fields["currency"]]) for i in universe}
+    tables["eq_spot.csv"] = pd.DataFrame(
+        [{"ticker": i.code, "ccy": currency[i.bbg], "spot": float(ref.loc[i.bbg, fields["price"]]), "repo": None,
+          "div_yield": None} for i in equities], columns=["ticker", "ccy", "spot", "repo", "div_yield"])
+
+    rows = []
+    for i in equities:                                    # projected dividends after today (pay date = ex-date)
+        div = source.bulk(i.bbg, fields["dividends"])
+        if div.empty:
+            continue
+        ex_col = next(c for c in div.columns if c.lower().startswith("ex"))
+        amount_col = next(c for c in div.columns if "amount" in c.lower())
+        for _, r in div.iterrows():
+            if pd.isna(r[ex_col]) or r[ex_col] in ("", None) or pd.isna(r[amount_col]):
+                continue
+            ex = _to_date(r[ex_col])
+            if ex > today and float(r[amount_col]) > 0:
+                rows.append({"ticker": i.code, "ccy": currency[i.bbg], "ex_date": ex.isoformat(),
+                             "pay_date": ex.isoformat(), "amount": float(r[amount_col])})
+    tables["eq_dividends.csv"] = pd.DataFrame(rows, columns=["ticker", "ccy", "ex_date", "pay_date", "amount"])
+
+    tables["fx_spot.csv"] = pd.DataFrame(
+        [{"base": i.fx_base, "quote": i.fx_quote, "spot": float(ref.loc[i.bbg, fields["price"]])}
+         for i in universe if i.kind == "fx"], columns=["base", "quote", "spot"])
+
+    tables["ir_fixings.csv"] = pd.DataFrame(
+        [{"index": i.code, "ccy": currency[i.bbg], "fixing_date": _to_date(ref.loc[i.bbg, fields["last_update"]]).isoformat(),
+          "value": round(float(ref.loc[i.bbg, fields["price"]]) / 100.0, 10), "bloomberg": i.bbg}
+         for i in universe if i.kind == "fixing"], columns=["index", "ccy", "fixing_date", "value", "bloomberg"])
+
+    if curves:
+        tables["ir_quotes.csv"] = curve_quotes(source, list(curves), fields["curve_rates"])
+
+    names = {i.bbg: f"EQ:{currency[i.bbg]}:{i.code}" for i in equities}
+    names.update({i.bbg: f"FX:{i.fx_quote}:{i.code}" for i in universe if i.kind == "fx"})
+    tables["correlations.csv"] = correlations(history, names, window)
+    return tables
+
+
+def write_snapshot(root: Path, tables: dict[str, pd.DataFrame], info: dict, now: datetime) -> Path:
+    """Write the tables under ``root/<yyyymmdd>/<hhmm>/`` with ``snapshot_info.json``; returns the folder."""
+    folder = Path(root) / now.strftime("%Y%m%d") / now.strftime("%H%M")
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, frame in tables.items():
+        frame.to_csv(folder / name, index=False)
+    (folder / "snapshot_info.json").write_text(json.dumps(info, indent=2, default=str), encoding="utf-8")
+    return folder
+
+
+def run(source, universe: list[Instrument], settings: dict, base: Path, now: datetime,
+        curves: list[Curve] = ()) -> Path:
+    """Update the history, build the tables and write the snapshot (the whole manual run)."""
+    fields, out = settings["fields"], settings["output"]
+    priced = [i.bbg for i in universe if i.kind in ("equity", "fx")]
+    history = update_history(Path(base) / out["history"] / "prices.parquet", source, priced, fields["price"],
+                             settings["history"]["years"], now.date())
+    tables = build_tables(source, universe, fields, now.date(), history, settings["correlation"]["window_days"],
+                          curves)
+    info = {"created": now.isoformat(timespec="seconds"), "source": type(source).__name__,
+            "universe": [i.bbg for i in universe], "fields": fields,
+            "history": {"rows": int(len(history)), "first": str(history["date"].min().date()) if len(history) else None},
+            "rows": {name: int(len(frame)) for name, frame in tables.items()},
+            "curves": {f"{c.ccy} {c.name}": c.bbg for c in curves},
+            "missing": "eq_vol, ir_vol, fx_vol: from the internal service (not yet); repo: none; curves: quotes only "
+                       "(ir_quotes.csv), bootstrapped by tQuant"}
+    return write_snapshot(Path(base) / out["snapshots"], tables, info, now)

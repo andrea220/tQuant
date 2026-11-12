@@ -97,17 +97,26 @@ def fx_view(mkt: tq.MarketEnvironment, pair: str) -> dict:
     if not any(k.startswith("FX:") and k.endswith(f":{pair}:SPOT") for k in keys):
         raise KeyError(pair)
     spot = float(mkt.get_fx_spot(base, quote))
-    base_curve, quote_curve = mkt.get_ir_curve(tq.Currency[base]), mkt.get_ir_curve(tq.Currency[quote])
-    forwards = []
-    for k, t in TENORS.items():
-        fwd = float(mkt.get_fx_forward(base, quote, t))
-        forwards.append({"tenor": k, "T": t, "forward": fwd, "points": 1e4 * (fwd - spot),
-                         "df_base": float(base_curve.discount(t)), "df_quote": float(quote_curve.discount(t))})
-    grid = np.linspace(1 / 365, max(TENORS.values()), N_GRID)
+    def default_curve(ccy):                      # forwards need both currencies' default curves
+        try:
+            return mkt.get_ir_curve(tq.Currency[ccy])
+        except (ValueError, KeyError):
+            return None
+
+    base_curve, quote_curve = default_curve(base), default_curve(quote)
+    forwards, forward_curve = [], None
+    if base_curve is not None and quote_curve is not None:
+        for k, t in TENORS.items():
+            fwd = float(mkt.get_fx_forward(base, quote, t))
+            forwards.append({"tenor": k, "T": t, "forward": fwd, "points": 1e4 * (fwd - spot),
+                             "df_base": float(base_curve.discount(t)), "df_quote": float(quote_curve.discount(t))})
+        grid = np.linspace(1 / 365, max(TENORS.values()), N_GRID)
+        forward_curve = {"T": grid.tolist(), "forward": [float(mkt.get_fx_forward(base, quote, t)) for t in grid]}
     out = {"summary": {"pair": pair, "base": base, "quote": quote, "snapshot": mkt.evaluation_date.isoformat(),
-                       "spot": spot, "base_curve": base_curve.name, "quote_curve": quote_curve.name},
+                       "spot": spot, "base_curve": base_curve.name if base_curve is not None else "missing",
+                       "quote_curve": quote_curve.name if quote_curve is not None else "missing"},
            "forwards": forwards,
-           "forward_curve": {"T": grid.tolist(), "forward": [float(mkt.get_fx_forward(base, quote, t)) for t in grid]},
+           "forward_curve": forward_curve,
            "vol": None}
     if any(k.startswith("FX:") and k.endswith(f":{pair}:VOL") for k in keys):
         vs = mkt.get_fx_vol_surface(base, quote)

@@ -1,0 +1,35 @@
+# Universe of the market data snapshots: Bloomberg tickers only, the yellow key decides the type
+# (Equity -> equity spot, dividends, history; Curncy -> FX spot, history; Index -> interest-rate fixing).
+# Add a line to add an underlying.
+tickers:
+  # Italy
+  - ENI IM Equity
+  - ISP IM Equity
+  - UCG IM Equity
+  - ENEL IM Equity
+  - RACE IM Equity
+  # USA
+  - AAPL US Equity
+  - MSFT US Equity
+  - AMZN US Equity
+  - NVDA US Equity
+  - JPM US Equity
+  # FX (1 base = x quote)
+  - EURUSD Curncy
+  - GBPUSD Curncy
+  - EURGBP Curncy
+  - EURCHF Curncy
+  - USDJPY Curncy
+  # interest-rate fixings
+  - ESTRON Index
+  - EUR006M Index
+  - SOFRRATE Index
+  - SONIO/N Index
+
+# Rate curves: "<CCY> <tQuant curve name>": Bloomberg ICVS curve. The snapshot stores the quotes of the curve members
+# (ir_quotes.csv); tQuant bootstraps the curves. Names like "6M" are Ibor curves (fixing, FRAs, swaps), the others OIS.
+curves:
+  EUR ESTR: YCSW0514 Index
+  EUR 6M: YCSW0045 Index
+  USD SOFR: YCSW0490 Index
+  GBP SONIA: YCSW0141 Index

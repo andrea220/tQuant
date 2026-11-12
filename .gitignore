@@ -21,3 +21,7 @@ study/docs/build/
 
 # Libri e risorse di riferimento (locali, non versionati)
 resources/
+
+# marketdata: Bloomberg data are licensed, never in git (snapshots and price history stay on this machine)
+marketdata/live/
+marketdata/history/

@@ -510,7 +510,10 @@ class MarketEnvironment:
         folder = day_folder / calibration_set
         if not folder.is_dir():
             raise FileNotFoundError(f"Snapshot folder '{folder}' does not exist")
-        frames = {name: pd.read_csv(folder / name) for name in cls.MARKET_DATA_FILES if (folder / name).is_file()}
+        # ir_quotes.csv is input only (instrument quotes bootstrapped into curves; to_frames writes the curves)
+        extra = ("ir_quotes.csv", "ir_curves_jacobian.csv", "ir_calibration.csv")
+        frames = {name: pd.read_csv(folder / name) for name in cls.MARKET_DATA_FILES + extra
+                  if (folder / name).is_file()}
         if not frames:
             raise FileNotFoundError(f"No market data files in '{folder}'")
         env = cls.from_frames(frames, evaluation_date)
@@ -525,6 +528,8 @@ class MarketEnvironment:
         is optional, conventions come from the data:
 
         - ``ir_curves.csv``: ``ccy, curve, pillar, value, quote, daycount, interp``;
+        - ``ir_quotes.csv``: ``ccy, curve, tenor, instrument, quote`` (fixing, fra, ois, swap; decimal) -> the curves
+          not in ``ir_curves.csv``, bootstrapped (:func:`bootstrapping.bootstrap_from_quotes`);
           ``quote`` is ``df`` (discount factors) or ``zero`` (continuously
           compounded zero rates) -> ``IR:<ccy>:<curve>:SPOT``.
         - ``ir_vol.csv``: ``ccy, curve, expiry, strike, vol, vol_type`` (``normal`` absolute or
@@ -681,6 +686,26 @@ class MarketEnvironment:
         env = cls(market)
         env.evaluation_date = evaluation_date
         env.calibration_set = None
+        jacobian, calibration = read("ir_curves_jacobian.csv"), read("ir_calibration.csv")
+        if jacobian is not None and calibration is not None:   # stored bootstrap: Jacobian and quote DV01s
+            for (ccy, name), grp in jacobian.groupby(["ccy", "curve"], sort=False):
+                key = f"{RiskFactor.IR.value}:{ccy}:{name}:{MarketDataType.SPOT.value}"
+                if key not in market:
+                    continue
+                cal = calibration[(calibration["ccy"] == ccy) & (calibration["curve"] == name)]
+                labels = cal["instrument"].tolist()
+                curve = market[key]
+                curve.jacobian = grp.pivot(index="instrument", columns="pillar", values="value").loc[labels, labels]
+                curve.calib_quote_dv01 = pd.Series(cal["quote_dv01"].to_numpy(float), index=labels)
+                curve.calibration_quotes = pd.Series(cal["quote"].to_numpy(float), index=labels)
+        quotes = read("ir_quotes.csv")
+        if quotes is not None:                       # curves bootstrapped from instrument quotes (not in ir_curves)
+            from .bootstrapping import bootstrap_from_quotes
+            missing = [(c, n) for c, n in quotes[["ccy", "curve"]].drop_duplicates().itertuples(index=False)
+                       if f"{RiskFactor.IR.value}:{c}:{n}:{MarketDataType.SPOT.value}" not in market]
+            if missing:
+                keep = quotes[[(c, n) in set(missing) for c, n in zip(quotes["ccy"], quotes["curve"])]]
+                bootstrap_from_quotes(keep, evaluation_date, env)
         return env
 
     def to_frames(self) -> dict:
