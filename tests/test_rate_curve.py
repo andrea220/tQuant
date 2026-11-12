@@ -252,5 +252,109 @@ class TestDividendCurvePV(unittest.TestCase):
         self.assertEqual(self.divs.amounts, [2.4, 1.3])
 
 
+MC_PILLARS = [0.25, 1.0, 2.0, 5.0, 10.0, 30.0]
+MC_RATES = [0.020, 0.024, 0.023, 0.026, 0.029, 0.027]          # humped: discrete forwards up and down
+
+
+def mc_curve(rates=MC_RATES, pillars=MC_PILLARS) -> RateCurve:
+    return RateCurve(EVAL_DATE, list(pillars), list(rates), "MONOTONE_CONVEX", DayCounterConvention.Actual365)
+
+
+def mc_reference(rates=MC_RATES, pillars=MC_PILLARS):
+    """Independent numpy: discrete forwards ``fd_i`` and the node forwards ``f_i`` of Hagan and West (2006)."""
+    t = np.concatenate([[0.0], pillars])
+    rt = np.concatenate([[0.0], np.array(rates) * np.array(pillars)])
+    fd = np.diff(rt) / np.diff(t)
+    f = np.empty(len(t))
+    f[1:-1] = (np.diff(t)[:-1] * fd[1:] + np.diff(t)[1:] * fd[:-1]) / (t[2:] - t[:-2])
+    f[0] = fd[0] - 0.5 * (f[1] - fd[0])
+    f[-1] = fd[-1] - 0.5 * (f[-2] - fd[-1])
+    return t, fd, f
+
+
+class TestMonotoneConvex(unittest.TestCase):
+    """Monotone convex interpolation (Hagan and West 2006): exact zero rates at the pillars, discrete forwards
+    preserved, continuous instantaneous forward equal to the node values, flat forward after the last pillar."""
+
+    def setUp(self):
+        tq.Settings.evaluation_date = EVAL_DATE
+        self.curve = mc_curve()
+        self.t, self.fd, self.f = mc_reference()
+
+    def test_zero_rates_at_the_pillars(self):
+        for t, r in zip(MC_PILLARS, MC_RATES):
+            self.assertAlmostEqual(float(self.curve.zero_rate(t)), r, places=13)
+
+    def test_discrete_forwards_preserved(self):
+        for i in range(1, len(self.t)):
+            a, b = self.t[i - 1], self.t[i]
+            pa = 1.0 if a == 0.0 else float(self.curve.discount(a))
+            fwd = -np.log(float(self.curve.discount(b)) / pa) / (b - a)
+            self.assertAlmostEqual(fwd, self.fd[i - 1], places=12)
+
+    def test_instantaneous_forward_continuous_at_the_nodes(self):
+        for i, t in enumerate(MC_PILLARS, start=1):
+            left, right = float(self.curve.inst_fwd(t - 1e-9)), float(self.curve.inst_fwd(t + 1e-9))
+            with self.subTest(pillar=t):
+                self.assertAlmostEqual(left, right, places=7)
+                self.assertAlmostEqual(float(self.curve.inst_fwd(t)), self.f[i], places=10)
+        self.assertAlmostEqual(float(self.curve.inst_fwd(0.0)), self.f[0], places=12)
+        self.assertAlmostEqual(float(self.curve.zero_rate(0.0)), self.f[0], places=12)
+
+    def test_inst_fwd_is_minus_dlogP(self):
+        for t in (0.1, 0.6, 1.7, 3.3, 7.5, 20.0, 40.0):
+            h = 1e-5
+            fd = -(np.log(float(self.curve.discount(t + h))) - np.log(float(self.curve.discount(t - h)))) / (2 * h)
+            with self.subTest(t=t):
+                self.assertAlmostEqual(float(self.curve.inst_fwd(t)), fd, places=7)
+
+    def test_flat_forward_after_the_last_pillar(self):
+        for t in (31.0, 45.0):
+            self.assertAlmostEqual(float(self.curve.inst_fwd(t)), self.f[-1], places=12)
+        expected = MC_RATES[-1] * MC_PILLARS[-1] + self.f[-1] * (45.0 - MC_PILLARS[-1])
+        self.assertAlmostEqual(-np.log(float(self.curve.discount(45.0))), expected, places=12)
+
+    def test_monotone_discrete_forwards_give_a_monotone_forward(self):
+        """Increasing discrete forwards: the instantaneous forward is non-decreasing (no spurious oscillation)."""
+        rates = [0.01, 0.015, 0.02, 0.025, 0.03]
+        pillars = [1.0, 2.0, 3.0, 5.0, 10.0]
+        curve = mc_curve(rates, pillars)
+        grid = np.linspace(0.0, 10.0, 401)
+        f = np.array([float(curve.inst_fwd(float(x))) for x in grid])
+        self.assertGreaterEqual(np.diff(f).min(), -1e-12)
+
+    def test_flat_input_is_flat(self):
+        curve = mc_curve([0.03] * 4, [0.5, 1.0, 5.0, 10.0])
+        for t in (0.2, 0.7, 3.0, 8.0, 15.0):
+            self.assertAlmostEqual(float(curve.inst_fwd(t)), 0.03, places=13)
+            self.assertAlmostEqual(float(curve.discount(t)), np.exp(-0.03 * t), places=13)
+
+    def test_gradients_vs_finite_differences(self):
+        for t in (0.6, 3.3, 12.0, 35.0):
+            with tf.GradientTape() as tape:
+                df = self.curve.discount(t)
+            grads = tape.gradient(df, self.curve.variables)
+            for j in range(len(MC_RATES)):
+                up, dn = list(MC_RATES), list(MC_RATES)
+                up[j] += 1e-7                        # small step: near a region boundary the curvature is large
+                dn[j] -= 1e-7
+                fd = (float(mc_curve(up).discount(t)) - float(mc_curve(dn).discount(t))) / 2e-7
+                g = 0.0 if grads[j] is None else float(grads[j])
+                with self.subTest(t=t, pillar=j):
+                    self.assertAlmostEqual(g, fd, delta=1e-7)
+
+    def test_round_trip_and_validation(self):
+        dates = [EVAL_DATE + timedelta(days=int(round(365 * t))) for t in MC_PILLARS]    # snapshots store dates
+        curve = RateCurve(EVAL_DATE, dates, MC_RATES, "MONOTONE_CONVEX", DayCounterConvention.Actual365)
+        mkt = tq.MarketEnvironment({"IR:EUR:ESTR:SPOT": curve})
+        mkt.evaluation_date = EVAL_DATE
+        back = tq.MarketEnvironment.from_frames(mkt.to_frames(), EVAL_DATE).get_ir_curve(tq.Currency.EUR)
+        self.assertEqual(back.interpolation_type, "MONOTONE_CONVEX")
+        for t in (0.6, 3.3, 12.0):
+            self.assertAlmostEqual(float(back.discount(t)), float(curve.discount(t)), places=12)
+        with self.assertRaises(ValueError):
+            RateCurve(EVAL_DATE, MC_PILLARS, MC_RATES, "CUBIC", DayCounterConvention.Actual365)
+
+
 if __name__ == "__main__":
     unittest.main()

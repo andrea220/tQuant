@@ -136,14 +136,14 @@ def equity_tickers(mkt: tq.MarketEnvironment) -> list[str]:
 
 
 def market_view(mkt: tq.MarketEnvironment, ticker: str) -> dict:
-    """Spot data, forwards and dividends, discount curve, implied vol surface and correlations of *ticker*.
+    """Spot data, forwards and dividends, implied vol surface and correlations of *ticker*.
 
     Args:
         mkt (MarketEnvironment): The market (its evaluation date must be ``tq.Settings.evaluation_date``).
         ticker (str): Equity ticker.
 
     Returns:
-        dict: JSON-ready sections ``summary``, ``forwards``, ``forward_curve``, ``dividends``, ``curve``, ``vol``,
+        dict: JSON-ready sections ``summary``, ``forwards``, ``forward_curve``, ``dividends``, ``vol``,
         ``correlations``.
 
     Raises:
@@ -151,12 +151,17 @@ def market_view(mkt: tq.MarketEnvironment, ticker: str) -> dict:
     """
     if ticker not in equity_tickers(mkt):
         raise KeyError(ticker)
+    with mkt.get_equity(ticker).discount_curve.pinned():       # thousands of discount factors, one market
+        return _equity_view(mkt, ticker)
+
+
+def _equity_view(mkt: tq.MarketEnvironment, ticker: str) -> dict:
     eq = mkt.get_equity(ticker)
     s0 = float(eq.spot)
     curve = eq.discount_curve
     summary = {"ticker": ticker, "currency": eq.currency.name, "snapshot": mkt.evaluation_date.isoformat(),
                "spot": s0, "repo": float(eq.repo), "dividend_model": eq.dividend_model,
-               "div_yield": None if eq.div_yield is None else float(eq.div_yield), "discount_curve": curve.name}
+               "div_yield": None if eq.div_yield is None else float(eq.div_yield)}
 
     forwards = [{"tenor": k, "T": t, "forward": float(eq.forward(t)), "forward_over_spot": float(eq.forward(t)) / s0,
                  "pv_dividends": float(eq.pv_dividends(t)), "implied_div_yield": float(eq.implied_div_yield(t)),
@@ -171,13 +176,6 @@ def market_view(mkt: tq.MarketEnvironment, ticker: str) -> dict:
         dividends = [{"ex_date": d.isoformat(), "pay_date": p.isoformat() if p else None, "amount": float(a),
                       "pct_spot": 100 * float(a) / s0}
                      for d, p, a in zip(eq.dividends.ex_dates, pay, eq.dividends.amounts)]
-
-    pillars = [float(t) for t in curve.pillars]
-    zero_grid = np.linspace(1 / 365, max(pillars), N_GRID)
-    curve_view = {"name": curve.name,
-                  "pillars": [{"date": d.isoformat(), "T": t, "zero_rate": float(r)}
-                              for d, t, r in zip(curve.dates, pillars, np.asarray(curve.rates, float))],
-                  "grid": {"T": zero_grid.tolist(), "zero_rate": [float(curve.zero_rate(t)) for t in zero_grid]}}
 
     vol = None
     vs = eq.vol_surface
@@ -199,4 +197,4 @@ def market_view(mkt: tq.MarketEnvironment, ticker: str) -> dict:
                                for other in corr.names if other != name), key=lambda r: -r["correlation"])
 
     return {"summary": summary, "forwards": forwards, "forward_curve": forward_curve, "dividends": dividends,
-            "curve": curve_view, "vol": vol, "correlations": correlations}
+            "vol": vol, "correlations": correlations}

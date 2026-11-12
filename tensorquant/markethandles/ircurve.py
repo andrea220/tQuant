@@ -4,7 +4,7 @@ import numpy
 from datetime import date, timedelta
 from typing import Union, Optional
 
-from ..numericalhandles.interpolation import LinearInterp
+from ..numericalhandles.interpolation import LinearInterp, MonotoneConvex
 from ..numericalhandles.dtypes import DTYPE, as_variable
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
 
@@ -70,8 +70,10 @@ class RateCurve:
         self.interpolation_type = interp
         if self.interpolation_type == "LINEAR":
             self.interp = LinearInterp(self._pillars, self._rates)
+        elif self.interpolation_type == "MONOTONE_CONVEX":       # Hagan-West: continuous forwards
+            self.interp = MonotoneConvex(self._pillars, self._rates)
         else:
-            raise ValueError("Unsupported interpolation type")
+            raise ValueError(f"Unsupported interpolation type {interp!r} (LINEAR, MONOTONE_CONVEX)")
 
         self._jacobian = None
         self._name = None
@@ -256,6 +258,8 @@ class RateCurve:
 
         if term == 0.0:
             return constant(1.0, dtype=DTYPE)
+        if self.interpolation_type == "MONOTONE_CONVEX":
+            return exp(-self.interp.integral(term))
 
         if term <= self._pillars[0]:
             nrt = -term * self._rates[0]
@@ -269,6 +273,28 @@ class RateCurve:
             nrt = -term * self.interp.interpolate(term)
             df = exp(nrt)
             return df
+
+    def discounts(self, terms: list) -> Tensor:
+        """Discount factors at many terms (dates or year fractions) in one evaluation: ``[k]`` float64 tensor, the
+        same values as :meth:`discount` term by term (same arithmetic for the linear interpolation)."""
+        import tensorflow as tf
+
+        t = numpy.array([self._daycounter.year_fraction(self._reference_date, d) if isinstance(d, date) else float(d)
+                         for d in terms], dtype=float)
+        if self.interpolation_type == "MONOTONE_CONVEX":
+            return exp(-self.interp.integrals(t))
+        y = tf.stack([tf.cast(r, DTYPE) for r in self._rates])
+        if len(self._pillars) == 1:
+            r = tf.fill([len(t)], y[0])
+        else:
+            x = numpy.asarray(self._pillars, dtype=float)
+            idx = numpy.clip(numpy.searchsorted(x, t, side="right") - 1, 0, len(x) - 2)
+            x0, x1 = x[idx], x[idx + 1]
+            dtr = 1 / (x1 - x0)
+            w1, w2 = (x1 - t) * dtr, (t - x0) * dtr
+            mid = constant(w1, DTYPE) * tf.gather(y, idx) + constant(w2, DTYPE) * tf.gather(y, idx + 1)
+            r = tf.where(constant(t <= x[0]), y[0], tf.where(constant(t >= x[-1]), y[-1], mid))
+        return tf.where(constant(t == 0.0), tf.ones_like(r), exp(constant(-t, DTYPE) * r))
 
     def zero_rate(self, term: Union[date, float]) -> Tensor:
         """Continuously compounded zero rate ``r(T) = -ln P(0, T) / T`` (the quantity stored on the pillars).
@@ -291,6 +317,8 @@ class RateCurve:
         else:
             raise TypeError("term must be of type date or float")
         if term == 0.0:
+            if self.interpolation_type == "MONOTONE_CONVEX":
+                return self.interp.forward(0.0)
             return convert_to_tensor(self._rates[0])
         return -tf_log(self.discount(term)) / term
 
@@ -339,11 +367,20 @@ class RateCurve:
                 respect to :attr:`variables`.
         """
         t = float(t)
+        if self.interpolation_type == "MONOTONE_CONVEX":
+            return self.interp.forward(t)
         if t < self._pillars[0]:
             return convert_to_tensor(self._rates[0])
         if t >= self._pillars[-1]:
             return convert_to_tensor(self._rates[-1])
         return self.interp.interpolate(t) + t * self.interp.derivative(t)
+
+    def pinned(self):
+        """Context manager for many evaluations at fixed rates (e.g. pricing all the instruments of a bootstrap
+        under one tape): the monotone convex coefficients are computed once; no effect for linear curves."""
+        from contextlib import nullcontext
+
+        return self.interp.pinned() if self.interpolation_type == "MONOTONE_CONVEX" else nullcontext()
 
     def _set_rates(self, rates: list[float]) -> None:
         """Sets the pillar rates in place.

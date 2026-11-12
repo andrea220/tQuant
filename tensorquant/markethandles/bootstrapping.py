@@ -70,11 +70,12 @@ def _tenor_months(tenor: str) -> int:
 
 
 def bootstrap_from_quotes(quotes: pd.DataFrame, evaluation_date: datetime.date,
-                          market_env: MarketEnvironment) -> dict:
+                          market_env: MarketEnvironment, interpolation: str = "MONOTONE_CONVEX") -> dict:
     """Bootstrap the curves of a quotes table (``ir_quotes.csv``: ``ccy, curve, tenor, instrument, quote``) and register
     them in *market_env* (OIS curves first: the Ibor curves are discounted on them).
 
-    Each curve: one pillar per instrument end date (zero rates, linear, Actual365), all the instruments repriced to
+    Each curve: one pillar per instrument end date (zero rates, Actual365; *interpolation* ``"MONOTONE_CONVEX"``,
+    Hagan-West, continuous forwards, or ``"LINEAR"``), all the instruments repriced to
     zero at once (Newton, Jacobian by AAD, as :class:`CurveBootstrap`). Kept on the curve for the par
     sensitivities: ``calibration_instruments`` (``[(label, product)]``), ``jacobian`` (``dNPV_i / dr_j``, instruments x
     pillars, labelled by instrument) and ``calib_quote_dv01`` (``dNPV_i / dq_i``, 1bp bump of the quote).
@@ -125,7 +126,7 @@ def bootstrap_from_quotes(quotes: pd.DataFrame, evaluation_date: datetime.date,
             products = [p for _, p in unique]
             pricers = [PricerAssignment.create(p) for p in products]
             pillars = [day_counter.year_fraction(evaluation_date, p.end_date) for p in products]
-            curve = RateCurve(evaluation_date, pillars, [0.02] * len(pillars), "LINEAR", A365)
+            curve = RateCurve(evaluation_date, pillars, [0.02] * len(pillars), interpolation, A365)
             key = f"IR:{ccy}:{name}:SPOT"
             market_env.set_ir_curve(key, curve)
             func = ObjectiveFunction(curve, products, pricers, market_env)
@@ -134,12 +135,13 @@ def bootstrap_from_quotes(quotes: pd.DataFrame, evaluation_date: datetime.date,
             labels = [label for label, _ in unique]
             curve.jacobian = pd.DataFrame(jac, index=labels, columns=labels)
             curve.calibration_instruments = unique
-            bump, dv01 = 1e-4, []
-            for (label, product), pricer, row in zip(unique, pricers, source_rows):
-                bumped = _quote_instrument(currency, conv, row.instrument, row.tenor, float(row.quote) + bump,
-                                           evaluation_date)
-                dv01.append((float(pricer.calculate_price(bumped, market_env))
-                             - float(pricer.calculate_price(product, market_env))) / bump)
+            bump, dv01 = 1e-4, []                         # dNPV_i / dq_i, the curve coefficients computed once
+            with curve.pinned():
+                for (label, product), pricer, row in zip(unique, pricers, source_rows):
+                    bumped = _quote_instrument(currency, conv, row.instrument, row.tenor, float(row.quote) + bump,
+                                               evaluation_date)
+                    dv01.append((float(pricer.calculate_price(bumped, market_env))
+                                 - float(pricer.calculate_price(product, market_env))) / bump)
             curve.calib_quote_dv01 = pd.Series(dv01, index=labels)
             curve.calibration_quotes = pd.Series([float(r.quote) for r in source_rows], index=labels)
             out[key] = curve
@@ -431,14 +433,15 @@ class ObjectiveFunction:
         n = len(self.pricers)
         res = numpy.zeros(n)
         jac = numpy.zeros((n, n))
-        for i, (pricer, product) in enumerate(zip(self.pricers, self.products)):
-            with tf.GradientTape() as tape:
-                npv = pricer.calculate_price(product, self.market_env)
-            # tape.gradient returns one gradient per watched variable;
-            # None means that variable did not contribute to NPV_i → treat as 0
+        # all the instruments priced under one tape, the curve's interpolation coefficients computed once
+        with tf.GradientTape(persistent=True) as tape:
+            with self.rate_curve.pinned():
+                npvs = [pricer.calculate_price(product, self.market_env)
+                        for pricer, product in zip(self.pricers, self.products)]
+        for i, npv in enumerate(npvs):
+            # None means that variable did not contribute to NPV_i -> 0
             gradients = tape.gradient(npv, self.rate_curve.variables)
             res[i] = float(npv)
-            jac[i, :] = [
-                float(g.numpy()) if g is not None else 0.0 for g in gradients
-            ]
+            jac[i, :] = [float(g.numpy()) if g is not None else 0.0 for g in gradients]
+        del tape
         return res, jac

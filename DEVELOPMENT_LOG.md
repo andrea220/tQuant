@@ -355,3 +355,16 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       `generate_market` (`MarketEnvironment`); independent random stream per block (curves, equities, FX,
       correlations); SSVI on the library forwards (`Equity.forward`, `get_fx_forward`). `marketdata/generate_synthetic.py`
       is a thin wrapper; snapshot `20261105/2240` (the previous `20261105/2130` removed).
+- [x] Monotone convex interpolation of the curves (Hagan-West 2006, `numericalhandles.MonotoneConvex`,
+      `RateCurve(..., "MONOTONE_CONVEX")`), default of `bootstrap_from_quotes`: discrete forwards and pillar zero
+      rates preserved, continuous instantaneous forward (linear zero rates gave jumps at every pillar; on the
+      2026-11-12 Bloomberg curves the largest move on a 0.01y grid is now 1.9bp), flat forward after the last
+      pillar, no positivity collar. Coefficients computed once (vectorised) and cached; `curve.pinned()` reuses them
+      under one tape; without a tape the values come from numpy (equity market view 26 s -> 0.9 s).
+- [x] Bootstrap speed: one persistent tape for all the instruments of a Newton iteration (under `curve.pinned()`),
+      discount factors of a leg in one vectorised call (`RateCurve.discounts`, `PrefetchedCurve` in the leg
+      pricers). ESTR test curve: linear 4.2 s -> 2.8 s, monotone convex 90 s -> 5.2 s; the four real curves of the
+      2026-11-12 snapshot (122 instruments to 50Y) 71.6 s with monotone convex (66 s before with linear), once at
+      download. A compiled `tf.function` objective was tried and dropped (tracing too slow on the large graphs).
+- [x] tqstudio market page: the equity view shows the currency only (no discount curve panel).
+

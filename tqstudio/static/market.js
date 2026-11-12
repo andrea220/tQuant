@@ -49,7 +49,7 @@ function volTable(id, expiries, colLabels, matrix, scale, d = 2) {
 function renderEquity(d) {
   const s = d.summary;
   const items = [["Spot", fmt(s.spot, 2)], ["Currency", s.currency], ["Repo", pct(s.repo, 3) + "%"],
-    ["Dividends", s.dividend_model], ["Discount curve", s.discount_curve]];
+    ["Dividends", s.dividend_model]];
   if (s.div_yield !== null) items.splice(4, 0, ["Div yield", pct(s.div_yield, 3) + "%"]);
   $("eq-summary").innerHTML = cards(items);
 
@@ -79,13 +79,6 @@ function renderEquity(d) {
     $("eq-vol").innerHTML = '<p class="muted">No vol surface.</p>';
   }
 
-  const c = d.curve;
-  $("eq-curve-name").textContent = c.name;
-  $("eq-curve").innerHTML = table([["Date", (r) => r.date], ["T", (r) => fmt(r.T)],
-    ["Zero rate %", (r) => pct(r.zero_rate, 4)]], c.pillars);
-  plot("eq-chart-curve", [{ x: c.grid.T, y: c.grid.zero_rate.map((v) => 100 * v), mode: "lines" },
-    { x: c.pillars.map((p) => p.T), y: c.pillars.map((p) => 100 * p.zero_rate), mode: "markers", marker: { size: 5 } }],
-  "Zero curve", "T (years)", "%");
   $("eq-correlations").innerHTML = d.correlations.length
     ? table([["Factor", (r) => r.factor], ["Correlation", (r) => fmt(r.correlation)]], d.correlations)
     : '<p class="muted">Not in the correlation matrix.</p>';

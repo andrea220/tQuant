@@ -146,8 +146,7 @@ fixings and correlations of daily log returns. Left:
       `ir_curves.csv` plus the Jacobian (`ir_curves_jacobian.csv`) and the quote DV01s (`ir_calibration.csv`) for the
       par sensitivities; loading a snapshot 0.5 s instead of 63 s. Calendars `UnitedStates` (Fed) and
       `UnitedKingdom` for SOFR / SONIA.
-- [ ] Curve bootstrap speed (66 s at download): one tape per instrument and per Newton iteration; price all the
-      instruments in one tape / `tf.function`. Check the curves against the internal service once available.
+- [ ] Check the bootstrapped curves against the internal service once available.
 - [ ] Par sensitivities from the stored Jacobian: `dV/dq = dV/dr . (-J^-1) . diag(dNPV_i/dq_i)` per curve, in the
       Tradepad and the portfolio views.
 - [ ] Vol surfaces (equity, caps / swaptions, FX) from the internal service (`mdbuild/internal.py`): no BVOL.

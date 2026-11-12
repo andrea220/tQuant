@@ -148,7 +148,8 @@ class TestBootstrapFromQuotes(unittest.TestCase):
                 self.assertFalse(hasattr(loaded, "calibration_instruments"))        # read, not bootstrapped
                 np.testing.assert_allclose([float(v) for v in loaded.variables], [float(v) for v in curve.variables],
                                            atol=1e-12)
-                np.testing.assert_allclose(loaded.jacobian.to_numpy(), curve.jacobian.to_numpy(), rtol=1e-12)
+                np.testing.assert_allclose(loaded.jacobian.to_numpy(), curve.jacobian.to_numpy(), rtol=1e-9,
+                                           atol=1e-10)                          # two separate Newton runs
                 self.assertEqual(list(loaded.jacobian.index), list(curve.jacobian.index))
                 np.testing.assert_allclose(loaded.calib_quote_dv01.to_numpy(), curve.calib_quote_dv01.to_numpy(),
                                            rtol=1e-8)                           # 1bp bumps of two separate runs

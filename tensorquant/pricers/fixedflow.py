@@ -8,6 +8,29 @@ from ..numericalhandles.dtypes import DTYPE
 from ..timehandles.utils import Settings
 
 
+class PrefetchedCurve:
+    """A curve whose discount factors at the given dates are computed in one vectorised call
+    (:meth:`RateCurve.discounts`) and served by :meth:`discount`; any other date or attribute goes to the curve.
+    The leg pricers wrap their curves in it, the coupon pricers are unchanged."""
+
+    def __init__(self, curve: RateCurve, dates) -> None:
+        self._curve = curve
+        dates = sorted(set(dates))
+        self._dfs = dict(zip(dates, tf.unstack(curve.discounts(dates)))) if dates else {}
+
+    def discount(self, term):
+        df = self._dfs.get(term)
+        return df if df is not None else self._curve.discount(term)
+
+    def __getattr__(self, name):
+        return getattr(self._curve, name)
+
+
+def prefetched(curve, dates):
+    """:class:`PrefetchedCurve` for a :class:`RateCurve` (vectorised discount factors), the curve itself otherwise."""
+    return PrefetchedCurve(curve, dates) if hasattr(curve, "discounts") else curve
+
+
 class FixedCouponDiscounting:
     """PV of a fixed coupon: ``amount * P(0, payment_date)``."""
 
@@ -33,7 +56,8 @@ class FixedLegDiscounting:
 
     def calculate_price(self, discount_curve: RateCurve) -> tf.Tensor:
         """PV of the leg (float64 scalar)."""
+        curve = prefetched(discount_curve, [cf.date for cf in self._leg.leg_flows])
         npv = tf.constant(0.0, dtype=DTYPE)
         for cf in self._leg.leg_flows:
-            npv = npv + FixedCouponDiscounting(cf).calculate_price(discount_curve)
+            npv = npv + FixedCouponDiscounting(cf).calculate_price(curve)
         return npv

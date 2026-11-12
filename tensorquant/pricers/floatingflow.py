@@ -8,6 +8,7 @@ from ..flows.floatingcoupon import FloatingCoupon, FloatingRateLeg
 from ..markethandles.ircurve import RateCurve
 from ..numericalhandles.dtypes import DTYPE
 from ..timehandles.utils import Settings
+from .fixedflow import prefetched
 
 
 def _discount(curve: RateCurve, d: date) -> tf.Tensor:
@@ -101,9 +102,12 @@ class FloatingLegDiscounting:
 
     def calculate_price(self, disc_curve: RateCurve, est_curve: RateCurve) -> tf.Tensor:
         """PV of the leg (float64 scalar)."""
+        flows = self._leg.leg_flows
+        est = prefetched(est_curve, [d for cf in flows for d in (cf.ref_period_start, cf.ref_period_end)])
+        disc = est if disc_curve is est_curve else prefetched(disc_curve, [cf.date for cf in flows])
         npv = tf.constant(0.0, dtype=DTYPE)
-        for cf in self._leg.leg_flows:
-            npv = npv + FloatingCouponDiscounting(cf).calculate_price(disc_curve, est_curve)
+        for cf in flows:
+            npv = npv + FloatingCouponDiscounting(cf).calculate_price(disc, est)
         return npv
 
 
@@ -115,7 +119,9 @@ class OisLegDiscounting:
 
     def calculate_price(self, term_structure: RateCurve) -> tf.Tensor:
         """PV of the leg (float64 scalar)."""
+        flows = self._leg.leg_flows
+        curve = prefetched(term_structure, [d for cf in flows for d in (cf.ref_period_start, cf.ref_period_end, cf.date)])
         npv = tf.constant(0.0, dtype=DTYPE)
-        for cf in self._leg.leg_flows:
-            npv = npv + OisCouponDiscounting(cf).calculate_price(term_structure)
+        for cf in flows:
+            npv = npv + OisCouponDiscounting(cf).calculate_price(curve)
         return npv
