@@ -33,7 +33,7 @@ def _equity_carry_inputs(equity, maturity: Union[date, float]):
         if isinstance(maturity, date) else float(maturity)
     df = tf.cast(equity.discount_curve.discount(maturity), DTYPE)
     r = -tf.math.log(df) / tenor
-    carry = equity.repo
+    carry = equity.repo_rate(maturity)
     if equity.dividend_model == "continuous":
         carry = carry + equity.div_yield
     x0 = equity.spot - equity.pv_dividends(maturity)

@@ -367,4 +367,31 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       2026-11-12 snapshot (122 instruments to 50Y) 71.6 s with monotone convex (66 s before with linear), once at
       download. A compiled `tf.function` objective was tried and dropped (tracing too slow on the large graphs).
 - [x] tqstudio market page: the equity view shows the currency only (no discount curve panel).
+- [x] Repo term structure: `EQ:<ccy>:<ticker>:REPO` is a scalar or a `RateCurve` of zero repo rates (linear,
+      ACT/365); `Equity.repo_rate(T)` is the rate to a maturity, used by `Equity.forward`, `BlackScholesPricer` and
+      the GBM (the other MC models read `equity.forward(t)`); repo sensitivities per pillar (AAD = finite
+      differences); optional `eq_repo.csv` (written only for curves, exact round trip). Tests `tests/test_repo_curve.py`.
+- [x] Equity vols from listed options (`calibration/equityvol.py`, after the Bloomberg "Equity Implied Volatility
+      Surface" methodology in `resources/`): `implied_volatility` (European / American Bjerksund-Stensland,
+      vectorised: grid bracket + Illinois steps, compiled price functions, 1e-15); `implied_forward` (put-call parity
+      at the two strikes around the forward, de-Americanization on the model of `BlackScholesPricer`, secant steps;
+      on noisy quotes jumping between two pairs: mean of the two, `converged = False`), `implied_repo_curve`;
+      `LognormalMixture` (4 lognormals + default mass, fit to the out-of-the-money prices, vega-weighted);
+      `build_equity_vol` (filters, settlement prices at weight 0.25, PCHIP in total variance between expiries,
+      Heston-like ATM level beyond the last one, Lee wings; grid 1M-6Y x 50%-150% of the spot; expiries under 14
+      days out of the repo curve); `calibrate_snapshot_vols` (`eq_vol.csv`, `eq_repo.csv`, `eq_vol_calibration.csv`
+      with the mixture parameters, `eq_vol_quotes.csv` with bid / mid / ask vols). Synthetic checks: forward and repo
+      recovered to 1e-10 (European) / 1e-9 (American), repo curve reprices the forwards to 1e-12, mixture smile
+      recovered to 2e-4 in vol; 12 s an underlying on a 16-expiry American chain (121 s before compiling).
+- [x] mdbuild listed options (`mdbuild/options.py`): `OPT_CHAIN` cached a week (`marketdata/cache/`, git-ignored),
+      main root (`option_roots` overrides: ENEL `ENE IM`, RACE `RAC IM`), first 3 then quarterly expiries to 6.2Y,
+      the nearest out-of-the-money strike to 17 forward moneyness plus 2 parity strikes a side, four fields
+      (`PX_BID`, `PX_ASK`, `PX_LAST`, `LAST_UPDATE_BID_RT`: a time is today, a date that session; `LAST_UPDATE_DT`
+      is the last trade, days old on live IDEM quotes), reference spot = close of the quote session when not today.
+      Declared dividends (`DVD_HIST_ALL`, cash, future ex-date, pay dates) replace the BDVD projections within 30
+      days; special dividends excluded (listed options adjusted). Snapshot 2026-11-12 16:24: 2450 options of 10
+      underlyings (about 9800 data points), curves 74 s, vols 210 s, 128 expiries, no errors, repos -6% / +3%, the
+      model within bid / ask on 95-100% of the market quotes.
+- [x] tqstudio market page: equity smile vs market (expiry selectable, default the nearest to 9 months): bid / ask
+      vol bars, settlement and filtered quotes, calibrated mixture, stored surface; fit summary.
 

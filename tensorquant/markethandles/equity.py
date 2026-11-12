@@ -37,7 +37,8 @@ class Equity:
         ticker (str): Equity ticker.
         currency (Currency): Currency of the equity.
         spot (tf.Variable): Spot (market risk factor).
-        repo (tf.Tensor): Repo margin (market variable, or a float64 zero constant if absent).
+        repo (tf.Tensor | RateCurve): Repo: market scalar variable, a :class:`RateCurve` of zero repo rates (term
+            structure), or a float64 zero constant if absent. Use :meth:`repo_rate` for the rate to a maturity.
         dividends (DividendCurve | None): Discrete dividend schedule.
         div_yield (tf.Variable | None): Continuous dividend yield (only in the ``"continuous"`` model).
         vol_surface (VolatilitySurface | None): Implied volatility surface.
@@ -50,7 +51,7 @@ class Equity:
         currency: Currency,
         spot: tf.Variable,
         discount_curve: RateCurve,
-        repo: Optional[tf.Variable] = None,
+        repo: Optional[Union[tf.Variable, RateCurve]] = None,
         dividends: Optional[DividendCurve] = None,
         div_yield: Optional[tf.Variable] = None,
         vol_surface: Optional[VolatilitySurface] = None,
@@ -62,7 +63,7 @@ class Equity:
             currency (Currency): Currency of the equity.
             spot (tf.Variable): Spot variable from the market.
             discount_curve (RateCurve): Discount curve of the currency.
-            repo (tf.Variable, optional): Repo variable; ``None`` means zero repo.
+            repo (tf.Variable | RateCurve, optional): Repo variable or term structure; ``None`` means zero repo.
             dividends (DividendCurve, optional): Discrete dividend schedule.
             div_yield (tf.Variable, optional): Continuous yield, used only if
                 ``dividends`` is ``None``.
@@ -109,6 +110,19 @@ class Equity:
             return curve.daycounter.year_fraction(curve.reference_date, maturity)
         return float(maturity)
 
+    def repo_rate(self, maturity: Union[date, float]) -> tf.Tensor:
+        """Repo rate to *maturity* (continuously compounded): the zero rate of the repo curve, or the scalar repo.
+
+        Args:
+            maturity (Union[date, float]): Maturity (date or year fraction).
+
+        Returns:
+            tf.Tensor: Scalar float64 rate, differentiable w.r.t. the repo variables.
+        """
+        if isinstance(self.repo, RateCurve):
+            return tf.cast(self.repo.zero_rate(maturity), DTYPE)
+        return self.repo
+
     def pv_dividends(self, maturity: Union[date, float]) -> tf.Tensor:
         """Present value of the discrete dividends with ex-date up to *maturity*.
 
@@ -125,8 +139,10 @@ class Equity:
     def forward(self, maturity: Union[date, float]) -> tf.Tensor:
         """Forward price for *maturity*.
 
-        - discrete:   ``F = (S - PV_div(T)) · e^{-repo·T} / P(0,T)``
-        - continuous: ``F = S · e^{-(q + repo)·T} / P(0,T)``
+        - discrete:   ``F = (S - PV_div(T)) · e^{-repo(T)·T} / P(0,T)``
+        - continuous: ``F = S · e^{-(q + repo(T))·T} / P(0,T)``
+
+        with ``repo(T)`` = :meth:`repo_rate` (zero repo rate to ``T``).
 
         Args:
             maturity (Union[date, float]): Maturity (date or year fraction).
@@ -136,7 +152,7 @@ class Equity:
                 market risk factors (spot, repo, dividend yield, curve pillars).
         """
         t = self.year_fraction(maturity)
-        carry = self.repo
+        carry = self.repo_rate(maturity)
         if self.dividend_model == "continuous":
             carry = carry + self.div_yield
         df = tf.cast(self.discount_curve.discount(maturity), DTYPE)
@@ -182,7 +198,7 @@ class Equity:
         """
         factors = {self._key("SPOT"): [self.spot]}
         if self._repo_is_market:
-            factors[self._key("REPO")] = [self.repo]
+            factors[self._key("REPO")] = self.repo.variables if isinstance(self.repo, RateCurve) else [self.repo]
         if self.div_yield is not None:
             factors[self._key("DIVYIELD")] = [self.div_yield]
         if self.dividends is not None:
@@ -207,7 +223,7 @@ class Equity:
             "ticker": self.ticker,
             "currency": self.currency.name,
             "spot": float(self.spot),
-            "repo": float(self.repo),
+            "repo": float(self.repo_rate(1.0)) if isinstance(self.repo, RateCurve) else float(self.repo),
             "dividend model": self.dividend_model,
             "div yield": float(self.div_yield) if self.div_yield is not None else None,
             "discrete dividends": len(self.dividends) if self.dividends is not None else 0,

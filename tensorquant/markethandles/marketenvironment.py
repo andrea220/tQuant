@@ -43,7 +43,8 @@ class MarketDataType(Enum):
     Attributes:
         SPOT (str): Spot/current value (for curves or equity spots).
         VOL (str): Volatility data (for volatility surfaces).
-        REPO (str): Repo rate (scalar) for an equity ticker.
+        REPO (str): Repo of an equity ticker: a scalar rate, or a :class:`RateCurve` of zero repo rates (term
+            structure).
         DIVYIELD (str): Continuous dividend yield (scalar) for an equity ticker.
         DIV (str): Discrete dividend schedule (DividendCurve) for an equity
             ticker.
@@ -234,7 +235,9 @@ class MarketMapValidator:
                             f"got {type(value).__name__}"
                         )
             elif risk_factor == RiskFactor.EQ.value:
-                if data_type in (
+                if data_type == MarketDataType.REPO.value and isinstance(value, RateCurve):
+                    pass                                     # repo term structure (zero repo rates)
+                elif data_type in (
                     MarketDataType.SPOT.value,
                     MarketDataType.REPO.value,
                     MarketDataType.DIVYIELD.value,
@@ -405,7 +408,7 @@ class MarketEnvironment:
         #    (one per key, shared by every pricer that reads it).
         self._market = dict(market)
         for key, value in self._market.items():
-            if self._is_scalar_key(key):
+            if self._is_scalar_key(key) and not isinstance(value, RateCurve):
                 self._market[key] = as_variable(
                     float(value) if isinstance(value, (int, float)) else value,
                     name=key.replace(":", "_"),
@@ -439,7 +442,7 @@ class MarketEnvironment:
 
         - ``IR:<CCY>:<TICKER>:SPOT`` -> one variable per pillar rate (``RateCurve.variables``)
         - ``EQ:<CCY>:<TICKER>:VOL``  -> the volatility matrix ``[n_maturities, n_strikes]``
-        - ``EQ:<CCY>:<TICKER>:SPOT|REPO|DIVYIELD`` -> one scalar variable
+        - ``EQ:<CCY>:<TICKER>:SPOT|REPO|DIVYIELD`` -> one scalar variable (a repo term structure: one per pillar)
         - ``FX:<QUOTE>:<PAIR>:SPOT`` -> one scalar variable (stored pairs only)
         - ``CORR:ALL:GLOBAL:SPOT``   -> the correlation matrix ``[n, n]``
 
@@ -511,7 +514,7 @@ class MarketEnvironment:
         if not folder.is_dir():
             raise FileNotFoundError(f"Snapshot folder '{folder}' does not exist")
         # ir_quotes.csv is input only (instrument quotes bootstrapped into curves; to_frames writes the curves)
-        extra = ("ir_quotes.csv", "ir_curves_jacobian.csv", "ir_calibration.csv")
+        extra = ("ir_quotes.csv", "ir_curves_jacobian.csv", "ir_calibration.csv", "eq_repo.csv")
         frames = {name: pd.read_csv(folder / name) for name in cls.MARKET_DATA_FILES + extra
                   if (folder / name).is_file()}
         if not frames:
@@ -543,6 +546,8 @@ class MarketEnvironment:
           ``FX:<quote>:<base><quote>:VOL``.
         - ``eq_spot.csv``: ``ticker, ccy, spot, repo, div_yield`` (empty cell =
           absent) -> ``EQ:<ccy>:<ticker>:SPOT|REPO|DIVYIELD``.
+        - ``eq_repo.csv``: ``ticker, ccy, pillar, rate`` (zero repo rates, continuously compounded, ACT/365, linear)
+          -> ``EQ:<ccy>:<ticker>:REPO`` as a :class:`RateCurve` (replaces a scalar ``repo`` of ``eq_spot.csv``).
         - ``eq_vol.csv``: ``ticker, ccy, expiry, strike, vol``, a full expiry x
           strike grid per ticker -> ``EQ:<ccy>:<ticker>:VOL`` (Actual365 tenors).
         - ``eq_dividends.csv``: ``ticker, ccy, ex_date, pay_date, amount`` ->
@@ -601,6 +606,14 @@ class MarketEnvironment:
                     value = getattr(row, column)
                     if pd.notna(value):
                         market[f"{RiskFactor.EQ.value}:{row.ccy}:{row.ticker}:{data_type.value}"] = float(value)
+
+        repos = read("eq_repo.csv")
+        if repos is not None:
+            for (ccy, ticker), grp in repos.groupby(["ccy", "ticker"], sort=False):
+                grp = grp.assign(pillar=pd.to_datetime(grp["pillar"]).dt.date).sort_values("pillar")
+                market[f"{RiskFactor.EQ.value}:{ccy}:{ticker}:{MarketDataType.REPO.value}"] = RateCurve(
+                    evaluation_date, list(grp["pillar"]), [float(r) for r in grp["rate"]], "LINEAR",
+                    DayCounterConvention.Actual365)
 
         dc = DayCounter(DayCounterConvention.Actual365)
 
@@ -722,7 +735,7 @@ class MarketEnvironment:
             TypeError: If a market object cannot be written (e.g. a flat vol without a grid).
         """
         eval_date = getattr(self, "evaluation_date", None) or Settings.evaluation_date
-        tables = {name: [] for name in self.MARKET_DATA_FILES}
+        tables = {name: [] for name in self.MARKET_DATA_FILES + ("eq_repo.csv",)}   # repo curves only if any
         spots: dict = {}
 
         def surface_rows(surf, keys: dict) -> list:
@@ -766,6 +779,11 @@ class MarketEnvironment:
                 for ex, pay, amount in zip(value.ex_dates, pays, value.amounts):
                     tables["eq_dividends.csv"].append(
                         {"ticker": ticker, "ccy": ccy, "ex_date": ex, "pay_date": pay, "amount": amount})
+            elif rf == RiskFactor.EQ.value and data_type == MarketDataType.REPO.value and isinstance(value, RateCurve):
+                spots.setdefault((ticker, ccy), {"ticker": ticker, "ccy": ccy, "spot": None, "repo": None,
+                                                 "div_yield": None})
+                tables["eq_repo.csv"] += [{"ticker": ticker, "ccy": ccy, "pillar": d, "rate": float(r)}
+                                          for d, r in value.nodes]
             elif rf == RiskFactor.EQ.value:
                 row = spots.setdefault((ticker, ccy), {"ticker": ticker, "ccy": ccy, "spot": None,
                                                        "repo": None, "div_yield": None})
@@ -1145,7 +1163,7 @@ class MarketEnvironment:
             ccy (Currency, optional): The currency. If None, tries EUR first, then USD.
 
         Returns:
-            Any: The repo rate (scalar or tf.Tensor/tf.Variable).
+            Any: The repo: a scalar rate (tf.Variable) or a :class:`RateCurve` of zero repo rates.
 
         Raises:
             ValueError: If the ticker is not found in the market.

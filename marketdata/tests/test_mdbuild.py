@@ -18,7 +18,8 @@ from mdbuild.universe import Curve, load_curves, load_universe, parse    # noqa:
 
 TODAY = date(2026, 11, 12)
 FIELDS = {"price": "PX_LAST", "currency": "CRNCY", "name": "NAME", "last_update": "LAST_UPDATE_DT",
-          "dividends": "BDVD_ALL_PROJECTIONS", "curve_rates": "CURVE_TENOR_RATES"}
+          "dividends": "BDVD_ALL_PROJECTIONS", "declared_dividends": "DVD_HIST_ALL",
+          "curve_rates": "CURVE_TENOR_RATES"}
 TICKERS = ["AAA IM Equity", "BBB US Equity", "EURUSD Curncy", "ESTRON Index"]
 TARGET = np.array([[1.0, 0.6, 0.3], [0.6, 1.0, -0.2], [0.3, -0.2, 1.0]])
 
@@ -52,6 +53,12 @@ class FakeSource:
                                   "Bid Yield": q - 0.002, "Last Update": "2026-11-12"} for t, k, q in members[ticker]])
         if ticker != "AAA IM Equity":
             return pd.DataFrame()
+        if field == "DVD_HIST_ALL":                   # declared: the next one (future ex-date) and past ones
+            return pd.DataFrame({"Declared Date": ["2026-11-03", "2026-02-02", "2026-08-01", "2026-11-03"],
+                                 "Ex-Date": ["2026-12-09", "2026-05-18", "2027-01-20", "2026-12-21"],
+                                 "Payable Date": ["2026-12-11", "2026-05-20", "2027-01-20", "2026-12-23"],
+                                 "Dividend Amount": [0.52, 0.19, 1.0, 0.4],
+                                 "Dividend Type": ["Interim", "Final", "Stock Split", "Special Cash"]})
         return pd.DataFrame({"Ex-Date": ["2026-10-01", "2026-12-07", "2027-03-22", ""],
                              "Amount Per Share": [0.5, 0.46, 0.28, 0.3]})
 
@@ -141,8 +148,11 @@ class TestSnapshot(unittest.TestCase):
         self.assertEqual(list(tables["eq_spot.csv"].columns), ["ticker", "ccy", "spot", "repo", "div_yield"])
         self.assertEqual(tables["eq_spot.csv"]["ticker"].tolist(), ["AAA_IM", "BBB_US"])
         div = tables["eq_dividends.csv"]
-        self.assertEqual(div["ex_date"].tolist(), ["2026-12-07", "2027-03-22"])        # past and blank dropped
-        self.assertTrue((div["pay_date"] == div["ex_date"]).all())
+        # declared 2026-12-09 (0.52, paid 12-11) replaces the projection of 2026-12-07; past, blank, split and
+        # special (options adjusted) dropped
+        self.assertEqual(div["ex_date"].tolist(), ["2026-12-09", "2027-03-22"])
+        self.assertEqual(div["amount"].tolist(), [0.52, 0.28])
+        self.assertEqual(div["pay_date"].tolist(), ["2026-12-11", "2027-03-22"])      # projections: pay = ex
         fx = tables["fx_spot.csv"].iloc[0]
         self.assertEqual((fx.base, fx.quote, fx.spot), ("EUR", "USD", 1.1092))
         fix = tables["ir_fixings.csv"].iloc[0]

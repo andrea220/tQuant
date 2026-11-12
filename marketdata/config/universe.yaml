@@ -26,6 +26,12 @@ tickers:
   - SOFRRATE Index
   - SONIO/N Index
 
+# Listed options: by default the root with the underlying's ticker and exchange (ENI IM, AAPL US); override here
+# with "<underlying>: <root> <exchange>" (e.g. a European-style root).
+option_roots:
+  ENEL IM Equity: ENE IM
+  RACE IM Equity: RAC IM
+
 # Rate curves: "<CCY> <tQuant curve name>": Bloomberg ICVS curve. The snapshot stores the quotes of the curve members
 # (ir_quotes.csv); tQuant bootstraps the curves. Names like "6M" are Ibor curves (fixing, FRAs, swaps), the others OIS.
 curves:

@@ -11,7 +11,14 @@ from pathlib import Path
 import pandas as pd
 
 from .history import correlations, update_history
+from .options import equity_option_quotes
 from .universe import Curve, Instrument
+
+
+DECLARED_WINDOW = 30          # days: a projection this close to a declared dividend is that dividend
+# not regular cash dividends: stock events, and special (extraordinary) cash dividends, for which the exchanges adjust
+# the listed options (strike, multiplier) and OTC terms usually do the same: they do not lower the forward
+NON_CASH = ("split", "stock", "spinoff", "spin-off", "rights", "special")
 
 
 def _to_date(value) -> date:
@@ -50,8 +57,10 @@ def curve_quotes(source, curves: list[Curve], field: str) -> pd.DataFrame:
 
 
 def build_tables(source, universe: list[Instrument], fields: dict, today: date, history: pd.DataFrame,
-                 window: int, curves: list[Curve] = ()) -> dict[str, pd.DataFrame]:
-    """Snapshot tables of *universe* on *today* (``{file name: frame}``)."""
+                 window: int, curves: list[Curve] = (), options: dict = None,
+                 cache_dir: Path = None) -> dict[str, pd.DataFrame]:
+    """Snapshot tables of *universe* on *today* (``{file name: frame}``); with *options* (the ``options`` block of
+    the settings) also ``eq_option_quotes.csv`` (chains cached in *cache_dir*)."""
     tickers = [i.bbg for i in universe]
     ref = source.reference(tickers, [fields["price"], fields["currency"], fields["name"], fields["last_update"]])
     tables: dict[str, pd.DataFrame] = {}
@@ -63,7 +72,23 @@ def build_tables(source, universe: list[Instrument], fields: dict, today: date, 
           "div_yield": None} for i in equities], columns=["ticker", "ccy", "spot", "repo", "div_yield"])
 
     rows = []
-    for i in equities:                                    # projected dividends after today (pay date = ex-date)
+    for i in equities:
+        # declared dividends with a future ex-date (pay date known), then the projections (pay date = ex-date)
+        # that are not within DECLARED_WINDOW days of a declared one (the same dividend, now announced)
+        declared = []
+        if fields.get("declared_dividends"):
+            for r in source.bulk(i.bbg, fields["declared_dividends"]).to_dict("records"):
+                ex, amount, kind = r.get("Ex-Date"), r.get("Dividend Amount"), str(r.get("Dividend Type") or "")
+                if ex in ("", None) or pd.isna(ex) or amount is None or pd.isna(amount) \
+                        or any(w in kind.lower() for w in NON_CASH):
+                    continue
+                ex = _to_date(ex)
+                if ex > today and float(amount) > 0:
+                    pay = r.get("Payable Date")
+                    pay = _to_date(pay) if pay not in ("", None) and not pd.isna(pay) else ex
+                    declared.append(ex)
+                    rows.append({"ticker": i.code, "ccy": currency[i.bbg], "ex_date": ex.isoformat(),
+                                 "pay_date": pay.isoformat(), "amount": float(amount)})
         div = source.bulk(i.bbg, fields["dividends"])
         if div.empty:
             continue
@@ -73,9 +98,12 @@ def build_tables(source, universe: list[Instrument], fields: dict, today: date, 
             if pd.isna(r[ex_col]) or r[ex_col] in ("", None) or pd.isna(r[amount_col]):
                 continue
             ex = _to_date(r[ex_col])
+            if any(abs((ex - d).days) <= DECLARED_WINDOW for d in declared):
+                continue
             if ex > today and float(r[amount_col]) > 0:
                 rows.append({"ticker": i.code, "ccy": currency[i.bbg], "ex_date": ex.isoformat(),
                              "pay_date": ex.isoformat(), "amount": float(r[amount_col])})
+    rows.sort(key=lambda r: (r["ticker"], r["ex_date"]))
     tables["eq_dividends.csv"] = pd.DataFrame(rows, columns=["ticker", "ccy", "ex_date", "pay_date", "amount"])
 
     tables["fx_spot.csv"] = pd.DataFrame(
@@ -89,6 +117,14 @@ def build_tables(source, universe: list[Instrument], fields: dict, today: date, 
 
     if curves:
         tables["ir_quotes.csv"] = curve_quotes(source, list(curves), fields["curve_rates"])
+
+    if options and equities:
+        rates = {ccy: float(ref.loc[bbg, fields["price"]]) / 100.0 for ccy, bbg in (options.get("rates") or {}).items()
+                 if bbg in ref.index}                    # overnight fixings: forward estimates for the strikes
+        spots = {i.bbg: float(ref.loc[i.bbg, fields["price"]]) for i in equities}
+        tables["eq_option_quotes.csv"] = equity_option_quotes(source, equities, spots, currency,
+                                                              tables["eq_dividends.csv"], rates, options,
+                                                              Path(cache_dir), today, history)
 
     names = {i.bbg: f"EQ:{currency[i.bbg]}:{i.code}" for i in equities}
     names.update({i.bbg: f"FX:{i.fx_quote}:{i.code}" for i in universe if i.kind == "fx"})
@@ -114,12 +150,13 @@ def run(source, universe: list[Instrument], settings: dict, base: Path, now: dat
     history = update_history(Path(base) / out["history"] / "prices.parquet", source, priced, fields["price"],
                              settings["history"]["years"], now.date())
     tables = build_tables(source, universe, fields, now.date(), history, settings["correlation"]["window_days"],
-                          curves)
+                          curves, settings.get("options"), Path(base) / out.get("cache", "cache") / "option_chains")
     info = {"created": now.isoformat(timespec="seconds"), "source": type(source).__name__,
             "universe": [i.bbg for i in universe], "fields": fields,
             "history": {"rows": int(len(history)), "first": str(history["date"].min().date()) if len(history) else None},
             "rows": {name: int(len(frame)) for name, frame in tables.items()},
             "curves": {f"{c.ccy} {c.name}": c.bbg for c in curves},
-            "missing": "eq_vol, ir_vol, fx_vol: from the internal service (not yet); repo: none; curves: quotes only "
-                       "(ir_quotes.csv), bootstrapped by tQuant"}
+            "missing": "ir_vol, fx_vol: from the internal service (not yet); curves: quotes only (ir_quotes.csv), "
+                       "bootstrapped by tQuant; eq_vol / eq_repo: from the option quotes (eq_option_quotes.csv), "
+                       "built by tQuant"}
     return write_snapshot(Path(base) / out["snapshots"], tables, info, now)

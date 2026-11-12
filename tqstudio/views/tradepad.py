@@ -370,7 +370,7 @@ def market_inputs(mkt: tq.MarketEnvironment, request: dict) -> dict:
         return {"editable": editable,
                 "info": [["Rate (zero, %)", 100 * float(curve.zero_rate(T)), 3], ["Curve", f"{ccy} {name}", None],
                          ["Forward", float(eq.forward(T)), 2], ["PV dividends", float(eq.pv_dividends(T)), 2],
-                         ["Repo (%)", 100 * float(eq.repo), 3], ["Strike", strike, 2],
+                         ["Repo (%)", 100 * float(eq.repo_rate(expiry)), 3], ["Strike", strike, 2],
                          ["Expiry", f"{expiry.isoformat()} ({T:.2f}y)", None]],
                 "dividends": dividends, "dividend_model": div_model}
     product = _rates_product(mkt, f, request["product"])

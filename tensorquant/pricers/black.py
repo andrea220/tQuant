@@ -421,7 +421,7 @@ class BlackScholesPricer(Pricer):
         discount_factor = tf.cast(eq.discount_curve.discount(product.end_date), DTYPE)
         r = -tf.math.log(discount_factor) / tenor
 
-        repo = eq.repo if self._use_implied_repo else tf.constant(0.0, dtype=DTYPE)
+        repo = eq.repo_rate(product.end_date) if self._use_implied_repo else tf.constant(0.0, dtype=DTYPE)
         s = eq.spot
         pv_div = tf.constant(0.0, dtype=DTYPE)
 

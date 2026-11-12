@@ -64,6 +64,8 @@ class BloombergSource:
 
     @staticmethod
     def _value(element):
+        if element.isNull():                               # empty field (e.g. a record date not set yet)
+            return None
         value = element.getValue()
         return value.isoformat() if hasattr(value, "isoformat") and not isinstance(value, str) else value
 

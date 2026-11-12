@@ -79,9 +79,59 @@ function renderEquity(d) {
     $("eq-vol").innerHTML = '<p class="muted">No vol surface.</p>';
   }
 
+  state.smile = d.smile_quotes;
+  const sel = $("eq-smile-expiry");
+  if (state.smile) {
+    sel.innerHTML = state.smile.expiries.map((e, i) => `<option value="${i}">${e.expiry} (${e.t.toFixed(2)}y)</option>`).join("");
+    sel.value = String(state.smile.default);
+    sel.disabled = false;
+  } else {
+    sel.innerHTML = "<option>no option quotes</option>";
+    sel.disabled = true;
+  }
+  marketSmile();
   $("eq-correlations").innerHTML = d.correlations.length
     ? table([["Factor", (r) => r.factor], ["Correlation", (r) => fmt(r.correlation)]], d.correlations)
     : '<p class="muted">Not in the correlation matrix.</p>';
+}
+
+// calibrated smile of one expiry against the quotes: bid / ask bars, mid points, model and stored surface
+function marketSmile() {
+  const s = state.smile;
+  if (!s) {
+    Plotly.purge($("eq-chart-smile-market"));
+    $("eq-chart-smile-market").innerHTML = '<p class="muted">No option quotes in this snapshot.</p>';
+    $("eq-smile-summary").innerHTML = "";
+    return;
+  }
+  const e = s.expiries[Number($("eq-smile-expiry").value)];
+  const bars = (pts, name, marker) => {
+    const mid = pts.map((p) => 100 * p.mid);
+    return { x: pts.map((p) => 100 * p.moneyness), y: mid, mode: "markers", name, marker,
+      text: pts.map((p) => `${p.type} ${p.strike}`),
+      error_y: { type: "data", symmetric: false, thickness: 1.2, width: 3,
+        array: pts.map((p) => (p.ask === null ? 0 : 100 * (p.ask - p.mid))),
+        arrayminus: pts.map((p) => (p.bid === null ? 0 : 100 * (p.mid - p.bid))) } };
+  };
+  const used = e.points.filter((p) => p.used && !p.settlement);
+  const settle = e.points.filter((p) => p.used && p.settlement);
+  const dropped = e.points.filter((p) => !p.used && p.mid !== null);
+  const x = e.line.moneyness.map((m) => 100 * m);
+  const traces = [
+    { x, y: e.line.model.map((v) => (v === null ? null : 100 * v)), mode: "lines", name: "model (calibrated)",
+      line: { color: "#3563e9", width: 2 } },
+  ];
+  if (e.line.surface) traces.push({ x, y: e.line.surface.map((v) => 100 * v), mode: "lines", name: "stored surface",
+    line: { color: "#888", dash: "dash", width: 1.5 } });
+  traces.push(bars(used, "bid / mid / ask", { color: "#18202f", size: 5 }));
+  if (settle.length) traces.push(bars(settle, "settlement", { color: "#e8833a", size: 7, symbol: "diamond" }));
+  if (dropped.length) traces.push(bars(dropped, "filtered out", { color: "#bbb", size: 5 }));
+  plot("eq-chart-smile-market", traces, `Smile ${e.expiry} vs market`, "strike / spot (%)", "implied vol (%)",
+    { showlegend: true, legend: { font: { size: 10 } } });
+  $("eq-smile-summary").innerHTML = `<div class="cards">${cards([
+    ["Expiry", `${e.expiry} (${e.t.toFixed(2)}y)`], ["Forward", fmt(e.forward, 2)], ["Repo", pct(e.repo, 3) + "%"],
+    ["Quotes used", e.quotes], ["Fit rms (vol pts)", fmt(100 * e.fit_rms, 2)],
+    ["Model inside bid-ask", e.inside === null ? "" : `${Math.round(100 * e.inside)}%`], ["Source", e.source]])}</div>`;
 }
 
 // ---------- rates ----------
@@ -243,6 +293,7 @@ async function init() {
   document.querySelectorAll(".asset").forEach((b) => b.addEventListener("click", () => selectClass(b.dataset.class)));
   $("item").addEventListener("change", () => { state.item = $("item").value; loadItem(); });
   $("ir-swaption-tenor").addEventListener("change", swaptionSmile);
+  $("eq-smile-expiry").addEventListener("change", marketSmile);
   await loadSnapshot(CLASSES[p.get("class")] ? p.get("class") : "equity", p.get("item"));
 }
 

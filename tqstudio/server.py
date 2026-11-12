@@ -117,7 +117,11 @@ def market_catalog(date: Optional[str] = None, set: Optional[str] = None) -> dic
 
 @app.get("/api/market/equity/{ticker}")
 def market_equity(ticker: str, date: Optional[str] = None, set: Optional[str] = None) -> dict:
-    return _view("equity", ticker, date, set, lambda mkt: market_view(mkt, ticker))
+    def build(mkt):
+        folder = MARKET_DATA / mkt.evaluation_date.strftime("%Y%m%d") / str(mkt.calibration_set)
+        return market_view(mkt, ticker, folder)
+
+    return _view("equity", ticker, date, set, build)
 
 
 @app.get("/api/market/rates/{ccy}/{curve}")

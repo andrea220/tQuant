@@ -149,13 +149,20 @@ fixings and correlations of daily log returns. Left:
 - [ ] Check the bootstrapped curves against the internal service once available.
 - [ ] Par sensitivities from the stored Jacobian: `dV/dq = dV/dr . (-J^-1) . diag(dNPV_i/dq_i)` per curve, in the
       Tradepad and the portfolio views.
-- [ ] Vol surfaces (equity, caps / swaptions, FX) from the internal service (`mdbuild/internal.py`): no BVOL.
-- [ ] Repo: no source yet (empty, i.e. zero); dividend pay dates: the projections have none (pay date = ex-date).
+- [ ] Vol surfaces of caps / swaptions and FX from the internal service (`mdbuild/internal.py`): no BVOL (equity
+      vols and repo: from the listed options, done).
+- [ ] Equity vols: a reference (OTC) surface for the long end and the wings when the internal service has one (the
+      Bloomberg methodology blends it in; now the Heston-like ATM level); Kalman smoothing of the implied forwards
+      across snapshots if intraday snapshots come (one a day now); calendar-arbitrage check of the stored grid
+      (bilinear in vol between the tenors).
+- [ ] `BlackScholesPricer` / `bjerksund_stensland_calc`: NaN below about 1.5% vol and with a tiny positive carry
+      (overflow), negative put prices at very low vols (immediate-exercise branch of the put symmetry). The option
+      calibration avoids these regions (vols 2%-300%, zero-carry calls priced European); fix the pricer.
 - [ ] Correlations: daily closes of different markets are asynchronous (Milan vs New York closes): same-day
       returns understate the cross-market correlation; weekly returns or lagged terms as an option. Window choice:
       on the first snapshot (2026-11-12) ENI is negatively correlated with the Italian banks over the last year
       (-0.3) after ten years at +0.3 / +0.8: a regime the 252-day window takes in full.
-- [ ] tQuant / tqstudio reading the live snapshots once curves and vols are there (they read the synthetic ones now).
+- [x] tQuant / tqstudio reading the live snapshots (curves, equity vols and repo curves).
 
 ## Future development (not prioritised)
 

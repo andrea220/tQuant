@@ -6,9 +6,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import json
+
 import numpy as np
+import pandas as pd
 
 import tensorquant as tq
+from tensorquant.calibration.equityvol import LognormalMixture
 
 TENORS = {"1M": 1 / 12, "3M": 0.25, "6M": 0.5, "1Y": 1.0, "2Y": 2.0, "3Y": 3.0, "5Y": 5.0, "7Y": 7.0, "10Y": 10.0}
 N_GRID = 120
@@ -135,7 +139,52 @@ def equity_tickers(mkt: tq.MarketEnvironment) -> list[str]:
     return sorted(names, key=lambda s: (s.rstrip("0123456789"), int(s[len(s.rstrip("0123456789")):] or 0)))
 
 
-def market_view(mkt: tq.MarketEnvironment, ticker: str) -> dict:
+def smile_quotes(folder: Path, ticker: str, spot: float, surface=None, target: float = 0.75):
+    """Calibrated smiles of *ticker* against its option quotes, from the snapshot files ``eq_vol_calibration.csv``
+    (mixture parameters per expiry) and ``eq_vol_quotes.csv`` (bid / mid / ask vols): per expiry the model smile
+    (redrawn from the parameters), the stored surface at that maturity and the quotes. ``None`` without the files.
+
+    Returns:
+        dict | None: ``expiries`` (list) and ``default`` (index of the expiry nearest *target* years).
+    """
+    cal_path, quotes_path = Path(folder) / "eq_vol_calibration.csv", Path(folder) / "eq_vol_quotes.csv"
+    if not cal_path.is_file() or not quotes_path.is_file():
+        return None
+    cal, quotes = pd.read_csv(cal_path), pd.read_csv(quotes_path)
+    cal, quotes = cal[cal["ticker"] == ticker], quotes[quotes["ticker"] == ticker]
+    if "weights" not in cal or cal["weights"].isna().all():
+        return None
+    out = []
+    for row in cal[cal["weights"].notna()].itertuples(index=False):
+        mixture = LognormalMixture(json.loads(row.weights), json.loads(row.means), json.loads(row.stdevs),
+                                   float(row.default))
+        q = quotes[quotes["expiry"] == row.expiry].sort_values("strike")
+        lo = min(0.5 * row.forward, q["strike"].min() if len(q) else row.forward)
+        hi = max(1.5 * row.forward, q["strike"].max() if len(q) else row.forward)
+        line = np.linspace(lo, hi, 121)
+        used = q[q["used"].astype(bool) & ~q["settlement"].astype(bool)]    # market quotes (settlement: bid = ask)
+        bid = used["iv_bid"].fillna(used["iv_mid"])
+        inside = ((used["model_vol"] >= bid - 1e-12) & (used["model_vol"] <= used["iv_ask"] + 1e-12)).mean() \
+            if len(used) else float("nan")
+        nan = lambda x: None if x is None or not np.isfinite(x) else float(x)
+        out.append({
+            "expiry": row.expiry, "t": float(row.t), "forward": float(row.forward), "repo": float(row.repo),
+            "quotes": int(row.quotes), "source": row.source, "fit_rms": float(row.fit_rms),
+            "inside": nan(inside), "atm_vol": float(row.atm_vol),
+            "line": {"moneyness": (line / spot).tolist(),
+                     "model": [nan(v) for v in mixture.implied_vols(row.forward, line, row.t)],
+                     "surface": None if surface is None else
+                     [float(surface.volatility(strike=float(k), tenor=float(row.t))) for k in line]},
+            "points": [{"moneyness": r.strike / spot, "strike": r.strike, "type": r.option_type, "bid": nan(r.iv_bid),
+                        "mid": nan(r.iv_mid), "ask": nan(r.iv_ask), "settlement": bool(r.settlement),
+                        "used": bool(r.used)} for r in q.itertuples(index=False)]})
+    if not out:
+        return None
+    default = int(np.argmin([abs(e["t"] - target) for e in out]))
+    return {"expiries": out, "default": default}
+
+
+def market_view(mkt: tq.MarketEnvironment, ticker: str, folder: Path = None) -> dict:
     """Spot data, forwards and dividends, implied vol surface and correlations of *ticker*.
 
     Args:
@@ -152,7 +201,10 @@ def market_view(mkt: tq.MarketEnvironment, ticker: str) -> dict:
     if ticker not in equity_tickers(mkt):
         raise KeyError(ticker)
     with mkt.get_equity(ticker).discount_curve.pinned():       # thousands of discount factors, one market
-        return _equity_view(mkt, ticker)
+        view = _equity_view(mkt, ticker)
+    eq = mkt.get_equity(ticker)
+    view["smile_quotes"] = None if folder is None else smile_quotes(folder, ticker, float(eq.spot), eq.vol_surface)
+    return view
 
 
 def _equity_view(mkt: tq.MarketEnvironment, ticker: str) -> dict:
@@ -160,7 +212,7 @@ def _equity_view(mkt: tq.MarketEnvironment, ticker: str) -> dict:
     s0 = float(eq.spot)
     curve = eq.discount_curve
     summary = {"ticker": ticker, "currency": eq.currency.name, "snapshot": mkt.evaluation_date.isoformat(),
-               "spot": s0, "repo": float(eq.repo), "dividend_model": eq.dividend_model,
+               "spot": s0, "repo": float(eq.repo_rate(1.0)), "dividend_model": eq.dividend_model,
                "div_yield": None if eq.div_yield is None else float(eq.div_yield)}
 
     forwards = [{"tenor": k, "T": t, "forward": float(eq.forward(t)), "forward_over_spot": float(eq.forward(t)) / s0,

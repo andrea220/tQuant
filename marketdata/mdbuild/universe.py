@@ -79,6 +79,13 @@ def load_curves(path: Path) -> list[Curve]:
     return out
 
 
+def load_option_roots(path: Path) -> dict:
+    """``option_roots`` of ``universe.yaml``: underlying -> ``"<root> <exchange>"`` of its listed options (only to
+    override the default, the underlying's own ticker and exchange)."""
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    return {str(k).strip(): str(v).strip() for k, v in (data.get("option_roots") or {}).items()}
+
+
 def load_universe(path: Path) -> list[Instrument]:
     """Instruments of ``universe.yaml`` (``tickers:`` list), duplicates removed in order."""
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
