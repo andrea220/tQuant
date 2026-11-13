@@ -234,7 +234,10 @@ class LocalVolatilityProcess(StochasticProcess):
 
         Args:
             equity (Equity): The underlying (``market_env.get_equity``).
-            maturity, strike: Unused (same factory signature as the GBM).
+            maturity (date | float, optional): Last date needed: the local vol grid is built on the vol nodes up
+                to the first one from it only (the local vol before it depends on the two nodes around each time,
+                so the values are the same; the vega of the later nodes is zero). ``None``: the whole surface.
+            strike: Unused (same factory signature as the GBM).
             n_y (int): Points of the forward log-moneyness grid.
             y_range (tuple): Range of that grid (``ln(K/F)``).
             time_step (float): Time step of the local vol grid.
@@ -257,6 +260,11 @@ class LocalVolatilityProcess(StochasticProcess):
             raise ValueError(f"No volatility surface for underlying '{equity.ticker}'")
         surface = equity.vol_surface
         t_nodes = np.asarray(surface.maturity, dtype=float)
+        vol_matrix = surface.volatility_matrix
+        if maturity is not None:                   # nodes up to the first one from the maturity: a shorter grid
+            horizon = equity.year_fraction(maturity)
+            k = min(max(int(np.searchsorted(t_nodes, horizon - 1e-12)) + 1, 2), len(t_nodes))
+            t_nodes, vol_matrix = t_nodes[:k], vol_matrix[:k]
         eval_date = Settings.evaluation_date
         f_nodes = tf.stack([
             tf.cast(equity.forward(eval_date + timedelta(days=max(1, int(round(t * 365))))), DTYPE)
@@ -266,7 +274,7 @@ class LocalVolatilityProcess(StochasticProcess):
         log_moneyness = log_k[None, :] - tf.math.log(f_nodes)[:, None]
         y_grid = np.linspace(y_range[0], y_range[1], n_y)
         sigma_ty, lv_t, diagnostics = gatheral_local_vol(
-            surface.volatility_matrix, t_nodes, log_moneyness, y_grid,
+            vol_matrix, t_nodes, log_moneyness, y_grid,
             time_step=time_step, max_wing_slope=max_wing_slope, g_floor=g_floor,
         )
         if diagnostics["arbitrage_fraction"] > 0.0:
@@ -361,10 +369,10 @@ class LocalVolatilityModel(EquityModel):
     SETTINGS = {"n_y": 300, "y_range": [float(np.log(0.05)), float(np.log(5.0))], "time_step": 1.0 / 96.0,
                 "max_wing_slope": 1.9, "g_floor": 1e-3, "martingale_correction": True}
 
-    def process(self, equity) -> LocalVolatilityProcess:
+    def process(self, equity, maturity=None) -> LocalVolatilityProcess:
         s = self.settings
         return LocalVolatilityProcess.from_equity(
-            equity, n_y=int(s["n_y"]), y_range=tuple(s["y_range"]), time_step=float(s["time_step"]),
+            equity, maturity, n_y=int(s["n_y"]), y_range=tuple(s["y_range"]), time_step=float(s["time_step"]),
             max_wing_slope=float(s["max_wing_slope"]), g_floor=float(s["g_floor"]),
             martingale_correction=bool(s["martingale_correction"]))
 
@@ -378,5 +386,5 @@ class LocalVolatilityModel(EquityModel):
     @classmethod
     def from_equity(cls, equity, maturity: Union[date, float] = None, strike: float = None,
                     **settings) -> LocalVolatilityProcess:
-        """Local vol process of *equity* (``maturity`` and ``strike`` unused: factory signature of the pricers)."""
-        return cls(**settings).process(equity)
+        """Local vol process of *equity* up to *maturity* (``strike`` unused: factory signature of the pricers)."""
+        return cls(**settings).process(equity, maturity)

@@ -5,7 +5,7 @@ universe. Curves and vols come later from the internal service (``internal.py``)
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -23,6 +23,28 @@ NON_CASH = ("split", "stock", "spinoff", "spin-off", "rights", "special")
 
 def _to_date(value) -> date:
     return pd.Timestamp(value).date()
+
+
+def index_dividends(source, bbg: str, field: str, today: date, years: float) -> list[tuple[date, float]]:
+    """Projected dividends of an equity index in index points, week by week (``PERIODICITY_OVERRIDE = W`` from today
+    to *years* ahead; Bloomberg projects about three years): ``[(week date, points)]``, positive weeks only. Each week
+    is a discrete dividend with its date as ex-date."""
+    end = today + timedelta(days=int(round(years * 365.25)))
+    frame = source.bulk(bbg, field, {"PERIODICITY_OVERRIDE": "W", "START_DATE_OVERRIDE": today.strftime("%Y%m%d"),
+                                     "END_DATE_OVERRIDE": end.strftime("%Y%m%d")})
+    if frame.empty:
+        return []
+    date_col = frame.columns[0]
+    points_col = next((c for c in frame.columns if "point" in c.lower() or "dividend" in c.lower()), frame.columns[-1])
+    out = []
+    for r in frame.to_dict("records"):
+        d, points = r[date_col], r[points_col]
+        if d in ("", None) or points is None or pd.isna(points):
+            continue
+        d = _to_date(d)
+        if d > today and float(points) > 0:
+            out.append((d, float(points)))
+    return out
 
 
 def _months(tenor: str) -> int:
@@ -73,6 +95,13 @@ def build_tables(source, universe: list[Instrument], fields: dict, today: date, 
 
     rows = []
     for i in equities:
+        if i.bbg.endswith(" Index"):                     # equity index: weekly projected dividends in points
+            if fields.get("index_dividends"):
+                rows += [{"ticker": i.code, "ccy": currency[i.bbg], "ex_date": d.isoformat(),
+                          "pay_date": d.isoformat(), "amount": points}
+                         for d, points in index_dividends(source, i.bbg, fields["index_dividends"], today,
+                                                          fields.get("index_dividend_years", 6.2))]
+            continue
         # declared dividends with a future ex-date (pay date known), then the projections (pay date = ex-date)
         # that are not within DECLARED_WINDOW days of a declared one (the same dividend, now announced)
         declared = []

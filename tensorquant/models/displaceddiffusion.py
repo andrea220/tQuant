@@ -406,7 +406,7 @@ class DisplacedDiffusionModel(EquityModel):
         """``{beta_fwd, sigma_fwd}`` ``[n]`` as float64 ``tf.Variable``s."""
         return {"beta_fwd": self._beta, "sigma_fwd": self._sigma}
 
-    def process(self, equity) -> DisplacedDiffusionProcess:
+    def process(self, equity, maturity=None) -> DisplacedDiffusionProcess:
         s = self.settings
         return DisplacedDiffusionProcess(equity, s["t_nodes"], self._beta, self._sigma, s["beta_slice"],
                                          s["sigma_slice"], bool(s["martingale_correction"]))

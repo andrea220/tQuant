@@ -85,7 +85,8 @@ class TestUniverse(unittest.TestCase):
     def test_universe_file(self):
         universe = load_universe(Path(__file__).resolve().parents[1] / "config" / "universe.yaml")
         kinds = [i.kind for i in universe]
-        self.assertEqual((kinds.count("equity"), kinds.count("fx"), kinds.count("fixing")), (10, 5, 4))
+        self.assertEqual((kinds.count("equity"), kinds.count("fx"), kinds.count("fixing")), (6, 5, 4))
+        self.assertEqual([i.code for i in universe if i.bbg.endswith("Index") and i.kind == "equity"], ["SX5E", "SPX"])
 
 
 class TestCurves(unittest.TestCase):
@@ -137,6 +138,24 @@ class TestHistory(unittest.TestCase):
         for (a, b), c in got.items():
             matrix[idx[a], idx[b]] = matrix[idx[b], idx[a]] = c
         self.assertGreater(np.linalg.eigvalsh(matrix).min(), 0.0)
+
+
+class TestIndexDividends(unittest.TestCase):
+    def test_weekly_points(self):
+        """Weekly projected index points (zero weeks and past dates dropped), requested with the weekly
+        periodicity from today to the horizon."""
+        class Source:
+            def bulk(self, ticker, field, overrides=None):
+                self.call = (ticker, field, overrides)
+                return pd.DataFrame({"Month/Year": ["2026-11-06", "2026-11-13", "2026-11-20", "2026-11-27"],
+                                     "Dividend (In Index Points)": [3.0, 0.0, 0.582, 11.911]})
+
+        from mdbuild.snapshot import index_dividends
+        src = Source()
+        out = index_dividends(src, "SX5E Index", "BDVD_PROJ_DIV_INDX_PTS", TODAY, 6.2)
+        self.assertEqual(out, [(date(2026, 11, 20), 0.582), (date(2026, 11, 27), 11.911)])
+        self.assertEqual(src.call[2], {"PERIODICITY_OVERRIDE": "W", "START_DATE_OVERRIDE": "20261112",
+                                       "END_DATE_OVERRIDE": "20330124"})
 
 
 class TestSnapshot(unittest.TestCase):

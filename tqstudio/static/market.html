@@ -49,9 +49,12 @@
             <div id="eq-chart-forward" class="chart"></div>
             <div id="eq-chart-divyield" class="chart"></div>
           </div>
+          <div class="grid2" style="margin-top: 14px">
+            <div id="eq-chart-repo" class="chart"></div>
+          </div>
         </div>
         <div class="panel">
-          <h2>Implied volatility surface</h2>
+          <h2>Implied volatility surface <button id="eq-vol-copy" class="secondary compact">Copy surface</button></h2>
           <div id="eq-vol" class="hscroll"></div>
           <div class="grid2" style="margin-top: 14px">
             <div id="eq-chart-smiles" class="chart"></div>
@@ -68,10 +71,14 @@
             <div id="eq-smile-summary"></div>
           </div>
         </div>
-        <div class="grid2">
+        <div>
           <div class="panel">
             <h2>Correlations</h2>
-            <div id="eq-correlations" class="scroll" style="max-height: 690px"></div>
+            <details id="corr-pick" class="multiselect">
+              <summary id="corr-summary">Pick underlyings</summary>
+              <div id="corr-options"></div>
+            </details>
+            <div id="eq-correlations" class="hscroll" style="margin-top: 12px"></div>
           </div>
         </div>
       </div>

@@ -151,6 +151,9 @@ fixings and correlations of daily log returns. Left:
       Tradepad and the portfolio views.
 - [ ] Vol surfaces of caps / swaptions and FX from the internal service (`mdbuild/internal.py`): no BVOL (equity
       vols and repo: from the listed options, done).
+- [ ] Implied spot (SPX): the anchor expiry has zero repo by construction; a futures-based spot (ES) or a repo
+      level from another source would fix the level of the curve.
+- [ ] Tradepad: the first price after the app starts is 2-3 s slower (TensorFlow warm-up, snapshot loading).
 - [ ] Equity vols: a reference (OTC) surface for the long end and the wings when the internal service has one (the
       Bloomberg methodology blends it in; now the Heston-like ATM level); Kalman smoothing of the implied forwards
       across snapshots if intraday snapshots come (one a day now); calendar-arbitrage check of the stored grid

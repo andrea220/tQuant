@@ -434,6 +434,23 @@ class MarketEnvironment:
             return parts[3] in cls._EQ_SCALAR_TYPES
         return parts[0] == RiskFactor.FX.value and parts[3] == MarketDataType.SPOT.value
 
+    def pinned(self):
+        """Context manager: every rate curve of the market (discount, repo) pinned, i.e. its interpolation
+        coefficients computed once on entry and reused (monotone convex; no effect on linear curves). Enter it inside
+        the gradient tape: the coefficients are then recorded once and the gradients reach the rates. Used by
+        :meth:`Pricer.price` (a Monte Carlo reads the forward at every step).
+
+        Returns:
+            contextlib.ExitStack: Enter with ``with``.
+        """
+        from contextlib import ExitStack
+
+        stack = ExitStack()
+        for value in self._market.values():
+            if isinstance(value, RateCurve):
+                stack.enter_context(value.pinned())
+        return stack
+
     def risk_factors(self) -> dict[str, list[tf.Variable]]:
         """Return the differentiable market inputs, keyed by market key.
 

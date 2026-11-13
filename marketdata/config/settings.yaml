@@ -12,6 +12,8 @@ fields:
   last_update: LAST_UPDATE_DT
   dividends: BDVD_ALL_PROJECTIONS   # Bloomberg dividend projections: ex-date, amount per share (no pay date)
   declared_dividends: DVD_HIST_ALL  # declared dividends (future ex-dates, pay dates): replace the projections
+  index_dividends: BDVD_PROJ_DIV_INDX_PTS   # equity indices: projected dividends in index points, weekly
+  index_dividend_years: 6.2         # horizon requested (Bloomberg projects about 3 years)
   curve_rates: CURVE_TENOR_RATES    # ICVS curve members: tenor, ticker, bid / mid / ask yield (%), last update
 
 history:
@@ -21,11 +23,14 @@ history:
 
 # Listed equity options for the vol surfaces (few data: cached chains, selected strikes, four fields)
 options:
-  chain_max_age_days: 7     # OPT_CHAIN kept in cache/option_chains/ (strikes listed change little)
-  front_expiries: 3         # the first expiries, then the quarterly ones (Mar / Jun / Sep / Dec)
+  chain_max_age_days: 7     # chains (selected expiries) kept in cache/option_chains/, refreshed weekly
+  strike_range: 40%-200%    # strikes of the chains, of the spot (CHAIN_TICKERS filter)
+  weekly_expiries: 2        # the first listed expiries (weekly roots included)
+  monthly_months: 3         # monthlies (third Friday) up to this horizon
+  quarterly_months: 18      # quarterly monthlies (Mar / Jun / Sep / Dec) up to this horizon, then one a year
   max_years: 6.2
   moneyness: [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.975, 1.0, 1.025, 1.05, 1.1, 1.15, 1.2, 1.3, 1.4, 1.5]  # of F
-  parity_strikes: 2         # calls and puts at the 2 strikes on each side of the forward (put-call parity)
+  parity_strikes: 4         # calls and puts at the 4 strikes on each side of the forward estimate (put-call parity)
   stale_days: 3             # quotes older than this before the quote date are dropped
   rates:                    # overnight fixing per currency: forward estimate to choose the strikes
     EUR: ESTRON Index

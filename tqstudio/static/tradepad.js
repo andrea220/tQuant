@@ -299,15 +299,36 @@ function render(d) {
   $("empty").classList.add("hidden");
 }
 
+// first phase: the price only, in the valuation bar; the greeks panels wait for the second phase
+function renderPrice(d) {
+  $("model-info").textContent = `${d.product} · ${d.model} · ${d.snapshot}`;
+  $("valuation-bar").classList.remove("stale");
+  $("valuation").innerHTML = d.headline.map(([l, v, dd], i) =>
+    `<div class="vb-card${i === 0 ? " main" : ""}"><div class="label">${l}</div><div class="value">${fmtValue(v, dd)}</div></div>`).join("")
+    + '<div class="vb-card"><div class="label">Greeks</div><div class="value muted">computing…</div></div>';
+  ["sens-panel", "vega-panel", "rho-panel"].forEach((id) => $(id).classList.add("hidden"));
+}
+
+async function post(url, body) {
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || res.statusText);
+  return data;
+}
+
 async function price() {
   $("price").disabled = true;
   $("status").textContent = $("model").value === "Local vol" ? "Pricing… (first use calibrates the local vol)" : "Pricing…";
   try {
-    const body = { ...dealRequest(), model: $("model").value, n_paths: Number($("n_paths").value), overrides: overrides() };
-    const res = await fetch("/api/price", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body) });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || res.statusText);
+    const body = { ...dealRequest(), model: $("model").value, n_paths: Number($("n_paths").value), overrides: overrides(),
+      phase: "price" };
+    let data = await post("/api/price", body);
+    if (data.job) {                                   // price first, then the greeks of the same computation
+      renderPrice(data);
+      $("status").textContent = "Computing greeks…";
+      data = await post("/api/price/greeks", { job: data.job });
+    }
     render(data);
     $("status").textContent = "";
   } catch (e) {

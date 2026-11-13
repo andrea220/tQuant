@@ -100,7 +100,10 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
     """Asset classes -> product types -> ``{fields, models}`` for the market *mkt* (the form of the Tradepad)."""
     tickers = equity_tickers(mkt)
     one_year = date(mkt.evaluation_date.year + 1, mkt.evaluation_date.month, mkt.evaluation_date.day).isoformat()
-    three_years = date(mkt.evaluation_date.year + 3, mkt.evaluation_date.month, mkt.evaluation_date.day).isoformat()
+    # autocallable defaults: strike date 10 days after the pricing date, maturity 3 years after the strike date
+    strike_default = mkt.evaluation_date + timedelta(days=10)
+    maturity_default = date(strike_default.year + 3, strike_default.month, min(strike_default.day, 28)
+                            if strike_default.month == 2 else strike_default.day).isoformat()
     underlying = _select("ticker", "Underlying", tickers)
     option = [underlying, _select("option_type", "Type", ["Put", "Call"]), _number("strike_pct", "Strike (% spot)", 100.0, 0.5),
               _date("expiry", "Expiry", one_year), _number("quantity", "Quantity", 1.0)]
@@ -153,13 +156,13 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
         "Exotics": {
             "Autocallable": {"fields": [underlying]
                              + _group("Deal parameters", _number("notional", "Notional", 100.0),
-                                      _date("strike_date", "Strike date", mkt.evaluation_date.isoformat()),
-                                      _date("maturity", "Maturity", three_years))
+                                      _date("strike_date", "Strike date", strike_default.isoformat()),
+                                      _date("maturity", "Maturity", maturity_default))
                              + _group("Coupon", _select("coupon_type", "Type", ["Standard", "Memory"]),
-                                      _number("coupon", "Coupon per period (%)", 4.0, 0.25),
+                                      _number("coupon", "Coupon per period (%)", 2.0, 0.25),
                                       _number("coupon_barrier", "Coupon barrier (%)", 80.0, 1.0),
                                       _select("coupon_frequency", "Frequency", ["3M", "6M", "1Y"], "6M"))
-                             + _group("Final redemption", _number("put_barrier", "Put barrier (%)", 70.0, 1.0),
+                             + _group("Final redemption", _number("put_barrier", "Put barrier (%)", 80.0, 1.0),
                                       _number("put_strike", "Put strike (%)", 100.0, 1.0),
                                       _number("put_participation", "Put participation (%)", 100.0, 5.0))
                              + _group("Early redemption (autocall)",
@@ -483,6 +486,13 @@ def _vanilla_gamma_theta(mkt, eq, f, kind, make_pricer, analytic: bool) -> tuple
 
 
 def _price_equity(mkt, cache, kind, f, model, n_paths, seed) -> dict:
+    """Price and greeks of an equity product in one go (:func:`_equity_price` then :func:`_equity_greeks`)."""
+    return _equity_greeks(mkt, _equity_price(mkt, cache, kind, f, model, n_paths, seed))
+
+
+def _equity_price(mkt, cache, kind, f, model, n_paths, seed) -> dict:
+    """First phase: the product priced under the tape. Returns the state :func:`_equity_greeks` completes (pricer
+    with its tape, product, model, timings)."""
     eq = mkt.get_equity(f["ticker"])
     snap = mkt.evaluation_date.isoformat()
     s0 = float(eq.spot)
@@ -509,6 +519,25 @@ def _price_equity(mkt, cache, kind, f, model, n_paths, seed) -> dict:
                                         n_steps=max(MIN_STEPS, math.ceil(STEPS_PER_YEAR * T)), seed=int(seed))
     t0 = time.perf_counter()
     pricer.price(product, mkt, autodiff=True)
+    return {"kind": kind, "f": f, "model": model, "n_paths": n_paths, "seed": seed, "eq": eq, "s0": s0, "qty": qty,
+            "product": product, "pricer": pricer, "instance": instance, "calibration_s": calibration_s, "t0": t0,
+            "price_s": time.perf_counter() - t0}
+
+
+def _quick_headline(state: dict) -> list:
+    """The price of the first phase, as the headline cards (the greeks follow)."""
+    kind, product, qty, s0 = state["kind"], state["product"], state["qty"], state["s0"]
+    return [["Price", qty * float(product.price), 4],
+            ["Premium (% spot)" if kind != "Autocallable" else "Price (% notional)",
+             100 * float(product.price) / (s0 if kind != "Autocallable" else product.notional), 3],
+            ["Pricing [s]", state["price_s"], 1]]
+
+
+def _equity_greeks(mkt, state: dict) -> dict:
+    """Second phase: greeks from the tape of the first one (backward pass), maps, info."""
+    kind, f, model, n_paths, seed = state["kind"], state["f"], state["model"], state["n_paths"], state["seed"]
+    eq, s0, qty, product, pricer = state["eq"], state["s0"], state["qty"], state["product"], state["pricer"]
+    instance, calibration_s, t0 = state["instance"], state["calibration_s"], state["t0"]
     params = instance.parameters if instance is not None else {}
     g = pricer.tape.gradient(product.price, {"model": params, "market": eq.risk_factors()})
     market = _to_numpy(g["market"])
@@ -613,13 +642,18 @@ def _price_rates(mkt, kind, f) -> dict:
 
 
 def price_trade(mkt: tq.MarketEnvironment, cache: ModelCache, request: dict, n_paths: int = 50_000,
-                seed: int = 1) -> dict:
+                seed: int = 1, phase: str = "all") -> dict:
     """Price ``request = {asset_class, product, fields, model, overrides}`` (``overrides``: equity ``spot`` / ``vol``,
     see :func:`_overridden`).
 
+    ``phase="price"`` (equity products): the price only, at once, with ``pending``: a function that computes the
+    rest (greeks from the same tape, under the same overrides) and returns the whole result; the caller keeps it
+    and calls it next (the web app: ``/api/price/greeks``). Rates products are priced in one phase anyway.
+
     Returns:
         dict: ``headline`` and ``info`` (``[label, value, decimals]``), ``vega`` (map: ``z``, axes, ``total``, or
-        ``None``), ``rho`` (per curve: pillar dates, rho per pillar, total), ``model``.
+        ``None``), ``rho`` (per curve: pillar dates, rho per pillar, total), ``model``; with ``phase="price"`` the
+        headline of the price and ``pending``.
 
     Raises:
         ValueError: Unknown asset class, product or model, or invalid fields.
@@ -636,9 +670,21 @@ def price_trade(mkt: tq.MarketEnvironment, cache: ModelCache, request: dict, n_p
                              "yet)")
         strike, expiry = _equity_strike_expiry(mkt, request["product"], fields)
         fields["_ref_spot"] = float(eq.spot)       # the deal's strikes stay on the market spot under an override
-        with _overridden(eq, overrides, strike, eq.year_fraction(expiry)):
+        T = eq.year_fraction(expiry)
+        meta = {"model": model, "product": request["product"], "overrides": overrides,
+                "snapshot": mkt.evaluation_date.isoformat()}
+        if phase == "price":
+            with _overridden(eq, overrides, strike, T):
+                state = _equity_price(mkt, cache, request["product"], fields, model, n_paths, seed)
+
+            def finish() -> dict:                       # the greeks, under the same overrides
+                with _overridden(eq, overrides, strike, T):
+                    return {**_equity_greeks(mkt, state), **meta}
+
+            return {"headline": _quick_headline(state), "pending": finish, **meta}
+        with _overridden(eq, overrides, strike, T):
             out = _price_equity(mkt, cache, request["product"], fields, model, n_paths, seed)
-    else:
-        out = _price_rates(mkt, request["product"], fields)
+        return {**out, **meta}
+    out = _price_rates(mkt, request["product"], fields)
     return {**out, "model": model, "product": request["product"], "overrides": overrides,
             "snapshot": mkt.evaluation_date.isoformat()}

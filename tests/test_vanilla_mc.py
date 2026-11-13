@@ -286,6 +286,27 @@ class TestLocalVolForward(unittest.TestCase):
         dw = tf.random.stateless_normal([n_paths, n], seed=[seed, 0], dtype=tf.float64)
         return model, t_grid, model.evolve(t_grid, dw)
 
+    @slow
+    def test_grid_up_to_the_maturity(self):
+        """The local vol built up to a maturity (vol nodes to the first one from it) = the whole surface on the same
+        draws: same paths, same vega on the nodes used, zero vega after them."""
+        vols = self.eq.vol_surface.volatility_matrix
+        t_grid = tf.linspace(tf.constant(0.0, tf.float64), tf.constant(1.0, tf.float64), 51)[1:]
+        dw = tf.random.stateless_normal([2_000, 50], seed=[7, 0], dtype=tf.float64)
+        out = []
+        for maturity in (None, 1.0):
+            with tf.GradientTape() as tape:
+                model = tq.LocalVolatilityModel.from_equity(self.eq, maturity)
+                paths = model.evolve(t_grid, dw)
+                value = tf.reduce_mean(tf.nn.relu(paths[:, -1] - 100.0))
+            out.append((paths.numpy(), tape.gradient(value, vols).numpy(), model.local_vol_grid[0].shape[0]))
+        (p_all, g_all, rows_all), (p_cut, g_cut, rows_cut) = out
+        self.assertLess(rows_cut, rows_all)                                       # a shorter grid
+        np.testing.assert_allclose(p_cut, p_all, rtol=0, atol=1e-10)
+        np.testing.assert_allclose(g_cut, g_all, rtol=0, atol=1e-10)
+        k = int(np.searchsorted(np.asarray(self.eq.vol_surface.maturity), 1.0 - 1e-12)) + 1
+        self.assertTrue((g_cut[k:] == 0).all())
+
     def test_no_arbitrage_reported_on_ssvi(self):
         model = tq.LocalVolatilityModel.from_equity(self.eq)
         self.assertEqual(model.arbitrage["arbitrage_fraction"], 0.0)

@@ -1,19 +1,19 @@
 # Universe of the market data snapshots: Bloomberg tickers only, the yellow key decides the type
 # (Equity -> equity spot, dividends, history; Curncy -> FX spot, history; Index -> interest-rate fixing).
-# Add a line to add an underlying.
+# Add a line to add an underlying (commented ones: left out for now, uncomment to add them back).
 tickers:
   # Italy
   - ENI IM Equity
   - ISP IM Equity
-  - UCG IM Equity
-  - ENEL IM Equity
-  - RACE IM Equity
+  # - UCG IM Equity
+  # - ENEL IM Equity
+  # - RACE IM Equity
   # USA
   - AAPL US Equity
   - MSFT US Equity
-  - AMZN US Equity
-  - NVDA US Equity
-  - JPM US Equity
+  # - AMZN US Equity
+  # - NVDA US Equity
+  # - JPM US Equity
   # FX (1 base = x quote)
   - EURUSD Curncy
   - GBPUSD Curncy
@@ -25,6 +25,17 @@ tickers:
   - EUR006M Index
   - SOFRRATE Index
   - SONIO/N Index
+
+# Equity indices (Index yellow key, but equity underlyings: spot, history, listed options; no dividend projections,
+# the dividends are in the implied carry)
+equity_indices:
+  - SX5E Index
+  - SPX Index
+
+# Underlyings whose price on this terminal is delayed against their options (no real-time subscription): the spot
+# is implied by the options (forward of the nearest expiry from 3 days, plus the dividends, discounted)
+implied_spot:
+  - SPX Index
 
 # Listed options: by default the root with the underlying's ticker and exchange (ENI IM, AAPL US); override here
 # with "<underlying>: <root> <exchange>" (e.g. a European-style root).

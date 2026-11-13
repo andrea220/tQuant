@@ -70,11 +70,12 @@ class EquityModel(ABC):
         return {}
 
     @abstractmethod
-    def process(self, equity) -> StochasticProcess:
+    def process(self, equity, maturity=None) -> StochasticProcess:
         """Bind the model to *equity*: a new process (the model is not modified) for the Monte Carlo pricers.
 
         Called by the pricers inside their ``GradientTape``: the market-dependent part (forwards, local vol grid, ...)
-        is rebuilt there, the parameters enter as the model's variables.
+        is rebuilt there, the parameters enter as the model's variables. *maturity* (the product's last date, from
+        the pricer): the process is needed up to it only (the local vol grid stops there); ignored by the others.
         """
 
     @classmethod
@@ -240,7 +241,7 @@ def bind(model, equity, maturity=None, strike=None) -> StochasticProcess:
     if isinstance(model, EquityModel):
         if model.ticker is not None and model.ticker != equity.ticker:
             raise ValueError(f"{type(model).__name__} calibrated on '{model.ticker}', priced on '{equity.ticker}'")
-        return model.process(equity)
+        return model.process(equity, maturity)
     return model.from_equity(equity, maturity, strike)
 
 

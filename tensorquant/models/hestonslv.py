@@ -533,7 +533,7 @@ class HestonSLVModel(EquityModel):
         self._record_calibration(equity, {}, None, report=self.report if self.report is not None else self.heston.report)
         return self
 
-    def process(self, equity) -> HestonSLVProcess:
+    def process(self, equity, maturity=None) -> HestonSLVProcess:
         """Bind to *equity* on the stored table (calibrated here first if the model has none)."""
         if self._expectation is None:
             self.calibrate_leverage(equity)

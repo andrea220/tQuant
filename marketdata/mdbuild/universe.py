@@ -86,12 +86,22 @@ def load_option_roots(path: Path) -> dict:
     return {str(k).strip(): str(v).strip() for k, v in (data.get("option_roots") or {}).items()}
 
 
+def load_implied_spot(path: Path) -> list[str]:
+    """``implied_spot`` of ``universe.yaml``: underlyings whose price is delayed against their options (the spot is
+    implied by the options in tQuant)."""
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    return [str(t).strip() for t in data.get("implied_spot") or []]
+
+
 def load_universe(path: Path) -> list[Instrument]:
-    """Instruments of ``universe.yaml`` (``tickers:`` list), duplicates removed in order."""
+    """Instruments of ``universe.yaml``: ``tickers:`` (type from the yellow key) and ``equity_indices:`` (Index
+    tickers that are equity underlyings, e.g. ``SX5E Index``: spot, history, listed options; not rate fixings),
+    duplicates removed in order."""
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     seen, out = set(), []
-    for ticker in data.get("tickers") or []:
-        inst = parse(ticker)
+    items = [parse(t) for t in data.get("tickers") or []]
+    items += [Instrument(str(t).strip(), "equity", "_".join(str(t).split()[:-1])) for t in data.get("equity_indices") or []]
+    for inst in items:
         if inst.bbg not in seen:
             seen.add(inst.bbg)
             out.append(inst)

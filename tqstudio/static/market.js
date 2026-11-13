@@ -40,6 +40,48 @@ function smiles(id, x, matrix, names, scale, title, xTitle, yTitle) {
   { showlegend: true, legend: { font: { size: 10 } } });
 }
 
+// clipboard: the async API needs a secure context (localhost / https); colleagues on http://<ip> use the fallback
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.appendChild(area);
+  area.select();
+  document.execCommand("copy");
+  document.body.removeChild(area);
+}
+
+async function copySurface() {
+  if (!state.volCopy) return;
+  const button = $("eq-vol-copy");
+  try {
+    await copyText(state.volCopy);
+    button.textContent = "Copied";
+  } catch (e) {
+    button.textContent = "Copy failed";
+  }
+  setTimeout(() => { button.textContent = "Copy surface"; }, 1500);
+}
+
+// row labels of a vol surface: listed expiries as Nov26 (with the day, 20Nov26, when a month has several), the
+// extrapolated yearly points (whole years) as 3Y, 4Y, ...
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function expiryLabels(expiries, T) {
+  const month = (e) => `${MONTHS[Number(e.slice(5, 7)) - 1]}${e.slice(2, 4)}`;
+  const listed = expiries.filter((e, i) => Math.abs(T[i] - Math.round(T[i])) > 1e-9);
+  const count = {};
+  listed.forEach((e) => { count[month(e)] = (count[month(e)] || 0) + 1; });
+  return expiries.map((e, i) => {
+    if (Math.abs(T[i] - Math.round(T[i])) <= 1e-9 && T[i] >= 1) return `${Math.round(T[i])}Y`;
+    return count[month(e)] > 1 ? `${Number(e.slice(8, 10))}${month(e)}` : month(e);
+  });
+}
+
 function volTable(id, expiries, colLabels, matrix, scale, d = 2) {
   const cols = [["Expiry", (r) => r.expiry]].concat(colLabels.map((c, j) => [c, (r) => fmt(scale * r.row[j], d)]));
   $(id).innerHTML = table(cols, expiries.map((e, i) => ({ expiry: e, row: matrix[i] })));
@@ -48,7 +90,7 @@ function volTable(id, expiries, colLabels, matrix, scale, d = 2) {
 // ---------- equity ----------
 function renderEquity(d) {
   const s = d.summary;
-  const items = [["Spot", fmt(s.spot, 2)], ["Currency", s.currency], ["Repo", pct(s.repo, 3) + "%"],
+  const items = [["Spot", fmt(s.spot, 2)], ["Currency", s.currency], ["Repo 1Y", pct(s.repo, 3) + "%"],
     ["Dividends", s.dividend_model]];
   if (s.div_yield !== null) items.splice(4, 0, ["Div yield", pct(s.div_yield, 3) + "%"]);
   $("eq-summary").innerHTML = cards(items);
@@ -67,22 +109,47 @@ function renderEquity(d) {
   "Forward", "T (years)", "");
   plot("eq-chart-divyield", [{ x: fc.T, y: fc.implied_div_yield.map((v) => 100 * v), mode: "lines" }],
     "Implied dividend yield", "T (years)", "%");
+  const r = d.repo;
+  if (r) {
+    plot("eq-chart-repo", [{ x: r.grid.T, y: r.grid.rate.map((v) => 100 * v), mode: "lines", name: "zero repo" },
+      { x: r.pillars.map((p) => p.T), y: r.pillars.map((p) => 100 * p.rate), mode: "markers", name: "implied",
+        text: r.pillars.map((p) => p.date), marker: { size: 6 } }],
+    "Implied repo (zero rate to T)", "T (years)", "%");
+  } else {
+    Plotly.purge($("eq-chart-repo"));
+    $("eq-chart-repo").innerHTML = `<p class="muted">Flat repo (${pct(s.repo, 3)}%): no term structure in this snapshot.</p>`;
+  }
 
   const v = d.vol;
   if (v) {
-    volTable("eq-vol", v.expiries, v.moneyness.map((m) => `${(100 * m).toFixed(0)}%`), v.matrix, 100);
-    smiles("eq-chart-smiles", v.moneyness.map((m) => 100 * m), v.matrix, v.expiries, 100, "Smiles",
+    // header: moneyness and, below, the strike at the current spot (decimals by the spot's size)
+    const kd = s.spot < 50 ? 2 : s.spot < 1000 ? 1 : 0;
+    const rows = expiryLabels(v.expiries, v.T);       // label (Nov26, 3Y) and, beside it, the expiry date
+    // copy as tab-separated text (Excel): moneyness, strikes at the current spot, then expiry, label, vols in %
+    state.volCopy = [["Expiry", "Label", ...v.moneyness.map((m) => `${+(100 * m).toFixed(2)}%`)],
+      ["Strike", "", ...v.moneyness.map((m) => (m * s.spot).toFixed(kd))],
+      ...v.expiries.map((e, i) => [e, rows[i], ...v.matrix[i].map((x) => (100 * x).toFixed(4))])]
+      .map((r) => r.join("\t")).join("\n");
+    $("eq-vol-copy").disabled = false;
+    // the labels in a fixed-width box so that the dates line up in one column
+    volTable("eq-vol", rows.map((r, i) => `<span style="white-space: nowrap"><span style="display: inline-block; `
+      + `min-width: 4.6em">${r}</span><span class="muted">${v.expiries[i]}</span></span>`), v.moneyness.map((m) => `${(100 * m).toFixed(1).replace(/\.0$/, "")}%`
+      + `<br><span class="muted">${(m * s.spot).toFixed(kd)}</span>`), v.matrix, 100);
+    smiles("eq-chart-smiles", v.moneyness.map((m) => 100 * m), v.matrix, rows, 100, "Smiles",
       "strike / spot (%)", "implied vol (%)");
     plot("eq-chart-atm", [{ x: v.T, y: v.atm_forward.map((x) => 100 * x), mode: "lines+markers" }],
       "ATM-forward term structure", "T (years)", "implied vol (%)");
   } else {
+    state.volCopy = null;
+    $("eq-vol-copy").disabled = true;
     $("eq-vol").innerHTML = '<p class="muted">No vol surface.</p>';
   }
 
   state.smile = d.smile_quotes;
   const sel = $("eq-smile-expiry");
   if (state.smile) {
-    sel.innerHTML = state.smile.expiries.map((e, i) => `<option value="${i}">${e.expiry} (${e.t.toFixed(2)}y)</option>`).join("");
+    const labels = expiryLabels(state.smile.expiries.map((e) => e.expiry), state.smile.expiries.map((e) => e.t));
+    sel.innerHTML = state.smile.expiries.map((e, i) => `<option value="${i}">${labels[i]} (${e.expiry})</option>`).join("");
     sel.value = String(state.smile.default);
     sel.disabled = false;
   } else {
@@ -90,9 +157,53 @@ function renderEquity(d) {
     sel.disabled = true;
   }
   marketSmile();
-  $("eq-correlations").innerHTML = d.correlations.length
-    ? table([["Factor", (r) => r.factor], ["Correlation", (r) => fmt(r.correlation)]], d.correlations)
-    : '<p class="muted">Not in the correlation matrix.</p>';
+  state.corr = d.correlations;
+  const c = state.corr;
+  const own = `EQ:${s.currency}:${state.item}`;                  // this page's underlying, picked at first
+  state.corrPicked = new Set(c && c.names.includes(own) ? [own] : []);
+  $("corr-pick").classList.toggle("hidden", !c);
+  if (c) {
+    $("corr-options").innerHTML = '<div class="actions"><button class="link" id="corr-all">All</button>'
+      + '<button class="link" id="corr-none">None</button></div>'
+      + c.names.map((n, i) => `<label><input type="checkbox" value="${n}"${state.corrPicked.has(n) ? " checked" : ""}>`
+        + `${c.labels[i]} `
+        + `<span class="muted">${n.split(":").slice(0, 2).join(":")}</span></label>`).join("");
+    $("corr-options").querySelectorAll("input").forEach((box) => box.addEventListener("change", () => {
+      box.checked ? state.corrPicked.add(box.value) : state.corrPicked.delete(box.value);
+      correlationMatrix();
+    }));
+    const setAll = (on) => {
+      $("corr-options").querySelectorAll("input").forEach((box) => { box.checked = on; });
+      state.corrPicked = new Set(on ? c.names : []);
+      correlationMatrix();
+    };
+    $("corr-all").addEventListener("click", (e) => { e.preventDefault(); setAll(true); });
+    $("corr-none").addEventListener("click", (e) => { e.preventDefault(); setAll(false); });
+  }
+  correlationMatrix();
+}
+
+// sub-matrix of the picked factors, shaded: blue positive, red negative
+function correlationMatrix() {
+  const c = state.corr;
+  if (!c) {
+    $("eq-correlations").innerHTML = '<p class="muted">No correlation matrix in this snapshot.</p>';
+    return;
+  }
+  const idx = c.names.map((n, i) => i).filter((i) => state.corrPicked.has(c.names[i]));
+  $("corr-summary").textContent = idx.length ? `${idx.length} picked: ${idx.map((i) => c.labels[i]).join(", ")}`
+    : "Pick underlyings";
+  if (idx.length === 0) {
+    $("eq-correlations").innerHTML = '<p class="muted">Pick the underlyings to see their correlation matrix.</p>';
+    return;
+  }
+  const shade = (x) => (x >= 0 ? `rgba(53, 99, 233, ${0.08 + 0.5 * x})` : `rgba(194, 54, 47, ${0.08 + 0.5 * -x})`);
+  const head = "<tr><th></th>" + idx.map((j) => `<th>${c.labels[j]}</th>`).join("") + "</tr>";
+  const body = idx.map((i) => `<tr><td>${c.labels[i]}</td>` + idx.map((j) => {
+    const x = c.matrix[i][j];
+    return `<td style="background: ${shade(x)}">${x.toFixed(2)}</td>`;
+  }).join("") + "</tr>").join("");
+  $("eq-correlations").innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }
 
 // calibrated smile of one expiry against the quotes: bid / ask bars, mid points, model and stored surface
@@ -294,6 +405,7 @@ async function init() {
   $("item").addEventListener("change", () => { state.item = $("item").value; loadItem(); });
   $("ir-swaption-tenor").addEventListener("change", swaptionSmile);
   $("eq-smile-expiry").addEventListener("change", marketSmile);
+  $("eq-vol-copy").addEventListener("click", copySurface);
   await loadSnapshot(CLASSES[p.get("class")] ? p.get("class") : "equity", p.get("item"));
 }
 

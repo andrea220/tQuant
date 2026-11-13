@@ -384,13 +384,16 @@ class DividendCurve:
         if not idx:
             return tf.constant(0.0, dtype=DTYPE)
 
-        # Dense weights (P(0, pay_i) inside the horizon, 0 outside): dense gradient w.r.t. the amounts.
-        zero = tf.constant(0.0, dtype=DTYPE)
+        # Dense weights (P(0, pay_i) inside the horizon, 0 outside): dense gradient w.r.t. the amounts. The discount
+        # factors of the horizon in one vectorised call when the curve has one (an index has a dividend a week: one
+        # call instead of a hundred, at every forward of a Monte Carlo)
         pay_dates = self._payment_dates if self._payment_dates is not None else self._ex_dates
-        weights = tf.stack([
-            tf.cast(discount_curve.discount(d), DTYPE) if i in idx else zero
-            for i, d in enumerate(pay_dates)
-        ])
+        selected = [pay_dates[i] for i in idx]
+        if hasattr(discount_curve, "discounts"):
+            dfs = tf.cast(discount_curve.discounts(selected), DTYPE)
+        else:
+            dfs = tf.stack([tf.cast(discount_curve.discount(d), DTYPE) for d in selected])
+        weights = tf.scatter_nd(tf.constant([[i] for i in idx], tf.int32), dfs, [len(pay_dates)])
         return tf.reduce_sum(self._amounts * weights)
 
     # ------------------------------------------------------------------

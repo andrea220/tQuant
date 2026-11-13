@@ -6,6 +6,7 @@ Run from the repository root (``python -m tqstudio``); colleagues on the same ne
 
 from __future__ import annotations
 
+import itertools
 import os
 import threading
 from datetime import date
@@ -41,6 +42,8 @@ class Engine:
         self.views: dict = {}
         self.market = self._load(None, None)              # latest snapshot (Tradepad)
         self.models = ModelCache()
+        self.jobs: dict = {}                              # pending second phases of the prices (greeks)
+        self._job_ids = itertools.count(1)
 
     def _load(self, day: Optional[str], calibration_set: Optional[str]) -> tq.MarketEnvironment:
         mkt = tq.MarketEnvironment.from_folder(self.folder, date.fromisoformat(day) if day else None,
@@ -66,10 +69,30 @@ class Engine:
             return self.views[cache_key]
 
     def price(self, request: dict) -> dict:
-        """Tradepad pricing on the snapshot of ``request["date"]`` (latest set of that date; latest when absent)."""
+        """Tradepad pricing on the snapshot of ``request["date"]`` (latest set of that date; latest when absent).
+        ``request["phase"] == "price"``: the price at once and a ``job`` id for :meth:`greeks` (the rest of the
+        computation is kept here: the last few only)."""
         with self.lock:
             mkt = self.snapshot(request.get("date"), None)
-            return price_trade(mkt, self.models, request, n_paths=int(request.get("n_paths", 50_000)))
+            out = price_trade(mkt, self.models, request, n_paths=int(request.get("n_paths", 50_000)),
+                              phase=request.get("phase", "all"))
+            pending = out.pop("pending", None)
+            if pending is not None:
+                job = str(next(self._job_ids))
+                self.jobs[job] = (mkt, pending)
+                for old in list(self.jobs)[:-4]:          # keep the last few
+                    self.jobs.pop(old, None)
+                out["job"] = job
+            return out
+
+    def greeks(self, job: str) -> dict:
+        """Second phase of a :meth:`price` with ``phase="price"``: the greeks (and the whole result)."""
+        with self.lock:
+            if job not in self.jobs:
+                raise KeyError(f"unknown or expired pricing job {job}")
+            mkt, finish = self.jobs.pop(job)
+            tq.Settings.evaluation_date = mkt.evaluation_date
+            return finish()
 
     def tradepad(self, build, day: Optional[str] = None, request: Optional[dict] = None):
         with self.lock:
@@ -162,6 +185,14 @@ def tradepad_market(request: dict = Body(...)) -> dict:
 def price(request: dict = Body(...)) -> dict:
     try:
         return engine.price(request)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/price/greeks")
+def price_greeks(request: dict = Body(...)) -> dict:
+    try:
+        return engine.greeks(str(request.get("job")))
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

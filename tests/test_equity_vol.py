@@ -12,8 +12,8 @@ import pandas as pd
 
 import tensorquant as tq
 from markers import slow
-from tensorquant.calibration.equityvol import (GRID_MONEYNESS, GRID_TENORS, LognormalMixture,
-                                               black_implied_vol, build_equity_vol, calibrate_snapshot_vols,
+from tensorquant.calibration.equityvol import (GRID_MONEYNESS, GRID_TENORS, LognormalMixture, listed_tenors,
+                                               black_implied_vol, build_equity_vol, calibrate_snapshot_vols, implied_spot,
                                                implied_forward,
                                                implied_repo_curve, implied_volatility)
 from tensorquant.markethandles.dividendcurve import DividendCurve
@@ -242,7 +242,8 @@ class _SurfaceCase(unittest.TestCase):
         np.testing.assert_allclose([float(v) for v in self.repo.variables], REPO_TRUE, rtol=0, atol=1e-8)
 
     def test_grid(self):
-        self.assertEqual(list(self.surface.maturity), list(GRID_TENORS))
+        listed = [(e - EVAL_DATE).days / 365.0 for e in EXPIRIES]                 # the quoted expiries
+        self.assertEqual(list(self.surface.maturity), listed + [3.0, 4.0, 5.0, 6.0])   # then one a year to 6Y
         np.testing.assert_allclose(self.surface.strike, S0 * np.asarray(GRID_MONEYNESS), rtol=1e-14)
         matrix = self.surface.volatility_matrix.numpy()
         self.assertTrue(np.isfinite(matrix).all())
@@ -266,7 +267,7 @@ class _SurfaceCase(unittest.TestCase):
     def test_total_variance_increases(self):
         """ATM-forward total variance increases with the maturity (no calendar arbitrage at the money)."""
         w = []
-        for t in GRID_TENORS:
+        for t in self.surface.maturity:
             f = float(self.truth.forward(t))
             w.append(float(self.surface.volatility(strike=f, tenor=t)) ** 2 * t)
         self.assertTrue((np.diff(w) > 0).all())
@@ -283,6 +284,14 @@ class _SurfaceCase(unittest.TestCase):
 
 class TestSurfaceEuropean(_SurfaceCase):
     exercise = "European"
+
+    def test_listed_tenors(self):
+        self.assertEqual(listed_tenors([0.02, 0.5, 2.2], 6.0), [0.02, 0.5, 2.2, 3.0, 4.0, 5.0, 6.0])
+        self.assertEqual(listed_tenors([0.5, 7.0], 6.0), [0.5, 7.0])
+
+    def test_fixed_grid(self):
+        surf, _, _ = build_equity_vol(self.guess, self.quotes, tenors=GRID_TENORS)
+        self.assertEqual(list(surf.maturity), list(GRID_TENORS))
 
     def test_short_expiries_left_out_of_the_repo_curve(self):
         _, repo, report = build_equity_vol(self.guess, self.quotes, min_repo_days=100)    # first expiry: 91 days
@@ -303,6 +312,25 @@ class TestSurfaceEuropean(_SurfaceCase):
 @slow
 class TestSurfaceAmerican(_SurfaceCase):
     exercise = "American"
+
+
+class TestImpliedSpot(unittest.TestCase):
+    """Spot implied by the options (index with a delayed price): the forward of the first expiry from 3 days, plus
+    the dividends to it, discounted: that expiry has zero repo."""
+
+    def test_spot_from_the_first_month_forward(self):
+        tq.Settings.evaluation_date = EVAL_DATE
+        frame = quotes("European")
+        delayed = make_market(0.0)
+        delayed_eq = delayed.get_equity("X")
+        delayed_eq.spot.assign(S0 * 1.005)                                         # a stale index price
+        spot, anchor = implied_spot(delayed_eq, frame)
+        self.assertEqual(anchor, EXPIRIES[0])                                      # 91 days: the first one
+        truth = true_market().get_equity("X")
+        t = (anchor - EVAL_DATE).days / 365.0
+        expected = (S0 - float(truth.pv_dividends(anchor))) * np.exp(-REPO_TRUE[0] * t) \
+            + float(truth.pv_dividends(anchor))
+        self.assertAlmostEqual(spot, expected, delta=1e-8)
 
 
 class TestSnapshotVols(unittest.TestCase):
@@ -340,10 +368,30 @@ class TestSnapshotVols(unittest.TestCase):
             self.assertIsInstance(eq.repo, RateCurve)
             np.testing.assert_allclose([float(v) for v in eq.repo.variables], REPO_TRUE, rtol=0, atol=1e-4)
             surf = eq.vol_surface
-            self.assertEqual(len(surf.maturity), len(GRID_TENORS))
+            self.assertEqual(len(surf.maturity), len(EXPIRIES) + 4)
             np.testing.assert_allclose(surf.strike, S0 * np.asarray(GRID_MONEYNESS), rtol=1e-12)
             self.assertAlmostEqual(float(surf.volatility(strike=100.0, tenor=1.0)),
                                    float(surface().volatility(strike=100.0, tenor=1.0)), delta=0.005)
+
+    def test_implied_spot_in_the_snapshot(self):
+        """``spot_source`` "implied ...": the spot is implied by the options, written to ``eq_spot.csv`` too, and
+        the repo of the anchor expiry is zero."""
+        tq.Settings.evaluation_date = EVAL_DATE
+        frame = quotes("European")
+        frame = frame.assign(ticker="X", ccy="EUR", expiry=[e.isoformat() for e in frame["expiry"]],
+                             last=np.nan, quote_date=EVAL_DATE.isoformat(), ref_spot=S0 * 1.005,
+                             spot_source="implied from the options")
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = make_market(0.0).to_folder(tmp, "1200")
+            frame.to_csv(folder / "eq_option_quotes.csv", index=False)
+            calibrate_snapshot_vols(folder)
+            spot = float(pd.read_csv(folder / "eq_spot.csv").set_index("ticker").loc["X", "spot"])
+            self.assertLess(abs(spot / S0 - 1.0), 0.001)                           # not the stale 100.5
+            report = pd.read_csv(folder / "eq_vol_calibration.csv")
+            self.assertAlmostEqual(float(report["ref_spot"].iloc[0]), spot, delta=1e-9)
+            self.assertTrue(report["spot_source"].iloc[0].startswith("implied"))
+            anchor = report[report["expiry"] == EXPIRIES[0].isoformat()].iloc[0]
+            self.assertAlmostEqual(float(anchor["repo"]), 0.0, delta=1e-9)
 
 
 if __name__ == "__main__":

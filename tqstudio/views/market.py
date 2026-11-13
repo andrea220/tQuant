@@ -193,7 +193,7 @@ def market_view(mkt: tq.MarketEnvironment, ticker: str, folder: Path = None) -> 
 
     Returns:
         dict: JSON-ready sections ``summary``, ``forwards``, ``forward_curve``, ``dividends``, ``vol``,
-        ``correlations``.
+        ``correlations`` (``names``, ``labels``, ``matrix`` of the snapshot, or ``None``).
 
     Raises:
         KeyError: If *ticker* is not an equity of the market.
@@ -241,12 +241,21 @@ def _equity_view(mkt: tq.MarketEnvironment, ticker: str) -> dict:
                "matrix": vs.volatility_matrix.numpy().tolist(),
                "atm_forward": [float(vs.volatility(strike=float(eq.forward(t)), tenor=t)) for t in maturities]}
 
-    correlations = []
+    # the whole correlation matrix of the snapshot (the page shows the sub-matrix of the factors picked)
+    correlations = None
     corr = mkt.get_correlation_matrix()
-    name = f"EQ:{eq.currency.name}:{ticker}"
-    if corr is not None and name in corr.names:
-        correlations = sorted(({"factor": other, "correlation": float(corr.correlation(name, other))}
-                               for other in corr.names if other != name), key=lambda r: -r["correlation"])
+    if corr is not None:
+        correlations = {"names": list(corr.names), "labels": [n.split(":")[-1] for n in corr.names],
+                        "matrix": corr.matrix.numpy().tolist()}
+
+    # repo term structure (implied from the options): pillars and zero repo rate on a grid to 6 years
+    repo = None
+    if isinstance(eq.repo, tq.RateCurve):
+        pillars = [float(t) for t in eq.repo.pillars]
+        repo_grid = np.linspace(1 / 365, max(6.0, max(pillars)), N_GRID)
+        repo = {"pillars": [{"date": d.isoformat(), "T": t, "rate": float(r)}
+                            for d, t, r in zip(eq.repo.dates, pillars, np.asarray(eq.repo.rates, float))],
+                "grid": {"T": repo_grid.tolist(), "rate": [float(eq.repo_rate(t)) for t in repo_grid]}}
 
     return {"summary": summary, "forwards": forwards, "forward_curve": forward_curve, "dividends": dividends,
-            "vol": vol, "correlations": correlations}
+            "repo": repo, "vol": vol, "correlations": correlations}

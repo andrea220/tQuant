@@ -51,10 +51,13 @@ class Pricer(ABC):
             autodiff (bool, optional): Whether to compute gradients using TensorFlow's autodiff. Defaults to False.
 
         """
+        # the market curves pinned (monotone convex coefficients once, inside the tape: gradients unchanged)
         if autodiff:
             with GradientTape() as tape:
-                npv = self.calculate_price(product, market_env)
+                with market_env.pinned():
+                    npv = self.calculate_price(product, market_env)
             product.price = npv
             self._tape = tape
         else:
-            product.price = self.calculate_price(product, market_env)
+            with market_env.pinned():
+                product.price = self.calculate_price(product, market_env)

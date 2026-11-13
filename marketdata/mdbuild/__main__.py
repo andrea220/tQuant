@@ -10,7 +10,7 @@ import yaml
 
 from .snapshot import run
 from .sources import BloombergSource
-from .universe import load_curves, load_option_roots, load_universe
+from .universe import load_curves, load_implied_spot, load_option_roots, load_universe
 
 BASE = Path(__file__).resolve().parents[1]          # marketdata/
 
@@ -50,6 +50,7 @@ def main() -> None:
     universe = load_universe(Path(args.universe))
     if settings.get("options"):
         settings["options"]["roots"] = load_option_roots(Path(args.universe))
+        settings["options"]["implied_spot"] = load_implied_spot(Path(args.universe))
     curves = load_curves(Path(args.universe))
     bbg = settings["bloomberg"]
     now = datetime.now()

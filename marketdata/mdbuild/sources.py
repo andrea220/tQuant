@@ -89,10 +89,16 @@ class BloombergSource:
                         rows[ticker][f] = self._value(data.getElement(f))
         return pd.DataFrame.from_dict(rows, orient="index", columns=fields)
 
-    def bulk(self, ticker: str, field: str) -> pd.DataFrame:
+    def bulk(self, ticker: str, field: str, overrides: dict = None) -> pd.DataFrame:
+        """Bulk field of one security, one row per item; *overrides* ``{field id: value}`` (e.g. the ``CHAIN_*``
+        filters of ``CHAIN_TICKERS``)."""
         request = self._ref.createRequest("ReferenceDataRequest")
         request.getElement("securities").appendValue(ticker)
         request.getElement("fields").appendValue(field)
+        for name, value in (overrides or {}).items():
+            override = request.getElement("overrides").appendElement()
+            override.setElement("fieldId", name)
+            override.setElement("value", str(value))
         rows = []
         for msg in self._messages(request):
             if not msg.hasElement("securityData"):

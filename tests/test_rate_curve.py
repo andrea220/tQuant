@@ -281,6 +281,32 @@ class TestMonotoneConvex(unittest.TestCase):
         self.curve = mc_curve()
         self.t, self.fd, self.f = mc_reference()
 
+    def test_pricer_pins_the_curves(self):
+        """``Pricer.price`` pins the market curves (coefficients once under the tape): same price as without pinning,
+        rho per pillar = finite differences."""
+        from tensorquant.markethandles.marketenvironment import MarketEnvironment
+        from tensorquant.markethandles.volatilitysurface import BlackConstantVolatility
+
+        mkt = MarketEnvironment(market={"IR:EUR:ESTR:SPOT": self.curve, "EQ:EUR:X:SPOT": 100.0,
+                                        "EQ:EUR:X:VOL": BlackConstantVolatility(EVAL_DATE, 0.2)})
+        option = lambda: tq.VanillaOption(Currency.EUR, start_date=EVAL_DATE, end_date=EVAL_DATE + timedelta(days=900),
+                                          option_type=tq.OptionType.Put, strike=95.0, underlying="X")
+        pricer, opt = tq.BlackScholesPricer(), option()
+        pricer.price(opt, mkt, autodiff=True)
+        unpinned = float(tq.BlackScholesPricer().calculate_price(option(), mkt))
+        self.assertAlmostEqual(float(opt.price), unpinned, places=13)
+        grads = pricer.tape.gradient(opt.price, self.curve.variables)
+        h = 1e-6
+        for var, g in zip(self.curve.variables, grads):
+            base = float(var.numpy())
+            var.assign(base + h)
+            up = float(tq.BlackScholesPricer().calculate_price(option(), mkt))
+            var.assign(base - h)
+            down = float(tq.BlackScholesPricer().calculate_price(option(), mkt))
+            var.assign(base)
+            fd = (up - down) / (2 * h)
+            self.assertAlmostEqual(0.0 if g is None else float(g), fd, delta=1e-6 * max(1.0, abs(fd)))
+
     def test_zero_rates_at_the_pillars(self):
         for t, r in zip(MC_PILLARS, MC_RATES):
             self.assertAlmostEqual(float(self.curve.zero_rate(t)), r, places=13)

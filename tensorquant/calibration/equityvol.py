@@ -32,7 +32,8 @@ used where there is no bid / ask, with a lower weight), forward and repo of ever
 out-of-the-money quotes (the American implied vol on the implied forward is the Black vol), outliers dropped
 (outside 0.2-5 x the median of the expiry), a mixture fitted per expiry (standard start; above 0.2 vol points also a warm start from the previous
 expiry, the better fit kept). On the
-grid (``GRID_TENORS`` x ``GRID_MONEYNESS`` of the spot), at the forward moneyness ``K / F(t)``:
+grid (by default the calibrated listed expiries, then one point a year to 6 years, x ``GRID_MONEYNESS`` of the
+spot; ``GRID_TENORS`` is a fixed alternative), at the forward moneyness ``K / F(t)``:
 
 - between the expiries: monotone (PCHIP) interpolation of the total variance in time;
 - before the first: the vol of the first expiry;
@@ -67,7 +68,8 @@ from ..pricers.black import bjerksund_stensland_calc, blackscholes_calc
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
 
 __all__ = ["implied_volatility", "implied_forward", "implied_repo_curve", "black_implied_vol", "LognormalMixture",
-           "build_equity_vol", "calibrate_snapshot_vols", "GRID_TENORS", "GRID_MONEYNESS"]
+           "build_equity_vol", "calibrate_snapshot_vols", "implied_spot", "listed_tenors", "GRID_TENORS",
+           "GRID_MONEYNESS"]
 
 # Bjerksund-Stensland is finite and increasing in the vol on this range (NaN below ~1.5%, below the European
 # price at very high vols); equity vols are well inside it
@@ -443,6 +445,13 @@ GRID_TENORS = (1 / 12, 2 / 12, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.
 GRID_MONEYNESS = (0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.975, 1.0, 1.025, 1.05, 1.1, 1.15, 1.2, 1.3, 1.4, 1.5)
 
 
+def listed_tenors(times, max_years: float = 6.0) -> list:
+    """Maturities of the surface: the listed expiries (``times``, years) and one a year after the last one up to
+    *max_years* (whole years)."""
+    times = sorted(float(t) for t in times)
+    return times + [float(y) for y in range(int(np.floor(times[-1])) + 1, int(max_years) + 1)]
+
+
 def _prepare_quotes(quotes: pd.DataFrame) -> pd.DataFrame:
     """Normalised quotes: ``option_type`` C / P, ``settlement`` flag (no two-sided quote, ``last`` used as bid and
     ask), filters of the bid / ask (positive, ask <= 3 bid)."""
@@ -502,7 +511,7 @@ def _fill_wings(log_m: np.ndarray, vols: np.ndarray) -> np.ndarray:
 
 
 def build_equity_vol(equity: Equity, quotes: pd.DataFrame, dividend_model: str = "continuous", n: int = 4,
-                     settlement_weight: float = 0.25, min_quotes: int = 3, min_repo_days: int = 14, tenors=GRID_TENORS,
+                     settlement_weight: float = 0.25, min_quotes: int = 3, min_repo_days: int = 30, tenors=None,
                      moneyness=GRID_MONEYNESS) -> tuple[VolatilitySurface, RateCurve, pd.DataFrame]:
     """Implied vol surface and repo term structure of *equity* from its listed option quotes.
 
@@ -516,7 +525,7 @@ def build_equity_vol(equity: Equity, quotes: pd.DataFrame, dividend_model: str =
         min_quotes (int): Minimum out-of-the-money quotes of an expiry.
         min_repo_days (int): Expiries closer than this are left out of the repo curve (a small forward error is a
             large rate over a few days); their smiles keep their own implied forward.
-        tenors: Maturities of the output grid (years).
+        tenors: Maturities of the output grid (years); default :func:`listed_tenors` of the calibrated expiries.
         moneyness: Strikes of the output grid as fractions of the spot.
 
     Returns:
@@ -602,6 +611,7 @@ def build_equity_vol(equity: Equity, quotes: pd.DataFrame, dividend_model: str =
     mixtures = list(good["mixture"])
     sigma_h = _heston_atm(times, good["atm_vol"].to_numpy(float))
     m_grid = np.asarray(moneyness, dtype=float)
+    tenors = listed_tenors(times) if tenors is None else list(tenors)
     matrix = np.empty((len(tenors), len(m_grid)))
     for i, t in enumerate(tenors):
         x = spot * m_grid / float(view.forward(t))                       # forward moneyness K / F(t)
@@ -628,6 +638,41 @@ def build_equity_vol(equity: Equity, quotes: pd.DataFrame, dividend_model: str =
     return surface, repo, report
 
 
+def implied_spot(equity: Equity, quotes: pd.DataFrame, min_days: int = 3,
+                 dividend_model: str = "continuous") -> tuple[float, date]:
+    """Spot implied by the options, for an underlying whose price is delayed against its options (e.g. an index
+    without real-time data): the implied forward ``F`` of the first expiry from *min_days* (the anchor, zero repo by
+    construction), ``S = F P(0, T) + PV_div(T)``. The nearest expiry: the zero-repo assumption costs about
+    ``repo T S`` (0.01% of the spot at one week), the error of the forward passes to the spot whatever ``T``. The forward does not depend on the spot (European options; American
+    ones only through the early-exercise premia).
+
+    Args:
+        equity (Equity): Underlying (its spot only starts the iteration).
+        quotes (pd.DataFrame): Option quotes (``expiry``, ``strike``, ``option_type``, ``bid``, ``ask``, ...).
+        min_days (int): The anchor is the first expiry from this many days.
+        dividend_model (str): As in :func:`implied_forward`.
+
+    Returns:
+        tuple: ``(spot, anchor expiry)``.
+
+    Raises:
+        ValueError: If no expiry with two-sided quotes is far enough.
+    """
+    q = _prepare_quotes(quotes)
+    q = q[~q["settlement"]]
+    reference = equity.discount_curve.reference_date
+    expiries = sorted(e for e in set(q["expiry"]) if (e - reference).days >= min_days)
+    for anchor in expiries:
+        try:
+            res = implied_forward(equity, anchor, q[q["expiry"] == anchor], dividend_model=dividend_model)
+        except ValueError:
+            continue
+        _, df, _, s_net = _carry_inputs(equity, anchor)
+        pv = float(equity.spot) - s_net
+        return res["forward"] * df + pv, anchor
+    raise ValueError(f"No expiry from {min_days} days with two-sided quotes to imply the spot of {equity.ticker}")
+
+
 def calibrate_snapshot_vols(folder) -> list:
     """Vol surfaces and repo curves of the equities of a snapshot folder (``<yyyymmdd>/<set>/`` with
     ``eq_option_quotes.csv``, curves already there): writes ``eq_vol.csv``, ``eq_repo.csv`` (read by
@@ -635,7 +680,9 @@ def calibrate_snapshot_vols(folder) -> list:
     or the error of an underlying) and ``eq_vol_quotes.csv`` (bid / mid / ask and model vols of the quotes).
 
     Each underlying is calibrated on the reference spot of its quotes (``ref_spot``: the close of the quote session
-    when the options are not of today), the surface strikes are that spot times ``GRID_MONEYNESS``.
+    when the options are not of today), the surface strikes are that spot times ``GRID_MONEYNESS``. When
+    ``spot_source`` starts with "implied" (a delayed price, e.g. SPX) the spot is :func:`implied_spot` and replaces the
+    spot of ``eq_spot.csv``.
 
     Returns:
         list: The files written.
@@ -648,7 +695,7 @@ def calibrate_snapshot_vols(folder) -> list:
     quotes = pd.read_csv(folder / "eq_option_quotes.csv")
     previous = Settings.evaluation_date
     Settings.evaluation_date = evaluation_date
-    vols, repos, reports, quote_rows = [], [], [], []
+    vols, repos, reports, quote_rows, implied_spots = [], [], [], [], {}
     try:
         mkt = MarketEnvironment.from_folder(folder.parent.parent, evaluation_date, folder.name)
         for (ticker, ccy), grp in quotes.groupby(["ticker", "ccy"], sort=True):
@@ -658,6 +705,11 @@ def calibrate_snapshot_vols(folder) -> list:
                 eq = mkt.get_equity(ticker, ccy=Currency[ccy])
                 view = Equity(ticker, eq.currency, tf.Variable(info["ref_spot"], dtype=DTYPE), eq.discount_curve,
                               None, eq.dividends, eq.div_yield, None)
+                if str(info["spot_source"]).startswith("implied"):      # delayed price: spot from the options
+                    spot, anchor = implied_spot(view, grp)
+                    info.update(ref_spot=spot, spot_source=f"implied from the options ({anchor.isoformat()})")
+                    view.spot.assign(spot)
+                    implied_spots[(ticker, ccy)] = spot
                 surface, repo, report = build_equity_vol(view, grp)
             except (ValueError, KeyError) as exc:
                 reports.append({**info, "error": str(exc)})
@@ -683,6 +735,11 @@ def calibrate_snapshot_vols(folder) -> list:
     pd.DataFrame(vols, columns=["ticker", "ccy", "expiry", "strike", "vol"]).to_csv(folder / "eq_vol.csv", index=False)
     pd.DataFrame(repos, columns=["ticker", "ccy", "pillar", "rate"]).to_csv(folder / "eq_repo.csv", index=False)
     pd.DataFrame(reports).to_csv(folder / "eq_vol_calibration.csv", index=False)
+    if implied_spots:                                     # the pricers use the same spot as the vols
+        spots = pd.read_csv(folder / "eq_spot.csv")
+        for (ticker, ccy), spot in implied_spots.items():
+            spots.loc[(spots["ticker"] == ticker) & (spots["ccy"] == ccy), "spot"] = spot
+        spots.to_csv(folder / "eq_spot.csv", index=False)
     pd.DataFrame(quote_rows, columns=["ticker", "ccy", "expiry", "strike", "option_type", "iv_bid", "iv_mid", "iv_ask",
                                       "settlement", "used", "model_vol"]).to_csv(folder / "eq_vol_quotes.csv",
                                                                                  index=False)

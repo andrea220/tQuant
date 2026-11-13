@@ -394,4 +394,27 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       model within bid / ask on 95-100% of the market quotes.
 - [x] tqstudio market page: equity smile vs market (expiry selectable, default the nearest to 9 months): bid / ask
       vol bars, settlement and filtered quotes, calibrated mixture, stored surface; fit summary.
+- [x] Option chains by expiry (Bloomberg's advice for large chains: ``OPT_CHAIN`` truncates at 8000 options, SPX
+      stopped at 4 expiries): ``CHAIN_EXPIRATION_DATES`` then ``CHAIN_TICKERS`` per selected expiry (calls and puts,
+      strikes 40%-200% of the spot, unadjusted contracts, main exchange); expiries: the first 2 listed (IDEM weekly
+      roots ``2ENI`` / ``4ENI``, ``SPXW``), monthlies to 3 months, quarterlies to 18 months, then one a year to 6.2
+      years; cache refreshed weekly or when its first expiry has passed. Equity indices (``equity_indices`` in
+      ``universe.yaml``: SX5E, SPX) with weekly projected dividends in index points (``BDVD_PROJ_DIV_INDX_PTS``,
+      ``PERIODICITY_OVERRIDE = W``, about 3 years). Stale bid / ask kept as settlement on the last price. Spot read in
+      the same request as the option quotes; parity on 4 strikes a side. ``implied_spot`` (SPX: delayed price on this
+      terminal): the spot implied by the options (forward of the nearest expiry from 3 days, plus the dividends,
+      discounted), written to ``eq_spot.csv``; Bloomberg's ``IMPLIED_FORWARD_PRICE`` matches our implied forwards
+      within 2-5bp. Snapshot 2026-11-13 16:19: 2079 options of 6 underlyings, SPX to Dec 2031, the model within bid /
+      ask on 97-100% of the quotes, repo curves -1% / +0.3% (ISP short end -5%).
+- [x] Equity vol surface on the listed expiries (then one point a year to 6 years); repo curve from 30 days.
+- [x] Pricing speed: ``Pricer.price`` pins the market curves (``MarketEnvironment.pinned``: monotone convex
+      coefficients once inside the tape; autocallable 6.5 s -> 2.4 s at 5k paths); the local vol grid built up to the
+      product maturity (``process(equity, maturity)``: same values and vega, zero vega after); dividend PVs with one
+      vectorised discount call (``DividendCurve.pv_dividends``: SX5E 97 weekly dividends, 4Y autocallable at 20k paths
+      under the tape 8.2 s -> 1.9 s for the price, greeks 7.7 s -> 2.1 s). A compiled local vol step loop was tried:
+      no gain (it was already a ``tf.function``).
+- [x] tqstudio: market page (strikes under the moneyness, listed expiry labels and dates, copy surface to Excel,
+      implied repo plot, repo 1Y, correlation matrix of picked underlyings); Tradepad: price first, greeks next (one
+      computation, the tape kept for ``/api/price/greeks``); autocallable defaults (strike date +10 days, 3 years, 2%
+      coupon 80% semiannual, put 80 / 100 / 100%, autocall 100% semiannual from 1Y).
 

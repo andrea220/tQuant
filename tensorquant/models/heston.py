@@ -454,7 +454,7 @@ class HestonModel(EquityModel):
         p = {n: float(v) for n, v in self._p.items()}
         return 2.0 * p["kappa"] * p["theta"] - p["xi"] ** 2
 
-    def process(self, equity) -> HestonProcess:
+    def process(self, equity, maturity=None) -> HestonProcess:
         return HestonProcess(equity, *[self._p[n] for n in HESTON_PARAMS],
                              martingale_correction=bool(self.settings["martingale_correction"]))
 
