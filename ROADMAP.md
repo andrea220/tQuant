@@ -221,6 +221,7 @@ Sensitivities:
 
 Equity:
 
+- [ ] **Degenerate Heston calibration on real data (ENI)**: in the calibration sets of 2026-11-13 / 16 (snapshot 20261113 1619) the Heston of ENI_IM ends with kappa = 0.016 and theta = 1.0, on its upper bound (long-run vol 100%), Feller violated: with kappa near 0 the variance hardly mean-reverts and only kappa * theta is identified, so the parameters are meaningless one by one even when the fit on the nodes looks acceptable. To check: the fit region and weights (short expiries, wings), the bounds and the start, the conditioning of the least squares (also behind noisy par greeks, see Calibration Jacobians); a flag in the calibration sets when a parameter ends on a bound (the rates calibration already reports `at_bound`).
 - [ ] Local vol MC noise is large in the wings and at long maturities (OTM call at 170%, 3Y: ±1 vol point with
       100k paths): variance reduction (antithetics, control variate on the forward) not done.
 - [ ] Heston SLV does not reprice the short-dated downside of the surface: on the snapshot (TICKER1, mixing 1) the 6M

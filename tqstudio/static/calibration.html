@@ -67,7 +67,6 @@
       <!-- one set -->
       <div class="panel hidden" id="set-panel">
         <h2 id="set-title"></h2>
-        <div id="set-info" class="cards"></div>
         <div id="set-grid" class="hscroll" style="margin-top: 12px"></div>
       </div>
 
@@ -75,15 +74,15 @@
       <div class="hidden" id="und-view">
         <div class="panel">
           <h2 id="und-title"></h2>
-          <div id="und-models" class="segmented-row"></div>
-          <div id="und-cards" class="cards" style="margin-top: 12px"></div>
-          <div class="grid2" style="margin-top: 12px">
-            <div><h3>Parameters</h3><div id="und-params"></div></div>
-            <div><h3>Calibration report</h3><div id="und-report" class="scroll"></div></div>
-          </div>
+          <div id="und-models" class="segmented"></div>
+          <div id="und-cards" class="cards"></div>
+          <h3 style="margin-top: 16px">Parameters</h3>
+          <div id="und-params"></div>
+          <details style="margin-top: 14px"><summary class="muted">Calibration report</summary>
+            <div id="und-report" class="scroll"></div></details>
         </div>
         <div class="panel">
-          <h2>Fit to the market</h2>
+          <h2>Fit to the market <span id="fit-model" class="muted"></span></h2>
           <div class="grid2">
             <div>
               <div class="selector" style="margin: 0 0 6px 0">

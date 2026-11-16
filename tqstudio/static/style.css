@@ -150,6 +150,18 @@ button.link:hover { background: none; text-decoration: underline; }
 .pill.warn { background: #fff1e4; color: #b4560e; }
 .pill.ok { background: #e6f4ee; color: var(--pos); }
 .pill.off { background: #f0f2f6; color: var(--muted); }
+.pill.good { background: #e6f4ee; color: var(--pos); }
+.pill.fair { background: #fff1e4; color: #b4560e; }
+.pill.poor, .pill.bad { background: #fdecea; color: var(--neg); }
+/* calibration set: model column groups */
+.fit-grid th.group-start, .fit-grid td.group-start { border-left: 1px solid var(--line); text-align: center; }
+.fit-grid th.group-title { color: var(--text); font-size: 12.5px; text-align: center; }
+.fit-grid th[rowspan] { vertical-align: bottom; }
+/* calibration: parameters of the selected model (compact, left aligned values) */
+.params table { width: auto; min-width: 420px; }
+.params td:nth-child(3) { text-align: left; }
+#und-models { margin-bottom: 14px; }
+#und-models .pill { margin-left: 6px; font-size: 11px; padding: 2px 8px; }
 pre.log { margin: 12px 0 0; padding: 10px 12px; background: #f8f9fc; border: 1px solid var(--line); border-radius: 8px;
           font: 12px/1.45 Consolas, monospace; max-height: 220px; overflow: auto; white-space: pre-wrap; }
 

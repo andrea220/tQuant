@@ -218,7 +218,8 @@ def calibrate_snapshot_models(snapshot, root, models=("Heston", "DisplacedDiffus
 
 
 def list_calibration_sets(root) -> list[dict]:
-    """Calibration sets under *root*, latest first: ``calibration_info.json`` plus ``date``, ``set``, ``path``."""
+    """Calibration sets under *root*, the most recently calibrated first (``created``; the folder date is the
+    snapshot's): ``calibration_info.json`` plus ``date``, ``set`` (the folder), ``path``."""
     out = []
     root = Path(root)
     if not root.is_dir():
@@ -228,7 +229,7 @@ def list_calibration_sets(root) -> list[dict]:
         folder = info_path.parent
         out.append({**info, "date": _dt.datetime.strptime(folder.parent.name, "%Y%m%d").date().isoformat(),
                     "set": folder.name, "path": str(folder)})
-    return sorted(out, key=lambda r: (r["date"], r["set"]), reverse=True)
+    return sorted(out, key=lambda r: (str(r.get("created", "")), r["date"], r["set"]), reverse=True)
 
 
 def load_calibration_set(folder) -> dict:

@@ -53,10 +53,11 @@ async function loadSets() {
   state.sets = data.sets;
   showRun(data.run);
   $("sets").innerHTML = state.sets.length ? table([
-    ["Date", (s) => s.date], ["Time", (s) => s.set], ["Snapshot", (s) => `${s.snapshot.date} ${s.snapshot.set}`],
-    ["Models", (s) => s.models.map((m) => LABEL[m] || m).join(", ") + (s.slv.length ? ` + SLV (${s.slv.join(", ")})` : "")],
+    ["Launch Date", (s) => (s.created || s.date).slice(0, 10)],
+    ["Launch Time", (s) => (s.created ? s.created.slice(11, 16) : s.set)],
+    ["Market Data Snapshot", (s) => `${s.snapshot.date} ${s.snapshot.set}`],
     ["Underlyings", (s) => s.tickers.length], ["Status", (s) => Object.entries(s.counts).map(([k, v]) => `${v} ${k}`).join(", ")],
-    ["Time (s)", (s) => fmt(s.seconds, 0)]], state.sets, (s) => `class="clickable" data-date="${s.date}" data-set="${s.set}"`)
+    ["Runtime (min)", (s) => fmt(s.seconds / 60, 1)]], state.sets, (s) => `class="clickable" data-date="${s.date}" data-set="${s.set}"`)
     : '<p class="muted">No calibration set yet: start one with "New calibration set".</p>';
   $("sets").querySelectorAll("tr.clickable").forEach((tr) => tr.addEventListener("click",
     () => openSet(tr.dataset.date, tr.dataset.set)));
@@ -70,21 +71,32 @@ async function openSet(day, cset, ticker) {
   $("set-panel").classList.remove("hidden");
   $("und-view").classList.add("hidden");
   const info = data.info;
-  $("set-title").textContent = `Calibration set ${day} ${cset}`;
-  $("set-info").innerHTML = cards([["Snapshot", `<a href="/market?class=equity&date=${info.snapshot.date}&set=${info.snapshot.set}">`
-    + `${info.snapshot.date} ${info.snapshot.set}</a>`], ["Created", info.created.replace("T", " ")],
-    ["Models", info.models.map((m) => LABEL[m] || m).join(", ")], ["Underlyings", info.tickers.length],
-    ["Time", `${fmt(info.seconds, 0)} s`]]);
-  const cell = (t, m) => {
+  $("set-title").textContent = info.created
+    ? `Calibration set launched ${info.created.slice(0, 10)} ${info.created.slice(11, 16)}`
+    : `Calibration set ${day} ${cset}`;
+  // one row per underlying; per model a group of columns: fit label, rms and max error (vol points), time
+  const cells = (t, m) => {
     const r = data.rows.find((x) => x.ticker === t && x.model === m);
-    if (!r) return '<span class="muted">-</span>';
-    if (r.status === "error") return `<span class="error" title="${(r.error || "").replace(/"/g, "'")}">error</span>`;
-    return `<span style="color: ${QUALITY[r.quality]}; font-weight: 600">${r.quality}</span> `
-      + `<span class="muted">${fmt(r.rms_volpts, 2)} / ${fmt(r.max_volpts, 1)} vol pts · ${fmt(r.seconds, 1)} s</span>`;
+    if (!r) return '<td class="group-start muted">–</td><td></td><td></td><td></td>';
+    if (r.status !== "ok") {
+      const msg = (r.error || r.status || "").replace(/"/g, "'");
+      return `<td class="group-start"><span class="pill bad" title="${msg}">${r.status}</span></td>`
+        + `<td></td><td></td><td>${fmt(r.seconds, 1)}</td>`;
+    }
+    return `<td class="group-start"><span class="pill ${r.quality}">${r.quality}</span></td>`
+      + `<td>${fmt(r.rms_volpts, 2)}</td><td>${fmt(r.max_volpts, 2)}</td><td>${fmt(r.seconds, 1)}</td>`;
   };
-  $("set-grid").innerHTML = table([["Underlying", (t) => `<b>${t}</b>`], ...data.models.map((m) => [LABEL[m] || m, (t) => cell(t, m)])],
-    data.tickers, (t) => `class="clickable" data-ticker="${t}"`)
-    + '<p class="muted">rms / max of model - market over the nodes 60%-150% of the spot; click an underlying.</p>';
+  const head1 = `<tr><th rowspan="2">Underlying</th>`
+    + data.models.map((m) => `<th colspan="4" class="group-start group-title">${LABEL[m] || m}</th>`).join("") + "</tr>";
+  const head2 = "<tr>" + data.models.map(() => '<th class="group-start">Fit</th><th>RMS</th><th>Max</th><th>Time (s)</th>')
+    .join("") + "</tr>";
+  const body = data.tickers.map((t) => `<tr class="clickable" data-ticker="${t}"><td><b>${t}</b></td>`
+    + data.models.map((m) => cells(t, m)).join("") + "</tr>").join("");
+  $("set-grid").innerHTML = `<table class="fit-grid"><thead>${head1}${head2}</thead><tbody>${body}</tbody></table>`
+    + '<p class="note">RMS and Max: model minus market implied vol, in vol points, over the surface nodes with maturity '
+    + "from 1 month and strike within 2 standard deviations of the forward (|ln K/S| &le; 2 &sigma;<sub>ATM</sub> "
+    + "&radic;T). Fit from the RMS: good &le; 1, fair &le; 2.5, poor above. Time: calibration of that model. "
+    + "Click an underlying for its smiles and fit.</p>";
   $("set-grid").querySelectorAll("tr.clickable").forEach((tr) => tr.addEventListener("click", () => openUnderlying(tr.dataset.ticker)));
   saveUrl();
   if (ticker) await openUnderlying(ticker);
@@ -100,14 +112,13 @@ async function openUnderlying(ticker) {
   $("und-title").textContent = `${ticker} · spot ${fmt(d.spot, 2)}`;
   const ok = d.models.filter((m) => m.status === "ok");
   state.model = ok.length ? ok[0].model : d.models[0].model;
-  $("und-models").innerHTML = d.models.map((m) => `<button class="secondary compact" data-model="${m.model}">`
-    + `${LABEL[m.model] || m.model}</button>`).join("");
+  $("und-models").innerHTML = d.models.map((m) => `<button data-model="${m.model}">${LABEL[m.model] || m.model}`
+    + (m.status === "ok" ? ` <span class="pill ${m.quality}">${m.quality}</span>` : ` <span class="pill bad">${m.status}</span>`)
+    + "</button>").join("");
   $("und-models").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { state.model = b.dataset.model; showModel(); }));
   $("und-expiry").innerHTML = d.expiries.map((e, i) => `<option value="${i}">${d.labels[i]} (${e})</option>`).join("");
   $("und-expiry").value = String(d.T.reduce((b, t, i) => (Math.abs(t - 0.75) < Math.abs(d.T[b] - 0.75) ? i : b), 0));
   showModel();
-  smile();
-  atm();
   $("test-table").innerHTML = "";
   $("test-vols").innerHTML = "";
   $("test-status").textContent = "";
@@ -118,20 +129,29 @@ async function openUnderlying(ticker) {
 function showModel() {
   const d = state.und;
   const m = d.models.find((x) => x.model === state.model);
-  $("und-models").querySelectorAll("button").forEach((b) => b.classList.toggle("active-model", b.dataset.model === state.model));
+  $("und-models").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.model === state.model));
+  $("fit-model").textContent = `· ${LABEL[m.model] || m.model}`;
   if (m.status !== "ok") {
-    $("und-cards").innerHTML = cards([["Status", `<span class="error">error</span>`], ["Message", m.error || ""]]);
+    $("und-cards").innerHTML = cards([["Status", `<span class="error">${m.status}</span>`], ["Message", m.error || ""]]);
     ["und-params", "und-report", "und-errors"].forEach((id) => { $(id).innerHTML = ""; });
+    smile();
+    atm();
     return;
   }
   const drift = m.drift ? [["Drift on " + m.drift.snapshot, `${fmt(m.drift.rms_volpts, 2)} vol pts rms`
     + (m.drift.stale ? ' <span class="error">to recalibrate</span>' : ' <span style="color:#12805c">ok</span>')]] : [];
-  $("und-cards").innerHTML = cards([["Fit", `<span style="color:${QUALITY[m.quality]}">${m.quality}</span>`],
-    ["rms (vol pts)", fmt(m.rms_volpts, 2)], ["max (vol pts)", fmt(m.max_volpts, 1)], ["Calibration", `${fmt(m.seconds, 1)} s`],
+  $("und-cards").innerHTML = cards([["Fit", `<span class="pill ${m.quality}">${m.quality}</span>`],
+    ["RMS (vol pts)", fmt(m.rms_volpts, 2)], ["Max (vol pts)", fmt(m.max_volpts, 2)], ["Calibration time", `${fmt(m.seconds, 1)} s`],
     ["Jacobian", m.jacobian ? "stored" : "none"], ...drift]);
-  const params = Object.entries(m.parameters || {});
-  $("und-params").innerHTML = table([["Parameter", ([k]) => k], ["Value", ([, v]) => v.length === 1 ? fmt(v[0], 5)
-    : v.map((x) => fmt(x, 4)).join(", ")]], params);
+  const pv = m.parameter_view || { scalars: [], table: null };
+  const value = (x) => (x === null || x === undefined ? "" : Math.abs(x) >= 100 ? fmt(x, 1) : fmt(x, 4));
+  let html = pv.scalars.length ? table([["Parameter", (r) => r.name], ["Value", (r) => value(r.value)],
+    ["", (r) => `<span class="muted">${r.note || ""}</span>`]], pv.scalars) : "";
+  if (pv.table) {
+    html += `<p class="muted" style="margin: 8px 0">${pv.table.title}</p>`
+      + table(pv.table.columns.map((c, j) => [c, (row) => fmt(row[j], j < 2 ? 2 : 4)]), pv.table.rows);
+  }
+  $("und-params").innerHTML = `<div class="params">${html}</div>`;
   const rep = m.report || [];
   const cols = rep.length ? Object.keys(rep[0]) : [];
   $("und-report").innerHTML = rep.length ? table(cols.map((c) => [c, (r) => (typeof r[c] === "number" ? fmt(r[c], 4) : r[c] ?? "")]), rep)
@@ -142,6 +162,8 @@ function showModel() {
   const body = m.errors.map((row, i) => `<tr><td>${d.labels[i]} <span class="muted">${d.expiries[i]}</span></td>`
     + row.map((x) => `<td style="background:${shade(x)}">${fmt(x, 2)}</td>`).join("") + "</tr>").join("");
   $("und-errors").innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  smile();
+  atm();
 }
 
 function smile() {
@@ -150,8 +172,9 @@ function smile() {
   const x = d.moneyness.map((m) => 100 * m);
   const traces = [{ x, y: d.market[i].map((v) => 100 * v), mode: "lines+markers", name: "market surface",
     line: { color: "#888", dash: "dash" }, marker: { size: 5 } }];
-  d.models.filter((m) => m.status === "ok").forEach((m) => traces.push({ x, y: m.vols[i].map((v) => 100 * v), mode: "lines",
-    name: LABEL[m.model] || m.model, line: { color: MODEL_COLORS[m.model], width: 2 } }));
+  d.models.filter((m) => m.status === "ok" && m.model === state.model).forEach((m) => traces.push({ x,
+    y: m.vols[i].map((v) => 100 * v), mode: "lines", name: LABEL[m.model] || m.model,
+    line: { color: MODEL_COLORS[m.model], width: 2 } }));
   const q = (d.quotes || {})[d.expiries[i]] || [];
   if (q.length) {
     traces.push({ x: q.map((p) => (100 * p.strike) / d.spot), y: q.map((p) => 100 * p.iv_mid), mode: "markers",
@@ -166,8 +189,21 @@ function atm() {
   const d = state.und;
   const traces = [{ x: d.T, y: d.atm_market.map((v) => 100 * v), mode: "lines+markers", name: "market",
     line: { color: "#888", dash: "dash" } }];
-  d.models.filter((m) => m.atm).forEach((m) => traces.push({ x: d.T, y: m.atm.map((v) => 100 * v), mode: "lines+markers",
-    name: LABEL[m.model] || m.model, line: { color: MODEL_COLORS[m.model] }, marker: { size: 4 } }));
+  const m = d.models.find((x) => x.model === state.model);
+  if (m && m.atm) {
+    traces.push({ x: d.T, y: m.atm.map((v) => 100 * v), mode: "lines+markers", name: LABEL[m.model] || m.model,
+      line: { color: MODEL_COLORS[m.model] }, marker: { size: 4 } });
+  } else if (m && m.status === "ok") {
+    // Heston SLV: no closed form; model and market both on the surface node nearest the spot (same strike)
+    const k = d.moneyness.reduce((b, x, j) => (Math.abs(x - 1) < Math.abs(d.moneyness[b] - 1) ? j : b), 0);
+    traces[0] = { x: d.T, y: d.market.map((row) => 100 * row[k]), mode: "lines+markers", name: "market",
+      line: { color: "#888", dash: "dash" } };
+    traces.push({ x: d.T, y: m.vols.map((row) => 100 * row[k]), mode: "lines+markers", name: LABEL[m.model] || m.model,
+      line: { color: MODEL_COLORS[m.model] }, marker: { size: 4 } });
+    plot("chart-atm", traces, `Term structure at ${fmt(100 * d.moneyness[k], 0)}% of the spot`, "T (years)",
+      "implied vol (%)");
+    return;
+  }
   plot("chart-atm", traces, "ATM-forward term structure", "T (years)", "implied vol (%)");
 }
 

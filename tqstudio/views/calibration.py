@@ -88,6 +88,8 @@ def underlying_view(folder: Path, ticker: str, source, latest=None) -> dict:
             entry["vols"] = model_vols.to_numpy().tolist()
             entry["errors"] = (100.0 * (model_vols.to_numpy() - market)).tolist()
             model = load_model(folder, ticker, r["model"])
+            entry["parameter_view"] = parameter_view(model)
+            entry.pop("parameters", None)                 # raw values (SLV: the whole table): the view above instead
             if r["model"] != "HestonSLV":
                 process = model.process(eq)
                 entry["atm"] = [float(process.implied_vol(float(eq.forward(t)), t)) for t in maturities]
@@ -106,6 +108,62 @@ def underlying_view(folder: Path, ticker: str, source, latest=None) -> dict:
     out["quotes"] = _quotes(folder, ticker, out["expiries"])
     out["stale_volpts"] = STALE_VOLPTS
     return out
+
+
+HESTON_LABELS = {"v0": ("v0", "initial variance"), "kappa": ("kappa", "mean reversion speed"),
+                 "theta": ("theta", "long-run variance"), "xi": ("xi", "vol of vol"),
+                 "rho": ("rho", "spot-variance correlation")}
+
+
+def _scalar_rows(params: dict, prefix: str = "") -> list[dict]:
+    rows = []
+    for key, (name, note) in HESTON_LABELS.items():
+        if key in params:
+            value = float(np.ravel(params[key].numpy() if hasattr(params[key], "numpy") else params[key])[0])
+            extra = f" (vol {100 * np.sqrt(max(value, 0.0)):.1f}%)" if key in ("v0", "theta") else ""
+            rows.append({"name": prefix + name, "value": value, "note": note + extra})
+    return rows
+
+
+def parameter_view(model) -> dict:
+    """The parameters of a stored model, readable: ``scalars`` (``name, value, note``) and an optional ``table``
+    (``title, columns, rows``): Heston's five parameters and the Feller condition, the displaced diffusion pieces,
+    Heston SLV's Heston part, mixing and a summary of the ``E[v | X]`` table (not its thousands of values)."""
+    name = type(model).__name__
+    if name == "HestonModel":
+        p = {k: float(v.numpy()) for k, v in model.parameters.items()}
+        rows = _scalar_rows(p)
+        feller = 2.0 * p["kappa"] * p["theta"] - p["xi"] ** 2
+        rows.append({"name": "Feller 2 kappa theta - xi^2", "value": feller,
+                     "note": "variance stays positive" if feller >= 0 else "violated: the variance can reach 0"})
+        return {"scalars": rows, "table": None}
+    if name == "DisplacedDiffusionModel":
+        ends = [float(t) for t in model.settings["t_nodes"]]
+        beta, sigma = (np.ravel(v.numpy()) for v in (model.parameters["beta_fwd"], model.parameters["sigma_fwd"]))
+        starts = [0.0] + ends[:-1]
+        return {"scalars": [], "table": {
+            "title": "Forward pieces (beta: 1 lognormal, 0 normal; sigma of the shifted forward)",
+            "columns": ["From (years)", "To (years)", "beta", "sigma"],
+            "rows": [[a, b, float(x), float(y)] for a, b, x, y in zip(starts, ends, beta, sigma)]}}
+    if name == "HestonSLVModel":
+        rows = _scalar_rows({k: float(v.numpy()) for k, v in model.heston.parameters.items()}, "Heston ")
+        s = model.settings
+        rows.append({"name": "mixing", "value": float(s["mixing"]), "note": "vol of vol scale (1: full Heston xi)"})
+        e = model.parameters.get("expectation")
+        if e is not None and model.leverage_table is not None:
+            values = e.numpy()
+            times = np.asarray(model.leverage_table["times"], dtype=float)
+            rows.append({"name": "E[v | X] table", "value": None,
+                         "note": f"{values.shape[0]} times x {values.shape[1]} nodes, 0 to {times[-1]:.1f} years "
+                                 f"({int(s['steps_per_year'])} a year), values {values.min():.4f} to {values.max():.4f}, "
+                                 f"{int(s['n_particles']):,} particles"})
+        return {"scalars": rows, "table": None}
+    rows = []
+    for key, v in model.parameters.items():                 # any other model: scalars, vectors summarised
+        a = np.ravel(v.numpy())
+        rows.append({"name": key, "value": float(a[0]) if a.size == 1 else None,
+                     "note": "" if a.size == 1 else f"{a.size} values, {a.min():.4g} to {a.max():.4g}"})
+    return {"scalars": rows, "table": None}
 
 
 def _quotes(folder: Path, ticker: str, expiries: list[str]) -> dict:
