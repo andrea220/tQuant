@@ -15,12 +15,13 @@
 }
 
 * { box-sizing: border-box; }
-html, body { height: 100%; }
+html { height: 100%; }
+body { min-height: 100%; }
 body { margin: 0; font: 14px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text);
        display: grid; grid-template-columns: 210px 1fr; }
 
 /* sidebar */
-aside { background: var(--side); color: var(--side-text); padding: 20px 14px; position: sticky; top: 0; height: 100vh;
+aside { background: var(--side); color: var(--side-text); padding: 20px 14px; position: sticky; top: 0; height: 100vh; align-self: start;
         display: flex; flex-direction: column; gap: 22px; }
 .brand { color: #fff; font-size: 18px; font-weight: 700; letter-spacing: 0.2px; padding: 0 8px; }
 .brand span { color: #8fb0ea; }
