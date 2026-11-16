@@ -7,6 +7,7 @@ Run from the repository root (``python -m tqstudio``); colleagues on the same ne
 from __future__ import annotations
 
 import itertools
+import json
 import os
 import threading
 from datetime import date
@@ -19,6 +20,8 @@ from fastapi.staticfiles import StaticFiles
 
 import tensorquant as tq
 
+from .views.calibration import (CalibrationRuns, save_flags, set_folder, set_view, sets_view, slv_check, slv_monitor,
+                                test_view, underlying_view, universe_view)
 from .views.market import catalog, equity_tickers, fx_view, market_view, rates_view, snapshots
 from .views.tradepad import ModelCache, describe_trade, market_inputs, price_trade
 from .views.tradepad import catalog as tradepad_catalog
@@ -26,6 +29,7 @@ from .views.tradepad import catalog as tradepad_catalog
 ROOT = Path(__file__).resolve().parent
 DATA_SOURCE = os.environ.get("TQSTUDIO_DATA", "live")   # live: Bloomberg snapshots; synthetic: generated ones
 MARKET_DATA = ROOT.parent / "marketdata" / ("live" if DATA_SOURCE == "live" else "")
+CALIBRATIONS = ROOT.parent / "marketdata" / "calibrations" / DATA_SOURCE   # calibration sets (git-ignored)
 DOCS_BUILD = ROOT.parent / "study" / "docs" / "build"      # LaTeX builds (latexmk in study/docs; not in git)
 DOCUMENTS = {"models": ("Models and Pricing", "models_and_pricing.pdf"),
              "technical": ("Architecture", "architecture.pdf")}
@@ -41,7 +45,7 @@ class Engine:
         self.markets: dict = {}
         self.views: dict = {}
         self.market = self._load(None, None)              # latest snapshot (Tradepad)
-        self.models = ModelCache()
+        self.models = ModelCache(CALIBRATIONS)
         self.jobs: dict = {}                              # pending second phases of the prices (greeks)
         self._job_ids = itertools.count(1)
 
@@ -197,6 +201,95 @@ def price_greeks(request: dict = Body(...)) -> dict:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+runs = CalibrationRuns()
+
+
+def _source(folder):
+    """The snapshot a calibration set was calibrated on (evaluation date set; call under the lock)."""
+    info = json.loads((folder / "calibration_info.json").read_text(encoding="utf-8"))["snapshot"]
+    return engine.snapshot(info["date"], info["set"])
+
+
+@app.get("/api/calibration/sets")
+def calibration_sets() -> dict:
+    return {**sets_view(CALIBRATIONS), "run": runs.status()}
+
+
+@app.get("/api/calibration/set/{day}/{cset}")
+def calibration_set(day: str, cset: str) -> dict:
+    try:
+        return set_view(set_folder(CALIBRATIONS, day, cset))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/api/calibration/underlying/{day}/{cset}/{ticker}")
+def calibration_underlying(day: str, cset: str, ticker: str) -> dict:
+    try:
+        folder = set_folder(CALIBRATIONS, day, cset)
+        with engine.lock:
+            latest = engine.snapshot(None, None)
+            source = _source(folder)
+            same = (latest.evaluation_date, latest.calibration_set) == (source.evaluation_date, source.calibration_set)
+            return underlying_view(folder, ticker, source, None if same else latest)
+    except (FileNotFoundError, KeyError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/calibration/test")
+def calibration_test(request: dict = Body(...)) -> dict:
+    try:
+        folder = set_folder(CALIBRATIONS, request["date"], request["set"])
+        with engine.lock:
+            return test_view(folder, request["ticker"], _source(folder), rerun=bool(request.get("rerun")),
+                             n_paths=int(request.get("n_paths", 20_000)))
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/calibration/universe")
+def calibration_universe() -> dict:
+    with engine.lock:
+        return universe_view(engine.snapshot(None, None), CALIBRATIONS)
+
+
+@app.post("/api/calibration/universe")
+def calibration_universe_save(request: dict = Body(...)) -> dict:
+    try:
+        return save_flags(request["asset_class"], request["name"], request.get("flags") or {})
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/calibration/slv")
+def calibration_slv() -> dict:
+    with engine.lock:
+        latest = engine.snapshot(None, None)
+        return slv_monitor(CALIBRATIONS, latest, engine.snapshot)
+
+
+@app.post("/api/calibration/slv/check")
+def calibration_slv_check(request: dict = Body(...)) -> dict:
+    try:
+        with engine.lock:
+            return slv_check(CALIBRATIONS, engine.snapshot(None, None), request["ticker"])
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.post("/api/calibration/run")
+def calibration_run(request: dict = Body(...)) -> dict:
+    try:
+        return runs.start(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.get("/api/calibration/run")
+def calibration_run_status() -> dict:
+    return runs.status()
+
+
 @app.get("/api/documents")
 def documents() -> dict:
     return {"snapshot": engine.market.evaluation_date.isoformat(), "source": DATA_SOURCE,
@@ -228,3 +321,8 @@ def market_page() -> FileResponse:
 @app.get("/tradepad")
 def tradepad() -> FileResponse:
     return FileResponse(ROOT / "static" / "tradepad.html")
+
+
+@app.get("/calibration")
+def calibration_page() -> FileResponse:
+    return FileResponse(ROOT / "static" / "calibration.html")

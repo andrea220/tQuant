@@ -26,3 +26,4 @@ resources/
 marketdata/live/
 marketdata/history/
 marketdata/cache/
+marketdata/calibrations/

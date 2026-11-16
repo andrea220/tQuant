@@ -37,23 +37,44 @@ A360 = tq.DayCounterConvention.Actual360
 IBOR = "6M"              # the Ibor index of the rates products (curve IR:<ccy>:6M)
 
 
-class ModelCache:
-    """Calibrated model instances per ``(snapshot, ticker, model)``, with their calibration time."""
+CALIBRATED = {"Heston": "Heston", "Displaced diffusion": "DisplacedDiffusion", "Heston SLV": "HestonSLV"}
 
-    def __init__(self):
+
+class ModelCache:
+    """Model instances per ``(snapshot, ticker, model)``: the local vol built on the snapshot, the calibrated models
+    (Heston, displaced diffusion, Heston SLV) loaded from the latest calibration set with the underlying (their
+    parameters held on the current market; ``source_set`` names the set)."""
+
+    def __init__(self, calibrations=None):
         self._models: dict = {}
+        self._calibrations = calibrations
 
     def get(self, eq, name: str, snapshot: str = "") -> tuple:
-        """``(model, seconds spent calibrating now)``: 0 when it was already calibrated."""
+        """``(model, seconds spent calibrating now)``: 0 when it was already there (or loaded from a set)."""
         key = (snapshot, eq.ticker, name)
         if key in self._models:
             return self._models[key], 0.0
         t0 = time.perf_counter()
-        if name != "Local vol":
+        if name == "Local vol":
+            model = tq.LocalVolatilityModel.calibrate(eq)
+        elif name in CALIBRATED:
+            model = self._calibrated(eq.ticker, CALIBRATED[name], name)
+        else:
             raise ValueError(f"unknown model {name}")
-        model = tq.LocalVolatilityModel.calibrate(eq)
         self._models[key] = model
-        return model, time.perf_counter() - t0
+        return model, time.perf_counter() - t0 if name == "Local vol" else 0.0
+
+    def _calibrated(self, ticker: str, stored: str, label: str):
+        from tensorquant.calibration.models import list_calibration_sets, load_calibration_set, load_model
+
+        for s in list_calibration_sets(self._calibrations) if self._calibrations else []:
+            summary = load_calibration_set(s["path"])["summary"]
+            ok = summary[(summary["ticker"] == ticker) & (summary["model"] == stored) & (summary["status"] == "ok")]
+            if len(ok):
+                model = load_model(s["path"], ticker, stored)
+                model.source_set = f"{s['date']} {s['set']}"
+                return model
+        raise ValueError(f"no calibration set with {label} for {ticker}: run one in the Calibration tab")
 
     def clear(self) -> None:
         self._models.clear()
@@ -107,7 +128,7 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
     underlying = _select("ticker", "Underlying", tickers)
     option = [underlying, _select("option_type", "Type", ["Put", "Call"]), _number("strike_pct", "Strike (% spot)", 100.0, 0.5),
               _date("expiry", "Expiry", one_year), _number("quantity", "Quantity", 1.0)]
-    equity_models = ["Black-Scholes", "Local vol"]
+    equity_models = ["Black-Scholes", "Local vol", *CALIBRATED]
 
     def rates_common(needs):
         return [_select("ccy", "Currency", _rate_currencies(mkt, needs)), _number("notional", "Notional", 1e6, 1e5),
@@ -169,7 +190,7 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
                                       _number("autocall_barrier", "Autocall barrier (%)", 100.0, 1.0),
                                       _select("autocall_frequency", "Frequency", ["3M", "6M", "1Y"], "6M"),
                                       _select("first_autocall", "First observation", ["3M", "6M", "1Y", "2Y"], "1Y")),
-                             "models": ["Local vol"], "create_trade": True},
+                             "models": ["Local vol", *CALIBRATED], "create_trade": True},
         },
     }
     products["Rates"] = {name: spec for name, spec in products["Rates"].items()      # products with data only
@@ -500,7 +521,7 @@ def _equity_price(mkt, cache, kind, f, model, n_paths, seed) -> dict:
     if kind == "Autocallable":
         product = _autocallable(mkt, f)
         qty = 1.0
-        instance, calibration_s = cache.get(eq, "Local vol", snap)
+        instance, calibration_s = cache.get(eq, model, snap)
         pricer = tq.AutocallableMCPricer(model=instance, n_paths=int(n_paths), seed=int(seed))
     else:
         product = _equity_option(mkt, f, kind)
@@ -568,6 +589,8 @@ def _equity_greeks(mkt, state: dict) -> dict:
         info.append(["Vol at strike (%)", 100 * float(eq.vol_surface.volatility(strike=float(product.strike), tenor=T)), 2])
     if instance is not None:
         info.append(["Monte Carlo", f"{int(n_paths):,} paths", None])
+    if getattr(instance, "source_set", None):
+        info.append(["Calibration set", instance.source_set, None])
     if kind == "Vanilla":           # the desk's view: delta, gamma, theta, vega, rho as numbers, no maps or timings
         T_steps = max(MIN_STEPS, math.ceil(STEPS_PER_YEAR * T))
         if instance is None:

@@ -94,6 +94,7 @@ function renderEquity(d) {
     ["Dividends", s.dividend_model]];
   if (s.div_yield !== null) items.splice(4, 0, ["Div yield", pct(s.div_yield, 3) + "%"]);
   $("eq-summary").innerHTML = cards(items);
+  calibratedLink(state.item);
 
   $("eq-forwards").innerHTML = table([
     ["Tenor", (r) => r.tenor], ["Forward", (r) => fmt(r.forward, 2)], ["Fwd / spot", (r) => fmt(r.forward_over_spot)],
@@ -243,6 +244,20 @@ function marketSmile() {
     ["Expiry", `${e.expiry} (${e.t.toFixed(2)}y)`], ["Forward", fmt(e.forward, 2)], ["Repo", pct(e.repo, 3) + "%"],
     ["Quotes used", e.quotes], ["Fit rms (vol pts)", fmt(100 * e.fit_rms, 2)],
     ["Model inside bid-ask", e.inside === null ? "" : `${Math.round(100 * e.inside)}%`], ["Source", e.source]])}</div>`;
+}
+
+// link to the latest calibration set with this underlying (Calibration tab)
+async function calibratedLink(ticker) {
+  try {
+    const data = await (await fetch("/api/calibration/sets")).json();
+    const set = (data.sets || []).find((x) => (x.tickers || []).includes(ticker));
+    if (!set || state.item !== ticker) return;
+    const names = { Heston: "Heston", DisplacedDiffusion: "DD", HestonSLV: "SLV" };
+    const models = [...set.models, ...(set.slv.includes(ticker) ? ["HestonSLV"] : [])].map((m) => names[m] || m).join(", ");
+    $("eq-summary").insertAdjacentHTML("beforeend", `<div class="card"><div class="label">Calibrated</div><div class="value">`
+      + `<a href="/calibration?date=${set.date}&set=${set.set}&ticker=${encodeURIComponent(ticker)}">${models} · set `
+      + `${set.date} ${set.set}</a></div></div>`);
+  } catch (e) { /* no calibration sets: nothing to show */ }
 }
 
 // ---------- rates ----------

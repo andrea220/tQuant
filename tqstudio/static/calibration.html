@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tqstudio · Calibration</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+</head>
+<body>
+  <aside>
+    <div class="brand">tq<span>studio</span></div>
+    <nav><a href="/">Home</a><a href="/market">Market data</a><a class="active" href="/calibration">Calibration</a><a href="/tradepad">Tradepad</a></nav>
+    <div class="side-foot" id="snapshot"></div>
+  </aside>
+
+  <div class="page">
+    <div class="topbar">
+      <h1>Calibration</h1>
+      <div class="controls">
+        <span id="run-status" class="muted"></span>
+        <button id="new-set" class="secondary compact">New calibration set</button>
+      </div>
+    </div>
+
+    <main>
+      <div class="segmented" id="subtabs">
+        <button data-tab="sets" class="active">Sets</button>
+        <button data-tab="universe">Universe</button>
+      </div>
+
+      <!-- new set form -->
+      <div id="new-form" class="panel hidden">
+        <h2>New calibration set</h2>
+        <div class="form-row">
+          <label>Snapshot date <select id="nf-date"></select></label>
+          <label>Set <select id="nf-set"></select></label>
+          <button id="nf-start" class="compact">Start</button>
+        </div>
+        <p id="nf-plan" class="muted"></p>
+        <p class="muted">Calibrates the models flagged in Universe, in a separate process (Heston and displaced
+          diffusion: about 10-40 s per underlying; Heston SLV: longer). The set appears in the list when it is done.</p>
+      </div>
+
+      <!-- universe: the models to calibrate per underlying -->
+      <div id="tab-universe" class="hidden">
+        <div class="panel">
+          <h2>Universe <span id="uv-saved" class="muted"></span></h2>
+          <div class="segmented" id="uv-classes"></div>
+          <div id="uv-table" class="hscroll" style="margin-top: 12px"></div>
+          <p id="uv-note" class="muted"></p>
+        </div>
+        <div class="panel">
+          <h2>Heston SLV: when to recalibrate <span id="slv-latest" class="muted"></span></h2>
+          <div id="slv-table" class="hscroll"></div>
+          <p id="slv-rules" class="muted"></p>
+        </div>
+      </div>
+
+      <div id="tab-sets">
+      <!-- list of the sets -->
+      <div class="panel" id="sets-panel">
+        <h2>Calibration sets</h2>
+        <div id="sets" class="scroll"></div>
+      </div>
+
+      <!-- one set -->
+      <div class="panel hidden" id="set-panel">
+        <h2 id="set-title"></h2>
+        <div id="set-info" class="cards"></div>
+        <div id="set-grid" class="hscroll" style="margin-top: 12px"></div>
+      </div>
+
+      <!-- one underlying -->
+      <div class="hidden" id="und-view">
+        <div class="panel">
+          <h2 id="und-title"></h2>
+          <div id="und-models" class="segmented-row"></div>
+          <div id="und-cards" class="cards" style="margin-top: 12px"></div>
+          <div class="grid2" style="margin-top: 12px">
+            <div><h3>Parameters</h3><div id="und-params"></div></div>
+            <div><h3>Calibration report</h3><div id="und-report" class="scroll"></div></div>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Fit to the market</h2>
+          <div class="grid2">
+            <div>
+              <div class="selector" style="margin: 0 0 6px 0">
+                <label for="und-expiry">Smile</label><select id="und-expiry"></select>
+              </div>
+              <div id="chart-smile" class="chart"></div>
+            </div>
+            <div id="chart-atm" class="chart"></div>
+          </div>
+          <h3 style="margin-top: 14px">Model - market (vol points) on the surface nodes</h3>
+          <div id="und-errors" class="hscroll"></div>
+        </div>
+        <div class="panel">
+          <h2>Test model <button id="test-run" class="secondary compact">Run test</button>
+            <span id="test-status" class="muted"></span></h2>
+          <p class="muted">European products priced with each model on the same Monte Carlo paths (20,000), against
+            Black (surface vol at the strike; digitals by a call spread on the smile) and the local vol. Prices in % of
+            the spot (vanillas, down-and-in puts observed at expiry) or of the cash amount (digitals). A model that
+            reprices the vanillas exactly gives the local vol prices: the differences show the fit, the gap to Black
+            the smile.</p>
+          <div id="test-table" class="hscroll"></div>
+          <h3 style="margin-top: 14px">Vanillas: implied vols (%)</h3>
+          <div id="test-vols" class="hscroll"></div>
+        </div>
+      </div>
+      </div>
+    </main>
+  </div>
+  <script src="/static/calibration.js"></script>
+</body>
+</html>

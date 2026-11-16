@@ -139,7 +139,7 @@ function renderForm(keep = {}) {
 }
 
 function showModelFields() {
-  document.querySelectorAll(".mc").forEach((e) => e.classList.toggle("hidden", $("model").value !== "Local vol"));
+  document.querySelectorAll(".mc").forEach((e) => e.classList.toggle("hidden", $("model").value === "Black-Scholes"));
 }
 
 function selectProduct(product) {
@@ -319,7 +319,7 @@ async function post(url, body) {
 
 async function price() {
   $("price").disabled = true;
-  $("status").textContent = $("model").value === "Local vol" ? "Pricing… (first use calibrates the local vol)" : "Pricing…";
+  $("status").textContent = "Pricing…";
   try {
     const body = { ...dealRequest(), model: $("model").value, n_paths: Number($("n_paths").value), overrides: overrides(),
       phase: "price" };

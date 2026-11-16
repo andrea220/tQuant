@@ -417,4 +417,25 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       implied repo plot, repo 1Y, correlation matrix of picked underlyings); Tradepad: price first, greeks next (one
       computation, the tape kept for ``/api/price/greeks``); autocallable defaults (strike date +10 days, 3 years, 2%
       coupon 80% semiannual, put 80 / 100 / 100%, autocall 100% semiannual from 1Y).
+- [x] Calibration sets (`calibration/models.py`, `python -m tqstudio.calibrate`, `marketdata/calibrations/<source>/`,
+      git-ignored): the equity models of a snapshot calibrated apart from the market data (Heston and displaced
+      diffusion on every underlying, Heston SLV on request), stored with `to_frames`, fit per node, quality on the
+      meaningful region (maturities from 1 month, strikes within 2 standard deviations: good <= 1 vol pt rms, fair <=
+      2.5, else poor), drift of stored parameters on a newer market (to recalibrate above 1 vol pt). First real set
+      (2026-11-13 16:19, 6 underlyings, 292 s): Heston 0.7-1.3 vol pts rms, displaced diffusion 0.8-2.5 (ENI: skew
+      averaging fails, reported). Model test: vanillas, down-and-in puts observed at expiry, cash digitals on shared
+      paths (20k, about 1 s a model) against Black and local vol (SX5E 1Y down-and-in 60%: Black 0.07, local vol 1.80,
+      Heston 1.45, displaced diffusion 0.45 % of spot). tqstudio Calibration tab (list, set grid, underlying: parameters,
+      report, drift, errors map, smiles with quotes, ATM term structure, model test; new sets in a separate process),
+      link from Market data, Heston / displaced diffusion / Heston SLV in the Tradepad from the latest set.
+- [x] Calibration universe: `marketdata/config/calibration.yaml` (flags per underlying and model, by asset class, defaults
+      per class: equity Heston and displaced diffusion on, SLV off; rates Hull-White / G2++ listed, off, not in the sets
+      yet), edited by the Calibration tab > Universe (one click saves); `python -m tqstudio.calibrate` and New
+      calibration set calibrate the flagged models (`calibrate_snapshot_models(plan=...)`; unsupported flags reported as
+      skipped).
+- [x] Heston SLV, when to recalibrate (Calibration > Universe): per underlying its latest SLV calibration against the
+      latest snapshot: age, spot move, surface change (rms at 3M-3Y, 80-120% of the spot, sticky moneyness), ATM 1Y vol,
+      drift of the Heston part (closed form) and, on request, the Monte Carlo fit of the stored SLV on the latest market;
+      recalibrate above 7 days, 5% spot, 1 vol pt surface change or 1 vol pt rms fit. SX5E (16:19 calibration) on the
+      16:09 snapshot: spot +0.11%, surface 0.05 vol pt, fit 0.34 vol pt: OK.
 
