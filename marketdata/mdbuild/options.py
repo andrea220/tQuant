@@ -23,7 +23,8 @@
   most frequent one of the two-sided quotes; bid / ask older than ``stale_days`` before it are dropped (the option
   stays on its last price, as a settlement, if it has one); if it is not
   today (market not open yet) the reference spot is the close of that day from the history, so that spot and
-  options are of the same session.
+  options are of the same session. The time of the last bid update is kept too (``last_update_time``, terminal time
+  zone; empty when the update is of an earlier session), to see how old the quotes of the session are.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ import pandas as pd
 # equity options "ENI IM 12/17/27 P20 Equity", index options "SPX US 12/18/26 C5000 Index", "SX5E 12/18/26 C5000 Index"
 CHAIN = re.compile(r"^(\S+)(?: (\S+))? (\d\d/\d\d/\d\d) ([CP])([\d.]+) (?:Equity|Index)$")
 QUOTE_COLUMNS = ["ticker", "ccy", "expiry", "strike", "option_type", "exercise", "bid", "ask", "last", "last_update",
-                 "quote_date", "ref_spot", "spot_source", "bloomberg"]
+                 "last_update_time", "quote_date", "ref_spot", "spot_source", "bloomberg"]
 
 
 def parse_chain(tickers) -> pd.DataFrame:
@@ -198,6 +199,17 @@ def quote_day(value, today: date):
     return None if pd.isna(stamp) else stamp.date()
 
 
+def quote_time(value) -> str:
+    """Time of a ``LAST_UPDATE_BID_RT`` value when it is one (``"16:29:32"``: updated today, terminal time zone);
+    ``""`` for a date (an earlier session) or a missing value."""
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return ""
+    text = str(value).strip()
+    if ":" in text and "-" not in text and "/" not in text:
+        return text[:8]
+    return ""
+
+
 def option_quotes(source, selection: pd.DataFrame, code: str, ccy: str, underlying: str, spot: float, today: date,
                   history: Optional[pd.DataFrame], stale_days: int) -> pd.DataFrame:
     """Quotes of the selected options (four fields) with the session check (``quote_date``, ``ref_spot``). The
@@ -213,6 +225,7 @@ def option_quotes(source, selection: pd.DataFrame, code: str, ccy: str, underlyi
     for f in fields[:3]:
         q[f] = pd.to_numeric(q[f], errors="coerce")
     q["last_update"] = [quote_day(v, today) for v in q["LAST_UPDATE_BID_RT"]]
+    q["last_update_time"] = [quote_time(v) for v in q["LAST_UPDATE_BID_RT"]]
     two_sided = q["PX_BID"].notna() & q["PX_ASK"].notna()
     dates = q.loc[two_sided, "last_update"].dropna()
     dates = dates if len(dates) else q["last_update"].dropna()
@@ -238,6 +251,7 @@ def option_quotes(source, selection: pd.DataFrame, code: str, ccy: str, underlyi
         "ticker": code, "ccy": ccy, "expiry": [e.isoformat() for e in q["expiry"]], "strike": q["strike"],
         "option_type": q["option_type"], "exercise": q["exercise"], "bid": q["PX_BID"], "ask": q["PX_ASK"],
         "last": q["PX_LAST"], "last_update": [d.isoformat() for d in q["last_update"]],
+        "last_update_time": q["last_update_time"],
         "quote_date": quote_date.isoformat(), "ref_spot": ref_spot, "spot_source": spot_source,
         "bloomberg": q.index})
     return out[QUOTE_COLUMNS].reset_index(drop=True)

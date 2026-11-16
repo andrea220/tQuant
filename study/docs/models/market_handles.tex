@@ -147,6 +147,14 @@ one pillar per expiry from 30 days (on shorter ones a small forward error is a l
 delayed takes the spot implied by its nearest expiry, $S_0 = F\,P(0,T) + \mathrm{PV}_{\mathrm{div}}(T)$, which has zero
 repo by construction.
 
+\paragraph{Index dividends beyond the projections.} The forecasts of an index cover about three years; without
+dividends beyond them the repo would absorb them (rising by about the dividend yield) and, past the last listed expiry,
+the forward would grow as if none were paid. They are extrapolated to ten years at a constant yield: the last projected
+year is repeated with its weekly pattern, each dividend keeping the yield of the one it repeats on the forward just
+before its ex-date, $D(t + n) = D(t)\,F(t + n)/F(t)$, with $F$ on all the dividends before (the extrapolated ones
+included) and the repo held at its level at the last listed expiry within the projections. The repo is then implied
+from the options on the extended dividends as above.
+
 \paragraph{The smile model: a mixture of lognormals with a default mass.} The distribution of $S_T$ at the expiry is
 \citep{brigo2002}
 \[

@@ -59,6 +59,7 @@ from scipy.interpolate import PchipInterpolator
 from scipy.optimize import brentq, least_squares
 from scipy.special import ndtr
 
+from ..markethandles.dividendcurve import DividendCurve
 from ..markethandles.equity import Equity
 from ..markethandles.ircurve import RateCurve
 from ..markethandles.utils import Currency, OptionType
@@ -443,6 +444,7 @@ class LognormalMixture:
 
 GRID_TENORS = (1 / 12, 2 / 12, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0)
 GRID_MONEYNESS = (0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.975, 1.0, 1.025, 1.05, 1.1, 1.15, 1.2, 1.3, 1.4, 1.5)
+DIVIDEND_YEARS = 10.0        # equity indices: dividends extrapolated at a constant yield to this horizon
 
 
 def listed_tenors(times, max_years: float = 6.0) -> list:
@@ -673,6 +675,109 @@ def implied_spot(equity: Equity, quotes: pd.DataFrame, min_days: int = 3,
     raise ValueError(f"No expiry from {min_days} days with two-sided quotes to imply the spot of {equity.ticker}")
 
 
+def _add_years(d: date, n: int) -> date:
+    try:
+        return d.replace(year=d.year + n)
+    except ValueError:                                     # 29 February
+        return d.replace(year=d.year + n, day=28)
+
+
+def extrapolate_dividends(equity: Equity, years: float = 10.0, repo: float = 0.0) -> pd.DataFrame:
+    """Dividends beyond the last projected one, at a constant yield, to *years* (equity indices: the projections cover
+    about 3 years, beyond them the repo implied by the options would absorb the missing dividends and the forward
+    past the last listed expiry would grow as if none were paid).
+
+    The last projected year (the 365 days to the last projected ex-date) is repeated year after year with its weekly
+    pattern; each dividend keeps the yield of the one it repeats on the forward just before its ex-date,
+    ``D(d + n years) = D(d) F(d + n years) / F(d)``, with ``F(t) = (S - PV_div(t)) e^{-repo t} / P(0, t)`` on all the
+    dividends before ``t`` (the extrapolated ones included, in date order) and the repo held at *repo*: the dividends
+    grow with the forward. Payment date = ex-date.
+
+    Args:
+        equity (Equity): Underlying with its projected dividends (spot, discount curve).
+        years (float): Horizon from the reference date.
+        repo (float): Repo zero rate held over the extrapolation (the level of the projected years).
+
+    Returns:
+        pd.DataFrame: ``ex_date, pay_date, amount`` of the extrapolated dividends (empty without projections or when
+        they already reach the horizon); ``attrs``: ``last_projected``, ``yield`` (of the first extrapolated year on
+        the forward at its middle), ``repo``.
+    """
+    columns = ["ex_date", "pay_date", "amount"]
+    curve = equity.dividends
+    reference = equity.discount_curve.reference_date
+    if curve is None or not len(curve):
+        return pd.DataFrame(columns=columns)
+    pays = curve.payment_dates or curve.ex_dates
+    divs = [(e, p, float(a)) for e, p, a in zip(curve.ex_dates, pays, curve.amounts) if e > reference]
+    if not divs:
+        return pd.DataFrame(columns=columns)
+    last = max(e for e, _, _ in divs)
+    horizon = _add_years(reference, int(years)) + timedelta(days=int(round((years - int(years)) * 365)))
+    if last >= horizon:
+        return pd.DataFrame(columns=columns)
+    spot = float(equity.spot)
+    disc = equity.discount_curve
+    base = sorted((d for d in divs if d[0] > last - timedelta(days=365)), key=lambda d: d[0])
+    targets = []                                           # the extrapolated ex-dates, increasing
+    n = 1
+    while _add_years(base[0][0], n) <= horizon:
+        targets += [(_add_years(e, n), a, e) for e, _, a in base if _add_years(e, n) <= horizon]
+        n += 1
+    dates = sorted({p for _, p, _ in divs} | {e for e, _, _ in base} | {t for t, _, _ in targets}
+                   | {last + timedelta(days=182)})
+    dfs = dict(zip(dates, np.ravel(disc.discounts(dates).numpy()) if hasattr(disc, "discounts")
+                   else [float(disc.discount(d)) for d in dates]))   # one evaluation of the curve
+
+    def forward(t: date, pv_before: float) -> float:       # just before the ex-date t
+        return (spot - pv_before) * np.exp(-repo * (t - reference).days / 365.0) / dfs[t]
+
+    def pv_projected(t: date) -> float:
+        return sum(a * dfs[p] for e, p, a in divs if e < t)
+
+    base_forward = {e: forward(e, pv_projected(e)) for e, _, _ in base}
+    pv_all, out = pv_projected(last + timedelta(days=1)), []       # every projection is before the targets
+    for new, a, e in targets:
+        amount = a * forward(new, pv_all) / base_forward[e]
+        out.append({"ex_date": new, "pay_date": new, "amount": amount})
+        pv_all += amount * dfs[new]
+    frame = pd.DataFrame(out, columns=columns)
+    frame.attrs.update(last_projected=last, repo=repo)
+    if len(frame):
+        middle = last + timedelta(days=182)
+        first = frame[frame["ex_date"] <= _add_years(last, 1)]
+        before = pv_projected(middle) + float(sum(r["amount"] * dfs[r["ex_date"]] for r in out if r["ex_date"] < middle))
+        frame.attrs["yield"] = float(first["amount"].sum() / forward(middle, before))
+    return frame
+
+
+def _projected_repo(equity: Equity, quotes: pd.DataFrame, last: date, min_days: int = 30) -> float:
+    """Repo implied by the options at the last listed expiry within the projected dividends (from *min_days*), with
+    the quotes of :func:`build_equity_vol` (two-sided, else the settlement prices); 0 if none."""
+    q = _prepare_quotes(quotes)
+    reference = equity.discount_curve.reference_date
+    expiries = sorted(e for e in set(q["expiry"]) if min_days <= (e - reference).days and e <= last)
+    for expiry in reversed(expiries):
+        grp = q[q["expiry"] == expiry]
+        market = grp[~grp["settlement"]]
+        try:
+            return float(implied_forward(equity, expiry, market if len(market) else grp)["repo"])
+        except ValueError:
+            continue
+    return 0.0
+
+
+def _equity_indices(folder: Path) -> set:
+    """Tickers of the equity indices of a snapshot (``Index`` tickers of ``snapshot_info.json`` with an equity
+    spot; the rate fixings have none)."""
+    info_path, spot_path = folder / "snapshot_info.json", folder / "eq_spot.csv"
+    if not info_path.is_file() or not spot_path.is_file():
+        return set()
+    universe = json.loads(info_path.read_text(encoding="utf-8")).get("universe", [])
+    codes = {"_".join(t.split()[:-1]) for t in universe if t.strip().endswith(" Index")}
+    return codes & set(pd.read_csv(spot_path)["ticker"].astype(str))
+
+
 def calibrate_snapshot_vols(folder) -> list:
     """Vol surfaces and repo curves of the equities of a snapshot folder (``<yyyymmdd>/<set>/`` with
     ``eq_option_quotes.csv``, curves already there): writes ``eq_vol.csv``, ``eq_repo.csv`` (read by
@@ -693,6 +798,13 @@ def calibrate_snapshot_vols(folder) -> list:
     folder = Path(folder)
     evaluation_date = _dt.datetime.strptime(folder.parent.name, "%Y%m%d").date()
     quotes = pd.read_csv(folder / "eq_option_quotes.csv")
+    indices = _equity_indices(folder)
+    div_table = pd.read_csv(folder / "eq_dividends.csv") if (folder / "eq_dividends.csv").is_file() else None
+    if div_table is not None:                               # the downloaded dividends (a rerun drops its extrapolation)
+        if "source" not in div_table:
+            div_table["source"] = "download"
+        div_table = div_table[div_table["source"] != "extrapolated"].reset_index(drop=True)
+    extrapolated = []
     previous = Settings.evaluation_date
     Settings.evaluation_date = evaluation_date
     vols, repos, reports, quote_rows, implied_spots = [], [], [], [], {}
@@ -703,13 +815,38 @@ def calibrate_snapshot_vols(folder) -> list:
                     "ref_spot": float(grp["ref_spot"].iloc[0]), "spot_source": grp["spot_source"].iloc[0]}
             try:
                 eq = mkt.get_equity(ticker, ccy=Currency[ccy])
+                dividends = eq.dividends
+                index = ticker in indices and div_table is not None
+                if index:                                   # the downloaded projections only
+                    own = div_table[(div_table["ticker"] == ticker) & (div_table["ccy"] == ccy)]
+                    dividends = (DividendCurve.from_dataframe(
+                        reference_date=evaluation_date, df=own.sort_values("ex_date"), ex_date_col="ex_date",
+                        amount_col="amount", declared_date_col=None, payment_date_col="pay_date",
+                        currency=Currency(ccy), daycounter_convention=DayCounterConvention.Actual365)
+                        if len(own) else None)
                 view = Equity(ticker, eq.currency, tf.Variable(info["ref_spot"], dtype=DTYPE), eq.discount_curve,
-                              None, eq.dividends, eq.div_yield, None)
+                              None, dividends, eq.div_yield, None)
                 if str(info["spot_source"]).startswith("implied"):      # delayed price: spot from the options
                     spot, anchor = implied_spot(view, grp)
                     info.update(ref_spot=spot, spot_source=f"implied from the options ({anchor.isoformat()})")
                     view.spot.assign(spot)
                     implied_spots[(ticker, ccy)] = spot
+                if index and dividends is not None and len(dividends):   # dividends to 10 years at a constant yield
+                    last = max(dividends.ex_dates)
+                    extra = extrapolate_dividends(view, DIVIDEND_YEARS, _projected_repo(view, grp, last))
+                    if len(extra):
+                        own_pays = dividends.payment_dates or dividends.ex_dates
+                        view = Equity(ticker, eq.currency, view.spot, eq.discount_curve, None, DividendCurve(
+                            evaluation_date, list(dividends.ex_dates) + list(extra["ex_date"]),
+                            [float(a) for a in dividends.amounts] + [float(a) for a in extra["amount"]],
+                            Currency(ccy), payment_dates=list(own_pays) + list(extra["pay_date"]),
+                            daycounter_convention=DayCounterConvention.Actual365), eq.div_yield, None)
+                        extrapolated += [{"ticker": ticker, "ccy": ccy, "ex_date": r["ex_date"].isoformat(),
+                                          "pay_date": r["pay_date"].isoformat(), "amount": float(r["amount"]),
+                                          "source": "extrapolated"} for r in extra.to_dict("records")]
+                        info.update(div_extrapolated_after=extra.attrs["last_projected"].isoformat(),
+                                    div_extrapolated_yield=extra.attrs.get("yield"),
+                                    div_extrapolated_repo=extra.attrs["repo"])
                 surface, repo, report = build_equity_vol(view, grp)
             except (ValueError, KeyError) as exc:
                 reports.append({**info, "error": str(exc)})
@@ -743,5 +880,10 @@ def calibrate_snapshot_vols(folder) -> list:
     pd.DataFrame(quote_rows, columns=["ticker", "ccy", "expiry", "strike", "option_type", "iv_bid", "iv_mid", "iv_ask",
                                       "settlement", "used", "model_vol"]).to_csv(folder / "eq_vol_quotes.csv",
                                                                                  index=False)
-    return ["eq_vol.csv", "eq_repo.csv", "eq_vol_calibration.csv", "eq_vol_quotes.csv"]
+    written = ["eq_vol.csv", "eq_repo.csv", "eq_vol_calibration.csv", "eq_vol_quotes.csv"]
+    if div_table is not None and (extrapolated or len(div_table) != len(pd.read_csv(folder / "eq_dividends.csv"))):
+        table = pd.concat([div_table, pd.DataFrame(extrapolated, columns=div_table.columns)], ignore_index=True)
+        table.sort_values(["ticker", "ccy", "ex_date"]).to_csv(folder / "eq_dividends.csv", index=False)
+        written.append("eq_dividends.csv")
+    return written
 

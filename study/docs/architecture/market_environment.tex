@@ -140,10 +140,11 @@ Dividends & declared: \code{DVD\_HIST\_ALL} (cash, future ex-date, with the paym
   amount; payment = ex-date), dropped within 30 days of a declared one &
   \code{BDVD\_PROJ\_DIV\_INDX\_PTS} with \code{PERIODICITY\_OVERRIDE = W} and \code{START\_DATE\_OVERRIDE} /
   \code{END\_DATE\_OVERRIDE} (about 3 years projected): index points per week, each a discrete dividend (payment =
-  week date) \\
+  week date); beyond them, to 10 years, extrapolated at a constant yield by \code{calibrate\_snapshot\_vols}
+  (\code{extrapolate\_dividends}; \code{source} = \code{extrapolated} in \code{eq\_dividends.csv}) \\
 Repo & not downloaded: implied by the listed options (put-call parity per expiry, \code{implied\_repo\_curve}) as a
-  curve (\code{eq\_repo.csv}); the borrow on top of the dividends above & same; beyond the projected dividends (about
-  3 years) it also carries the dividends \\
+  curve (\code{eq\_repo.csv}); the borrow on top of the dividends above & same, on the projected and extrapolated
+  dividends \\
 Options (vol surface) & \code{CHAIN\_EXPIRATION\_DATES}, then \code{CHAIN\_TICKERS} per selected expiry (strikes 40\%--200\%
   of the spot, unadjusted contracts, main exchange); American; main root and weekly roots (\code{ENI IM}, \code{2ENI},
   \code{4ENI}) & same requests; European; one root (\code{SX5E}) or main and weekly (\code{SPX}, \code{SPXW}) \\

@@ -77,7 +77,8 @@
           </div>
         </div>
         <div class="panel">
-          <h2>Implied volatility surface <button id="eq-vol-copy" class="secondary compact">Copy surface</button></h2>
+          <h2>Implied volatility surface <button id="eq-vol-copy" class="secondary compact">Copy surface</button>
+            <button id="eq-fit-open" class="secondary compact">Fit view</button></h2>
           <div id="eq-vol" class="hscroll"></div>
           <div class="grid2" style="margin-top: 14px">
             <div id="eq-chart-smiles" class="chart"></div>
@@ -94,6 +95,39 @@
             <div id="eq-smile-summary"></div>
           </div>
         </div>
+        <div class="modal hidden" id="eq-fit-panel">
+        <div class="modal-box panel" role="dialog" aria-modal="true" aria-labelledby="eq-fit-title">
+          <div class="modal-head">
+            <h2 id="eq-fit-title">Fit to the listed options <span id="eq-fit-status" class="muted"></span></h2>
+            <button id="eq-fit-close" class="modal-close" aria-label="Close">&times;</button>
+          </div>
+          <div id="eq-fit-cards" class="cards"></div>
+          <div class="fit-switches">
+            <div class="segmented" id="eq-fit-view">
+              <button data-view="market" class="active">Market</button>
+              <button data-view="time">Quote Time</button>
+              <button data-view="model">Black-Scholes</button>
+              <button data-view="diff">Difference (% of spot)</button>
+              <button data-view="dvol">Difference (vol pts)</button>
+            </div>
+            <div class="segmented" id="eq-fit-vol">
+              <button data-vol="surface" class="active">Surface Valuation</button>
+              <button data-vol="smile">Model Valuation</button>
+            </div>
+          </div>
+          <div id="eq-fit-matrix" class="hscroll"></div>
+          <p class="note">The out-of-the-money options used to build the surface (puts below the forward, calls above),
+            one per listed expiry and strike. Market: mid of bid / ask (hover for bid / ask; <i>s</i> = settlement price,
+            no two-sided quote). Quote Time: time of the last bid update (terminal time zone), or its date when it is
+            of an earlier session (orange). Black-Scholes: the option repriced on this snapshot (spot, dividends, repo, discount
+            curve; American for single stocks). Surface Valuation: with the vol of the stored surface (the implied
+            volatility surface table of the page), what the
+            pricers read (bilinear between the nodes, flat beyond 50-150% of the spot). Model Valuation: with the vol of
+            the lognormal-mixture smile fitted to the expiry, at the option's strike (the fit alone, no grid). Differences: Black-Scholes minus market; green inside bid / ask, red outside, grey for settlement
+            prices.</p>
+        </div>
+        </div>
+
         <div>
           <div class="panel">
             <h2>Correlations</h2>

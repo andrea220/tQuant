@@ -22,7 +22,7 @@ import tensorquant as tq
 
 from .views.calibration import (CalibrationRuns, save_flags, set_folder, set_view, sets_view, slv_check, slv_monitor,
                                 test_view, underlying_view, universe_view)
-from .views.market import catalog, equity_tickers, fx_view, market_view, rates_view, snapshots
+from .views.market import catalog, equity_tickers, fit_view, fx_view, market_view, rates_view, snapshots
 from .views.tradepad import ModelCache, describe_trade, market_inputs, price_trade
 from .views.tradepad import catalog as tradepad_catalog
 from .views.universe import DownloadRuns, add_ticker, remove_ticker
@@ -157,6 +157,16 @@ def market_equity(ticker: str, date: Optional[str] = None, set: Optional[str] = 
         return market_view(mkt, ticker, folder)
 
     return _view("equity", ticker, date, set, build)
+
+
+@app.get("/api/market/equity/{ticker}/fit")
+def market_equity_fit(ticker: str, date: Optional[str] = None, set: Optional[str] = None) -> dict:
+    """The listed options of the vol surface repriced by Black-Scholes (surface vol and smile vol) vs the market."""
+    def build(mkt):
+        folder = MARKET_DATA / mkt.evaluation_date.strftime("%Y%m%d") / str(mkt.calibration_set)
+        return fit_view(mkt, ticker, folder)
+
+    return _view("fit", ticker, date, set, build)
 
 
 @app.get("/api/market/rates/{ccy}/{curve}")

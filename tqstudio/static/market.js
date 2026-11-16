@@ -87,8 +87,90 @@ function volTable(id, expiries, colLabels, matrix, scale, d = 2) {
   $(id).innerHTML = table(cols, expiries.map((e, i) => ({ expiry: e, row: matrix[i] })));
 }
 
+// ---------- equity: fit to the listed options ----------
+async function openFit() {
+  $("eq-fit-panel").classList.remove("hidden");
+  document.body.classList.add("modal-open");               // no page scroll behind the popup
+  $("eq-fit-title").firstChild.textContent = `${state.item}: fit to the listed options `;
+  $("eq-fit-status").textContent = "Repricing the listed options…";
+  $("eq-fit-matrix").innerHTML = "";
+  $("eq-fit-cards").innerHTML = "";
+  try {
+    const res = await fetch(`/api/market/equity/${encodeURIComponent(state.item)}/fit?${query()}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    state.fit = data;
+    $("eq-fit-status").textContent = `${data.count} options`;
+    renderFit();
+  } catch (e) {
+    $("eq-fit-status").innerHTML = `<span class="error">${e.message}</span>`;
+  }
+}
+
+function renderFit() {
+  const d = state.fit;
+  if (!d) return;
+  const view = state.fitView || "market";
+  const vol = state.fitVol || "surface";
+  document.querySelectorAll("#eq-fit-view button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+  document.querySelectorAll("#eq-fit-vol button").forEach((b) => b.classList.toggle("active", b.dataset.vol === vol));
+  $("eq-fit-vol").classList.toggle("dim", view === "market" || view === "time");
+  const s = d.summary[vol];
+  const share = (x) => (x === null ? "–" : `${pct(x, 0)}%`);
+  $("eq-fit-cards").innerHTML = cards([
+    ["Within bid / ask", `${share(s.within_bid_ask)} <span class="muted">of ${s.two_sided}</span>`],
+    ["RMS (% of spot)", fmt(s.rms_pct_spot, 3)], ["Max (% of spot)", fmt(s.max_pct_spot, 3)],
+    ["RMS (vol pts)", fmt(s.rms_volpts, 2)], ["Max (vol pts)", fmt(s.max_volpts, 2)],
+    [vol === "surface" ? "Model Valuation: within" : "Surface Valuation: within",
+      share(d.summary[vol === "surface" ? "smile" : "surface"].within_bid_ask)],
+  ]);
+  const expiries = [...new Set(d.quotes.map((q) => q.expiry))].sort();
+  const strikes = [...new Set(d.quotes.map((q) => q.strike))].sort((a, b) => a - b);
+  const day = new Date(`${state.date}T00:00:00`);
+  const T = expiries.map((e) => (new Date(`${e}T00:00:00`) - day) / (365 * 86400000));
+  const labels = expiryLabels(expiries, T.map((t) => (Math.abs(t - Math.round(t)) < 1e-9 ? t + 1e-6 : t)));
+  const at = {};
+  d.quotes.forEach((q) => { at[`${q.expiry}|${q.strike}`] = q; });
+  const dp = d.spot < 50 ? 3 : 2;
+  const cell = (q) => {
+    if (!q) return "<td></td>";
+    const price = q[`${vol}_price`];
+    const inside = q.bid - 1e-12 <= price && price <= q.ask + 1e-12;
+    const cls = q.settlement ? "settle" : inside ? "inside" : "outside";
+    const tip = `${q.option_type} ${q.strike} ${q.expiry} · bid ${fmt(q.bid, dp)} ask ${fmt(q.ask, dp)} · `
+      + `market vol ${fmt(100 * q.vol_mid, 2)}% · ${vol === "surface" ? "surface" : "model"} vol `
+      + `${fmt(100 * q[`${vol}_vol`], 2)}% · BS ${fmt(price, dp)}`;
+    let text;
+    if (view === "time") {
+      const day = q.last_update ? `${Number(q.last_update.slice(8, 10))}-${MONTHS[Number(q.last_update.slice(5, 7)) - 1]}` : "";
+      text = q.last_update_time && !q.previous_session ? q.last_update_time.slice(0, 5) : day;
+      const tcls = q.settlement ? "settle" : q.previous_session ? "stale" : "";
+      return `<td${tcls ? ` class="${tcls}"` : ""} title="${tip} · last bid update ${q.last_update || ""} `
+        + `${q.last_update_time || ""}">${text}</td>`;
+    }
+    if (view === "market") text = fmt(q.mid, dp) + (q.settlement ? " <i>s</i>" : "");
+    else if (view === "model") text = fmt(price, dp);
+    else if (view === "diff") text = fmt((100 * (price - q.mid)) / d.spot, 3);
+    else text = q.vol_mid === null ? "" : fmt(100 * (q[`${vol}_vol`] - q.vol_mid), 2);
+    const color = view === "diff" || view === "dvol" ? ` class="${cls}"` : q.settlement ? ' class="settle-text"' : "";
+    return `<td${color} title="${tip}">${text}</td>`;
+  };
+  const head = "<tr><th>Expiry</th>" + strikes.map((k) => `<th>${fmt(k, k < 100 ? 2 : 0)}`
+    + `<br><span class="muted">${fmt((100 * k) / d.spot, 1)}%</span></th>`).join("") + "</tr>";
+  const body = expiries.map((e, i) => `<tr><td>${labels[i]} <span class="muted">${e}</span></td>`
+    + strikes.map((k) => cell(at[`${e}|${k}`])).join("") + "</tr>").join("");
+  const timeNote = view !== "time" ? ""
+    : `<p class="muted" style="margin: 0 0 8px">Quote date ${d.quote_date || ""}; ${d.previous_session} quotes of an `
+      + "earlier session (orange). " + (d.has_times ? "Times in the terminal time zone."
+        : "This snapshot has no update times (kept from the next download on): dates only.") + "</p>";
+  $("eq-fit-matrix").innerHTML = `${timeNote}<table class="fit-matrix"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+}
+
 // ---------- equity ----------
 function renderEquity(d) {
+  $("eq-fit-panel").classList.add("hidden");               // the fit view belongs to the previous underlying
+  document.body.classList.remove("modal-open");
+  state.fit = null;
   const s = d.summary;
   const items = [["Spot", fmt(s.spot, 2)], ["Currency", s.currency], ["Repo 1Y", pct(s.repo, 3) + "%"],
     ["Dividends", s.dividend_model]];
@@ -594,6 +676,15 @@ async function init() {
   $("ir-swaption-tenor").addEventListener("change", swaptionSmile);
   $("eq-smile-expiry").addEventListener("change", marketSmile);
   $("eq-vol-copy").addEventListener("click", copySurface);
+  $("eq-fit-open").addEventListener("click", openFit);
+  const closeFit = () => { $("eq-fit-panel").classList.add("hidden"); document.body.classList.remove("modal-open"); };
+  $("eq-fit-close").addEventListener("click", closeFit);
+  $("eq-fit-panel").addEventListener("click", (e) => { if (e.target === $("eq-fit-panel")) closeFit(); });   // backdrop
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeFit(); });
+  document.querySelectorAll("#eq-fit-view button").forEach((b) => b.addEventListener("click", () => {
+    state.fitView = b.dataset.view; renderFit(); }));
+  document.querySelectorAll("#eq-fit-vol button").forEach((b) => b.addEventListener("click", () => {
+    state.fitVol = b.dataset.vol; renderFit(); }));
   $("universe-toggle").addEventListener("click", () => openUniverse(!state.universe));
   $("uv-add").addEventListener("click", () => showAddForm($("uv-add-form").classList.contains("hidden")));
   $("uv-add-ok").addEventListener("click", addTicker);

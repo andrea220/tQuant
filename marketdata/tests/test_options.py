@@ -195,6 +195,14 @@ class TestQuoteDay(unittest.TestCase):
         self.assertIsNone(quote_day(None, TODAY))
         self.assertIsNone(quote_day(float("nan"), TODAY))
 
+    def test_time_of_today_only(self):
+        from mdbuild.options import quote_time
+        self.assertEqual(quote_time("16:29:32"), "16:29:32")
+        self.assertEqual(quote_time("2026-11-11"), "")              # an earlier session: a date, no time
+        self.assertEqual(quote_time("11/11/2026"), "")
+        self.assertEqual(quote_time(None), "")
+        self.assertEqual(quote_time(float("nan")), "")
+
 
 class TestQuotes(unittest.TestCase):
     def selection(self):
@@ -214,6 +222,8 @@ class TestQuotes(unittest.TestCase):
         self.assertAlmostEqual(float(stale["last"].iloc[0]), 0.52 + 0.12)
         fresh = out[out["strike"] != 12.0]
         self.assertTrue(fresh["bid"].notna().all() and fresh["ask"].notna().all())
+        self.assertEqual(set(fresh["last_update_time"]), {"16:29:32"})          # the time of today's updates
+        self.assertEqual(set(stale["last_update_time"]), {""})                  # an older session: no time
         self.assertEqual(set(out["quote_date"]), {TODAY.isoformat()})
         self.assertEqual(set(out["ref_spot"]), {25.6})                         # live spot, not the snapshot's
         self.assertEqual(set(out["spot_source"]), {"with the quotes"})

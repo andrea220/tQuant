@@ -157,6 +157,32 @@ button.link:hover { background: none; text-decoration: underline; }
 .fit-grid th.group-start, .fit-grid td.group-start { border-left: 1px solid var(--line); text-align: center; }
 .fit-grid th.group-title { color: var(--text); font-size: 12.5px; text-align: center; }
 .fit-grid th[rowspan] { vertical-align: bottom; }
+/* popup window */
+.modal { position: fixed; inset: 0; z-index: 100; background: rgba(16, 24, 40, 0.45); display: flex;
+         align-items: center; justify-content: center; padding: 24px; }
+.modal-box { width: min(1400px, 96vw); max-height: 92vh; overflow: auto; margin: 0;
+             box-shadow: 0 12px 40px rgba(16, 24, 40, 0.28); }
+.modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; position: sticky;
+              top: -18px; background: var(--panel); padding-top: 4px; z-index: 3; }
+.modal-head h2 { margin-bottom: 12px; }
+button.modal-close { width: auto; margin: 0; padding: 2px 10px; background: none; color: var(--muted); font-size: 22px;
+                     line-height: 1; font-weight: 400; }
+button.modal-close:hover { background: var(--accent-soft); color: var(--text); }
+body.modal-open { overflow: hidden; }
+
+/* market data: fit to the listed options */
+.fit-switches { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
+.fit-switches .segmented { flex: 1 1 340px; margin-bottom: 10px; }
+.segmented.dim { opacity: 0.45; }
+.fit-matrix td.inside { background: rgba(18, 128, 92, 0.14); }
+.fit-matrix td.outside { background: rgba(194, 54, 47, 0.18); }
+.fit-matrix td.settle { background: #f0f2f6; color: var(--muted); }
+.fit-matrix td.stale { background: #fff1e4; color: #b4560e; }
+.fit-matrix td.settle-text { color: var(--muted); }
+.fit-matrix td:first-child { color: var(--muted); font-weight: 600; font-size: 12px; background: #f8f9fc;
+                             border-right: 1px solid var(--line); position: sticky; left: 0; }
+.fit-matrix th:first-child { position: sticky; left: 0; z-index: 2; }
+
 /* calibration: parameters of the selected model (compact, left aligned values) */
 .params table { width: auto; min-width: 420px; }
 .params td:nth-child(3) { text-align: left; }

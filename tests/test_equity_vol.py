@@ -14,7 +14,7 @@ import tensorquant as tq
 from markers import slow
 from tensorquant.calibration.equityvol import (GRID_MONEYNESS, GRID_TENORS, LognormalMixture, listed_tenors,
                                                black_implied_vol, build_equity_vol, calibrate_snapshot_vols, implied_spot,
-                                               implied_forward,
+                                               extrapolate_dividends, implied_forward,
                                                implied_repo_curve, implied_volatility)
 from tensorquant.markethandles.dividendcurve import DividendCurve
 from tensorquant.markethandles.ircurve import RateCurve
@@ -392,6 +392,78 @@ class TestSnapshotVols(unittest.TestCase):
             self.assertTrue(report["spot_source"].iloc[0].startswith("implied"))
             anchor = report[report["expiry"] == EXPIRIES[0].isoformat()].iloc[0]
             self.assertAlmostEqual(float(anchor["repo"]), 0.0, delta=1e-9)
+
+
+class TestDividendExtrapolation(unittest.TestCase):
+    """Index dividends beyond the projections at a constant yield (``extrapolate_dividends``)."""
+
+    def setUp(self):
+        tq.Settings.evaluation_date = EVAL_DATE
+        self.eq = make_market(0.0).get_equity("X")             # semiannual dividends to 2028-03-15
+
+    def forward(self, t, items, repo):
+        """Independent forward just before *t* on all the dividends (ex, pay, amount) before it."""
+        disc = self.eq.discount_curve
+        pv = sum(a * float(disc.discount(p)) for e, p, a in items if e < t)
+        return (S0 - pv) * np.exp(-repo * (t - EVAL_DATE).days / 365.0) / float(disc.discount(t))
+
+    def test_constant_yield_to_the_horizon(self):
+        repo = 0.004
+        extra = extrapolate_dividends(self.eq, 10.0, repo)
+        horizon = date(2036, 5, 15)
+        self.assertTrue(len(extra))
+        self.assertLessEqual(max(extra["ex_date"]), horizon)
+        self.assertEqual(min(extra["ex_date"]), date(2028, 9, 15))            # the last year repeated: Sep, Mar
+        self.assertEqual(sorted({(d.month, d.day) for d in extra["ex_date"]}), [(3, 15), (9, 15)])
+        self.assertTrue((extra["ex_date"] == extra["pay_date"]).all())
+        items = [(e, e, a) for e, a in zip(EX_DATES, AMOUNTS)] + list(
+            zip(extra["ex_date"], extra["pay_date"], extra["amount"]))
+        base = {(e.month, e.day): a / self.forward(e, items, repo) for e, a in zip(EX_DATES[2:], AMOUNTS[2:])}
+        for e, a in zip(extra["ex_date"], extra["amount"]):                 # same yield as the dividend it repeats
+            self.assertAlmostEqual(a / self.forward(e, items, repo), base[(e.month, e.day)], delta=1e-12)
+        self.assertGreater(extra["amount"].iloc[-1], extra["amount"].iloc[0])   # grows with the forward
+        self.assertGreater(extra.attrs["yield"], 0.02)
+        self.assertEqual(extra.attrs["last_projected"], EX_DATES[-1])
+
+    def test_nothing_to_extrapolate(self):
+        self.assertEqual(len(extrapolate_dividends(self.eq, 1.0)), 0)       # projections beyond the horizon
+        tq.Settings.evaluation_date = EVAL_DATE
+        no_div = MarketEnvironment(market={"IR:EUR:ESTR:SPOT": self.eq.discount_curve, "EQ:EUR:Y:SPOT": S0,
+                                           "EQ:EUR:Y:DIVYIELD": 0.02}).get_equity("Y")
+        self.assertEqual(len(extrapolate_dividends(no_div, 10.0)), 0)
+
+    def test_index_snapshot(self):
+        """An index of the snapshot (``Index`` ticker in ``snapshot_info.json``): dividends to 10 years written with
+        ``source`` = extrapolated, the forward of the listed expiries unchanged (the repo absorbs nothing more), and a
+        rerun gives the same file; a single stock is left as it is."""
+        frame = quotes("European")
+        frame = frame.assign(ticker="X", ccy="EUR", expiry=[e.isoformat() for e in frame["expiry"]],
+                             last=np.nan, quote_date=EVAL_DATE.isoformat(), ref_spot=S0, spot_source="snapshot")
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = make_market(0.0).to_folder(tmp, "1200")
+            frame.to_csv(folder / "eq_option_quotes.csv", index=False)
+            (folder / "snapshot_info.json").write_text(json.dumps({"universe": ["X Index", "ESTRON Index"]}))
+            written = calibrate_snapshot_vols(folder)
+            self.assertIn("eq_dividends.csv", written)
+            divs = pd.read_csv(folder / "eq_dividends.csv")
+            self.assertEqual(set(divs["source"]), {"download", "extrapolated"})
+            self.assertEqual(int((divs["source"] == "download").sum()), len(EX_DATES))
+            self.assertLessEqual(pd.to_datetime(divs["ex_date"]).max().date(), date(2036, 5, 15))
+            first = divs.copy()
+            report = pd.read_csv(folder / "eq_vol_calibration.csv")
+            self.assertTrue(report["div_extrapolated_yield"].notna().all())
+            mkt = MarketEnvironment.from_folder(tmp, EVAL_DATE, "1200")             # read back with the extrapolation
+            eq = mkt.get_equity("X")
+            self.assertEqual(len(eq.dividends), len(divs))
+            for row in report.itertuples():                                      # listed forwards repriced
+                self.assertAlmostEqual(float(eq.forward(date.fromisoformat(row.expiry))), row.forward,
+                                       delta=1e-6 * S0)
+            calibrate_snapshot_vols(folder)                                      # rerun: same dividends
+            pd.testing.assert_frame_equal(pd.read_csv(folder / "eq_dividends.csv"), first)
+        with tempfile.TemporaryDirectory() as tmp:                               # no snapshot_info: not an index
+            folder = make_market(0.0).to_folder(tmp, "1200")
+            frame.to_csv(folder / "eq_option_quotes.csv", index=False)
+            self.assertNotIn("eq_dividends.csv", calibrate_snapshot_vols(folder))
 
 
 if __name__ == "__main__":

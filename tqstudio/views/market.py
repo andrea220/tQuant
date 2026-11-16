@@ -184,6 +184,99 @@ def smile_quotes(folder: Path, ticker: str, spot: float, surface=None, target: f
     return {"expiries": out, "default": default}
 
 
+def fit_view(mkt: tq.MarketEnvironment, ticker: str, folder: Path) -> dict:
+    """The listed options used to build the vol surface of *ticker*, repriced by :class:`BlackScholesPricer` on the
+    snapshot market (spot, dividends, repo, discount curve, vol read from the stored surface: what a pricer sees),
+    and with the vol of the calibrated smile at the strike instead (same inputs: the fit alone, without the
+    interpolation between the surface nodes).
+
+    Args:
+        mkt (MarketEnvironment): The snapshot market (evaluation date set by the caller).
+        ticker (str): Equity ticker.
+        folder (Path): The snapshot folder (``eq_vol_quotes.csv``, ``eq_option_quotes.csv``).
+
+    Returns:
+        dict: ``spot``, ``quotes`` (one per used option: expiry, strike, type, exercise, settlement, bid / ask / mid
+        prices, Black vols bid / mid / ask, surface and smile vols and prices) and ``summary`` per model (share of the
+        two-sided quotes priced within bid / ask, rms and max difference in % of the spot and in vol points).
+
+    Raises:
+        FileNotFoundError: Without the option quote files (a snapshot built before the equity vols).
+    """
+    from tensorquant.pricers.black import BlackScholesPricer, bjerksund_stensland_calc, blackscholes_calc
+
+    vq_path, oq_path = Path(folder) / "eq_vol_quotes.csv", Path(folder) / "eq_option_quotes.csv"
+    if not vq_path.is_file() or not oq_path.is_file():
+        raise FileNotFoundError(f"no option quotes in the snapshot for {ticker}")
+    vq = pd.read_csv(vq_path)
+    vq = vq[(vq["ticker"] == ticker) & vq["used"].astype(bool)]
+    oq = pd.read_csv(oq_path, dtype={"last_update_time": str}, keep_default_na=True)
+    if "last_update_time" not in oq:                               # snapshots before the time was kept
+        oq["last_update_time"] = ""
+    oq = oq[oq["ticker"] == ticker][["expiry", "strike", "option_type", "exercise", "bid", "ask", "last",
+                                     "last_update", "last_update_time", "quote_date"]]
+    rows = vq.merge(oq, on=["expiry", "strike", "option_type"], how="left")
+    eq = mkt.get_equity(ticker)
+    spot = float(eq.spot)
+    ccy = eq.ccy if hasattr(eq, "ccy") else mkt.get_currency(ticker)
+    pricer = BlackScholesPricer()                                     # defaults: as the vols were implied
+    out = []
+    for r in rows.itertuples(index=False):
+        expiry = datetime.strptime(str(r.expiry), "%Y-%m-%d").date()
+        if expiry <= mkt.evaluation_date:
+            continue
+        option_type = tq.OptionType.Call if str(r.option_type).upper().startswith("C") else tq.OptionType.Put
+        american = str(getattr(r, "exercise", "")).lower().startswith("american")
+        option = tq.VanillaOption(ccy, mkt.evaluation_date, expiry, option_type, float(r.strike), underlying=ticker,
+                                  exercise_type=tq.ExerciseType.American if american else tq.ExerciseType.European)
+        s_net, k, rate, q, sigma, t = pricer._build_inputs(option, mkt)
+        calc = bjerksund_stensland_calc if american else blackscholes_calc
+
+        def price(vol):
+            return float(calc(s_net, k, rate, tf_constant(vol), t, q, option_type))
+
+        settlement = bool(r.settlement)
+        bid = float(r.last) if settlement else float(r.bid)
+        ask = float(r.last) if settlement else float(r.ask)
+        surface_vol, smile_vol = float(sigma), float(r.model_vol)
+        time = r.last_update_time if isinstance(r.last_update_time, str) else ""
+        out.append({"expiry": r.expiry, "strike": float(r.strike), "option_type": "C" if option_type == tq.OptionType.Call else "P",
+                    "exercise": "American" if american else "European", "settlement": settlement,
+                    "last_update": str(r.last_update) if isinstance(r.last_update, str) else None,
+                    "last_update_time": time or None,
+                    "previous_session": isinstance(r.last_update, str) and isinstance(r.quote_date, str)
+                    and r.last_update < r.quote_date,
+                    "bid": bid, "ask": ask, "mid": 0.5 * (bid + ask),
+                    "vol_bid": _num(r.iv_bid), "vol_mid": _num(r.iv_mid), "vol_ask": _num(r.iv_ask),
+                    "surface_vol": surface_vol, "surface_price": price(surface_vol),
+                    "smile_vol": smile_vol, "smile_price": price(smile_vol)})
+    summary = {}
+    for model in ("surface", "smile"):
+        two = [o for o in out if not o["settlement"]]
+        inside = [o["bid"] - 1e-12 <= o[f"{model}_price"] <= o["ask"] + 1e-12 for o in two]
+        diff = np.array([100.0 * (o[f"{model}_price"] - o["mid"]) / spot for o in out])
+        dvol = np.array([100.0 * (o[f"{model}_vol"] - o["vol_mid"]) for o in out if o["vol_mid"] is not None])
+        summary[model] = {"within_bid_ask": float(np.mean(inside)) if inside else None, "two_sided": len(two),
+                          "rms_pct_spot": float(np.sqrt(np.mean(diff ** 2))) if diff.size else None,
+                          "max_pct_spot": float(np.max(np.abs(diff))) if diff.size else None,
+                          "rms_volpts": float(np.sqrt(np.mean(dvol ** 2))) if dvol.size else None,
+                          "max_volpts": float(np.max(np.abs(dvol))) if dvol.size else None}
+    quote_date = rows["quote_date"].dropna().astype(str)
+    return {"ticker": ticker, "spot": spot, "quotes": out, "summary": summary, "count": len(out),
+            "quote_date": quote_date.iloc[0] if len(quote_date) else None,
+            "has_times": any(o["last_update_time"] for o in out),
+            "previous_session": sum(1 for o in out if o["previous_session"])}
+
+
+def tf_constant(x: float):
+    import tensorflow as tf
+    return tf.constant(float(x), dtype=tf.float64)
+
+
+def _num(x):
+    return None if x is None or (isinstance(x, float) and not np.isfinite(x)) else float(x)
+
+
 def market_view(mkt: tq.MarketEnvironment, ticker: str, folder: Path = None) -> dict:
     """Spot data, forwards and dividends, implied vol surface and correlations of *ticker*.
 
