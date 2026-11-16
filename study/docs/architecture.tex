@@ -5,7 +5,7 @@
 
 \input{preamble}
 
-\title{tQuant --- Architecture}
+\title{TqStudio Architecture}
 \author{Andrea Carapelli}
 \date{\today}
 
@@ -17,16 +17,14 @@
 \section*{Scope}
 How the library is built, one chapter per block of the package layout (Figure~\ref{fig:arch-layout}): the
 market data on disk, the Market Environment (keys, market objects, risk factors), the instruments, the pricers,
-the models and their calibration, the analytics, the foundations (dates, numerics) and the testing approach. The financial content of the models is in \emph{tQuant --- Models and Pricing}.
+the models and their calibration. The financial content of the models is in \emph{tQuant --- Models and Pricing}.
 
 \input{architecture/overview}
-\input{architecture/market_data}
 \input{architecture/market_environment}
 \input{architecture/instruments}
 \input{architecture/pricers}
 \input{architecture/models}
-\input{architecture/analytics}
-\input{architecture/foundations}
-\input{architecture/testing}
+\input{architecture/calibration}
+\input{architecture/murex}
 
 \end{document}

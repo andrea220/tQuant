@@ -1,4 +1,7 @@
 \section{Models}\label{sec:arch-models-chapter}
+The processes the Monte Carlo pricers simulate and the model instances that carry calibrated parameters. Dynamics,
+closed forms and simulation schemes are in \emph{Models and Pricing}; how the models are calibrated and stored is in
+Section~\ref{sec:arch-calibration-chapter}.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Stochastic processes}\label{sec:arch-models}
@@ -18,7 +21,7 @@ The caller draws the normals
 ones. \nb{monte\_carlo\_gbm.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
-\subsection{Models and processes}\label{sec:arch-equity-models}
+\subsection{Equity models and processes}\label{sec:arch-equity-models}
 Equity model instances (\code{EquityModel}) separate from the market, bound to an \code{Equity} into a process.
 
 An equity model (\code{models/equitymodel.py}) holds \emph{settings} (how it is built) and \emph{calibrated parameters}
@@ -83,18 +86,41 @@ simulate on a uniform grid ending at the expiry and leave \code{standard\_error}
 \code{time\_to\_maturity} on the product. \nb{heston\_slv.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
-\subsection{Calibration}\label{sec:arch-calibration}
-Calibration inside the factories (implicit-function greeks), the stored Jacobian, and the rates calibration module.
+\subsection{The equity models}\label{sec:arch-equity-model-list}
+All simulate $X_t = S_t/F(t)$ on the market forward of the \code{Equity} view (\code{equity.forward(t)}: spot, repo,
+dividends, curve) and return $S_t = F(t)\,X_t$, so every model reprices the forward at every date; with
+\code{martingale\_correction} (default) the simulated $X_t$ is rescaled to sample mean 1 at each time.
+\begin{itemize}[nosep]
+  \item \code{GeometricBrownianMotion}, \code{ArithmeticBrownianMotion} (\code{brownian.py}): processes only, no
+        \code{EquityModel}; \code{GeometricBrownianMotion.from\_equity(equity, maturity, strike)} is the Black--Scholes
+        model of one option (vol of the surface at $(K, T)$, spot net of the dividends to $T$), right for a single
+        expiry only. \code{observation\_columns} picks the observation times on a grid.
+  \item \code{LocalVolatilityModel} / \code{LocalVolatilityProcess} (\code{localvolatility.py}): Dupire--Gatheral local vol
+        (\code{gatheral\_local\_vol}) on the market nodes in forward log-moneyness, on a grid of \code{n\_y} points
+        (300) and time steps of \code{time\_step} (1/96) up to the product's maturity, wings capped
+        (\code{max\_wing\_slope}), $g$ floored (\code{g\_floor}, an arbitrage warning when the surface violates it); no
+        calibrated parameter: the vegas go straight to the vol nodes.
+  \item \code{DisplacedDiffusionModel} / \code{DisplacedDiffusionProcess} (\code{displaceddiffusion.py}): shifted
+        lognormal with piecewise constant forward $\beta, \sigma$ (\code{t\_nodes}, \code{beta\_fwd},
+        \code{sigma\_fwd}); closed form \code{displaced\_diffusion\_price}, slice parameters turned into forward pieces
+        by \code{forward\_from\_slices}; exact Monte Carlo steps.
+  \item \code{HestonModel} / \code{HestonProcess} (\code{heston.py}): parameters $v_0, \kappa, \theta, \xi, \rho$;
+        \code{heston\_characteristic\_function}, \code{heston\_price} (COS), \code{heston\_cumulants}; QE-M Monte Carlo,
+        \code{noise\_size() = 2}; \code{feller} on the process.
+  \item \code{HestonSLVModel} / \code{HestonSLVProcess} (\code{hestonslv.py}): a \code{HestonModel} (vol of vol scaled by
+        \code{mixing}), a \code{LocalVolatilityModel} and the leverage $\sigma_{\mathrm{LV}}/\sqrt{\E[v \mid X]}$ with
+        $\E[v \mid X]$ calibrated by \code{calibrate\_expectation} (particle method) and stored as the parameter
+        \code{expectation}; details below.
+\end{itemize}
 
-The least-squares calibrations (Heston, displaced diffusion) run in NumPy / SciPy and end with the implicit step
-(\code{\_implicit\_step}, helpers in \code{numericalhandles/implicit.py}): at the optimum the gradient $g$ of the
-objective, its Hessian $H$ and $\partial g/\partial m$ for the calibration inputs $m$ (relative strikes, target prices,
-weights) are computed once, eagerly, as numbers (\code{optimality\_derivatives}: one backward pass per parameter);
-\code{implicit\_solution} returns the parameters as a tensor of $m$ with a custom gradient
-$\mathrm{d}p/\mathrm{d}m = -H^{-1}\,\partial g/\partial m$ (parameters on a bound fixed). The caller's tape never
-differentiates through the second-order graph of $g$ (first order only). Inside \code{from\_equity} this makes the
-parameters differentiable functions of the market; \code{calibrate} takes one Jacobian per parameter to all the risk
-factors and stores it (\code{EquityModel.jacobian}), so that the par greeks of an instance equal the greeks through the
-calibration (\code{tests/test\_model\_instances.py}). Calibration of TICKER1: Heston about 3~s (2~s once the COS
-residuals are compiled), displaced diffusion about 2~s. The rates calibration
-(\code{calibration/}) is a separate module (least squares with an AAD Jacobian). \pending
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Rates models}\label{sec:arch-rates-models}
+\code{GaussianShortRateModel(curve, kappas, sigmas, correlation=None, sigma\_times=None)}
+(\code{gaussianshortrate.py}): $n$-factor Gaussian short rate (G1++ = Hull--White, G2++) on a discount curve, the
+shift $\varphi(t)$ fitting $P(0,\cdot)$ exactly; vols constant or piecewise constant on \code{sigma\_times}. It is a
+\code{StochasticProcess} (exact joint simulation of the factors and their integrals) with closed forms: bonds
+$P(t,T)$ on the paths, the path discount $D(0,t)$, caplets (\code{caplet}), swaptions (\code{swaption}: Gaussian
+swap-rate approximation or exact, Jamshidian / Brigo--Mercurio). The curve enters only through $P(0,\cdot)$, so
+prices are differentiable in its pillars. Not split into model and process yet (its parameters are given to the
+constructor); used by the rates calibration (Section~\ref{sec:arch-rates-calibration}) and the swap exposures
+(\code{SwapExposureGenerator}, \code{analytics/}).

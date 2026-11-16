@@ -1,18 +1,150 @@
 \section{Pricers}\label{sec:arch-pricers-chapter}
+A pricer turns an instrument and the \code{MarketEnvironment} into a float64 price, as one TensorFlow graph: the greeks
+are its gradients with respect to the market variables. One subsection for the common interface, then one per asset
+class.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Pricer interface and factory}\label{sec:arch-pricers}
 \code{Pricer}: \code{calculate\_price}, \code{price(..., autodiff)}, the tape; \code{PricerAssignment}.
 
-A pricer implements \code{calculate\_price(product, market\_env)}: a TensorFlow graph from the market objects (read only
-through the \code{MarketEnvironment} accessors, never copied or detached with \code{.numpy()}) to a float64 price.
-\code{Pricer.price(product, market\_env, autodiff=False)} runs it, stores the price on \code{product.price} and, with
-\code{autodiff=True}, keeps the \code{GradientTape} on \code{pricer.tape}: the greeks are
-\code{pricer.tape.gradient(product.price, variables)} for any market variables (or all of them,
-\code{market\_env.risk\_factors()}); a second tape around the call gives second orders (gamma). The only variable a
-pricer may create is the time to maturity, left on the product (\code{product.time\_to\_maturity}) for theta.
-\code{PricerAssignment.create(product)} picks the default pricer by \code{isinstance}: \code{VanillaOption}
-$\to$ \code{BlackScholesPricer}, the rates products to their discounting / Bachelier pricers; Monte Carlo pricers are
-chosen explicitly. \code{BlackScholesPricer(dividend\_model, use\_implied\_repo)}: European by the Black formula,
-American by Bjerksund--Stensland (\code{pricers/black.py}), inputs from the \code{Equity} view, diagnostics on the
-product (Market data, The Equity view). \nb{black\_scholes.ipynb}
+\paragraph{\code{Pricer} (\code{pricers/pricer.py}).} A pricer implements \code{calculate\_price(product,
+market\_env)}: a TensorFlow graph from the market objects to a float64 scalar. \code{price(product, market\_env,
+autodiff=False)} runs it inside \code{market\_env.pinned()} (the monotone convex coefficients of the curves computed
+once per call, inside the tape, so the gradients are unchanged), stores the price on \code{product.price} and, with
+\code{autodiff=True}, keeps the \code{GradientTape} on \code{pricer.tape}:
+\begin{itemize}[nosep]
+  \item greeks: \code{pricer.tape.gradient(product.price, variables)} for any market variables, or for all of them
+        with \code{market\_env.risk\_factors()} (bucketed rho per pillar, vega per node, delta, dividend
+        sensitivities in one call);
+  \item second orders (gamma): a second tape around the call;
+  \item model greeks: the gradient with respect to \code{model.parameters} when the pricer is given a model instance
+        (Section~\ref{sec:arch-equity-models}).
+\end{itemize}
+Rules: the market data are read only through the \code{MarketEnvironment} accessors (or the \code{Equity} view), never
+copied into new variables nor detached with \code{.numpy()} / \code{float()} (the gradient would stop there); the only
+variable a pricer may create is the time to maturity, left on the product (\code{product.time\_to\_maturity}) for
+theta. The pricers leave their intermediate values on the product for inspection (forward, vol, discount factor,
+annuity, standard error, \dots); they are diagnostics, not inputs.
+
+\paragraph{\code{PricerAssignment} (\code{pricers/factory.py}).} \code{PricerAssignment.create(product)} returns a new
+default pricer by \code{isinstance} (subclasses covered), \code{TypeError} for an unknown product:
+\begin{center}
+\small
+\begin{tabular}{@{}L{5.4cm}L{9.8cm}@{}}
+\toprule
+Product & Default pricer \\
+\midrule
+\code{Deposit}, \code{Fra}, \code{Swap}, \code{Ois} & \code{DepositPricer}, \code{FraPricer}, \code{SwapPricer},
+  \code{OisPricer} \\
+\code{CapFloor}, \code{Collar} & \code{CapFloorPricer} \\
+\code{Swaption} & \code{SwaptionPricer} \\
+\code{VanillaOption}, \code{DigitalOption}, \code{BarrierOption} & \code{BlackScholesPricer()} (default arguments) \\
+\code{AutocallableOption} & none: \code{AutocallableMCPricer} chosen explicitly \\
+\bottomrule
+\end{tabular}
+\end{center}
+The Monte Carlo pricers are always chosen explicitly, with their model and simulation settings.
+
+\paragraph{Adding a pricer.} Subclass \code{Pricer}, implement \code{calculate\_price} on the accessors, raise
+\code{TypeError} for a product it does not price and \code{ValueError} for missing market data; register it in
+\code{PricerAssignment} if it is the default for its product; test it against an independent check (closed form,
+parity, Monte Carlo within a few standard errors) and its AAD greeks against bumps.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Interest-rate pricers}\label{sec:arch-rates-pricers}
+Discounting pricers for the linear products and closed forms on the rate vols for the options.
+
+\paragraph{Curves.} Every rate pricer discounts on the default curve of the product's currency
+(\code{market\_env.get\_ir\_curve(product.ccy)}, the overnight one: ESTR, SOFR, SONIA) and projects an Ibor index on the
+curve named by the index (\code{EUR:6M} $\to$ \code{get\_ir\_curve(EUR, ticker="6M")}); an OIS uses the overnight
+curve for both. The curve names used are left on the product (\code{discount\_curve}, \code{estimation\_curve}). A
+missing curve raises \code{ValueError}.
+
+\paragraph{Linear products.}
+\begin{itemize}[nosep]
+  \item \code{DepositPricer} (\code{deposit.py}): $+N\,P(s)$ at the start (if not past) $-\,N(1 + r\tau)\,P(e)$ at the
+        end;
+  \item \code{FraPricer} (\code{fradiscounting.py}): settled at the start,
+        $\text{side}\cdot N\tau(F - K)\,P_{\text{disc}}(s)/(1 + F\tau)$, $F$ on the index curve; zero once started;
+  \item \code{SwapPricer}, \code{OisPricer} (\code{swapdiscounting.py}): the two legs priced by the leg discounting
+        classes, signed by \code{swap\_type} (payer: floating $-$ fixed); the leg PVs are left on
+        \code{fixed\_leg.price} and \code{floating\_leg.price};
+  \item leg discounting (\code{fixedflow.py}, \code{floatingflow.py}): \code{FixedCouponDiscounting} /
+        \code{FixedLegDiscounting} (amounts $\times$ discount factors, vectorised with \code{PrefetchedCurve}),
+        \code{FloatingCouponDiscounting} / \code{FloatingLegDiscounting} (Ibor forward on the estimation curve,
+        discounted on the discount curve), \code{OisCouponDiscounting} / \code{OisLegDiscounting} (compounded
+        overnight rate, single curve); a fixing already past is read from the index, a paid coupon is worth zero.
+\end{itemize}
+The curve bootstrap prices its instruments with these same pricers.
+
+\paragraph{\code{CapFloorPricer} (\code{capfloor.py}).} Caplet by caplet, $N\tau\,P_{\text{disc}}(\text{pay})\times
+\text{option}(F, K, \sigma, T_{\text{fix}})$: forward on the index curve, vol from the caplet surface
+\code{get\_ir\_vol\_surface(ccy, tenor)} at (fixing time, strike), \code{bachelier\_calc} for \code{vol\_type}
+\code{"normal"}, \code{black\_calc} for \code{"lognormal"}; a caplet already fixed pays its intrinsic value on the
+index fixing, a paid one is dropped. A \code{Collar} is cap $-$ floor (prices also on \code{collar.cap.price} and
+\code{collar.floor.price}); the caplet values on \code{product.caplet\_values}.
+
+\paragraph{\code{SwaptionPricer} (\code{swaption.py}).} $A\times\text{option}(F, K, \sigma, T)$, annuity $A$ and
+forward swap rate $F$ from \code{swap\_annuity\_and\_forward} (two curves, as \code{SwapPricer}), vol from the cube
+\code{get\_swaption\_vol\_cube(ccy, tenor)} at (expiry, \code{tenor\_years}, $K - F$), Bachelier or Black-76 by the
+cube's \code{vol\_type}. Diagnostics: \code{annuity}, \code{forward\_swap\_rate}, \code{volatility}.
+
+The rate Monte Carlo (\code{GaussianShortRateModel}) is not a \code{Pricer}: its closed forms (bonds, caplets,
+swaptions) serve the calibration and the exposures (Section~\ref{sec:arch-models-chapter},
+\code{SwapExposureGenerator} in \code{analytics/}).
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Equity pricers}\label{sec:arch-equity-pricers}
+Every equity pricer reads the underlying through \code{market\_env.get\_equity(product.underlying)}: spot, forward,
+dividends, repo, vol surface and discount curve from one place (Section~\ref{sec:arch-equity}).
+
+\paragraph{\code{BlackScholesPricer} (\code{black.py}).} Closed forms, as functions of float64 tensors:
+\code{blackscholes\_calc} (European), \code{bjerksund\_stensland\_calc} (American, 1993), \code{digital\_calc} (cash- /
+asset-or-nothing), \code{barrier\_calc} (Reiner--Rubinstein, knock-in at expiry exact, Broadie--Glasserman--Kou shift
+for discrete monitoring). \code{BlackScholesPricer(dividend\_model="continuous", use\_implied\_repo=True,
+digital\_spread=None)} builds the inputs from the \code{Equity} view (\code{\_build\_inputs}: spot, repo to the
+expiry, rate and discount factor of the currency curve, vol of the surface at $(K, T)$, dividends) and dispatches on
+the product: \code{BarrierOption} $\to$ \code{barrier\_calc}, \code{DigitalOption} $\to$ \code{digital\_calc} or, with
+\code{digital\_spread} $= h$, a centred spread of vanillas at $K(1 \pm h)$ each at its own vol (the smile slope
+included), \code{VanillaOption} $\to$ European or American. \nb{black\_scholes.ipynb}, \nb{digital\_options.ipynb}
+
+\paragraph{Dividends and carry}\label{sec:arch-bs-dividends} With a discrete dividend schedule on the underlying,
+\code{dividend\_model="discrete"} prices on \code{spot\_net} $= S - $ \code{pv\_dividends(T)} with carry = repo;
+\code{"continuous"} turns the schedule into $q_{\mathrm{eff}}$, computed with the spot under \code{stop\_gradient}, so
+the AAD delta is the sticky-yield one (a bump-and-reprice recomputes $q_{\mathrm{eff}}$ and gives the sticky-cash
+delta). Without a schedule the market \code{DIVYIELD} is used whatever \code{dividend\_model}.
+\code{use\_implied\_repo=False} drops the repo from the carry. The pricer leaves its inputs on the product:
+\code{spot}, \code{spot\_net}, \code{pv\_discrete\_dividends}, \code{repo\_margin}, \code{risk\_free\_rate},
+\code{discount\_factor}, \code{volatility}, \code{time\_to\_maturity} (a variable: theta), \code{forward}.
+\nb{dividends.ipynb}
+
+\paragraph{Monte Carlo pricers: model class or instance.} Both Monte Carlo pricers take a \code{model} argument:
+\begin{itemize}[nosep]
+  \item a \emph{class} with \code{from\_equity} (\code{GeometricBrownianMotion}, \code{LocalVolatilityModel},
+        \code{DisplacedDiffusionModel}, \code{HestonModel}, \code{HestonSLVModel}): the process is built and
+        calibrated from the market at every call, inside the tape, so the market greeks go through the calibration;
+  \item an \emph{instance} (\code{EquityModel}, e.g. loaded from a calibration set): bound with
+        \code{model.process(equity, maturity)}, parameters held; model greeks on \code{model.parameters}, par greeks
+        with \code{par\_greeks}.
+\end{itemize}
+The normals are drawn by the pricer with \code{tf.random.stateless\_normal} (\code{seed}),
+\code{model.noise\_size()} per path and step, and passed to \code{evolve} (Section~\ref{sec:arch-models}): the same
+seed gives the same paths, so bumps are common-random-number ones. The digital and barrier indicators are smoothed by
+a sigmoid (width as a fraction of the strike or barrier, 1\% by default, 0 = hard indicator), without which their
+pathwise AAD greeks would be zero.
+
+\paragraph{\code{VanillaMCPricer} (\code{vanillamc.py}).} European \code{VanillaOption}, \code{DigitalOption} and
+\code{BarrierOption} (American exercise refused). Arguments: \code{model} (default GBM), \code{n\_paths} (50\,000),
+\code{n\_steps} (252, uniform grid ending at the expiry), \code{seed}, \code{digital\_smoothing}. Barriers: continuous
+monitoring by the Brownian-bridge survival probability on each step (vol of the surface at $(H, T)$; no smoothing
+needed), discrete monitoring on the monitoring dates added to the grid. After pricing: \code{standard\_error},
+\code{discount\_factor}, \code{time\_to\_maturity}.
+
+\paragraph{\code{AutocallableMCPricer} (\code{montecarlo.py}).} \code{AutocallableOption}, investor's side:
+$N\,\E\big[\sum_i \text{coupon}_i\,P(0,\text{pay}_i) - \text{put}\,P(0,T)\big]$. Arguments: \code{model} (default
+\code{LocalVolatilityModel}), \code{n\_paths} (20\,000), \code{seed}, \code{max\_time\_step} (1/52: the grid is the
+union of the future fixing dates and a uniform grid of that step), \code{barrier\_smoothing} (1\%). Forward start: the
+strike date is simulated and the initial level is $S(t_0)$ on each path. After pricing: \code{product.coupon\_pv},
+\code{product.put\_pv} (per unit notional), \code{product.standard\_error}; \code{pricer.paths} at the fixings
+(\code{pricer.date\_grid}, \code{pricer.time\_grid}) for diagnostics. \nb{digital\_strip.ipynb},
+\nb{down\_and\_in\_put.ipynb}

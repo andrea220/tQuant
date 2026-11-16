@@ -7,7 +7,7 @@ const pct = (x, d = 2) => (x === null || x === undefined ? "" : (100 * x).toFixe
 const AXIS = { gridcolor: "#eef1f6", zerolinecolor: "#dde2ea", linecolor: "#dde2ea" };
 const LAYOUT = { margin: { l: 55, r: 15, t: 38, b: 45 }, font: { size: 12, family: "Segoe UI, system-ui, sans-serif",
   color: "#18202f" }, showlegend: false, paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
-  colorway: ["#3563e9", "#e8833a", "#12805c", "#a43fd1", "#c2362f"] };
+  colorway: ["#1f4fa8", "#e8833a", "#12805c", "#a43fd1", "#c2362f"] };
 const CLASSES = {
   equity: { label: "Underlying", noun: "underlyings" },
   rates: { label: "Curve", noun: "curves" },
@@ -231,7 +231,7 @@ function marketSmile() {
   const x = e.line.moneyness.map((m) => 100 * m);
   const traces = [
     { x, y: e.line.model.map((v) => (v === null ? null : 100 * v)), mode: "lines", name: "model (calibrated)",
-      line: { color: "#3563e9", width: 2 } },
+      line: { color: "#1f4fa8", width: 2 } },
   ];
   if (e.line.surface) traces.push({ x, y: e.line.surface.map((v) => 100 * v), mode: "lines", name: "stored surface",
     line: { color: "#888", dash: "dash", width: 1.5 } });
@@ -275,7 +275,7 @@ function renderRates(d) {
     { x: d.grid.T, y: d.grid.zero_rate.map((v) => 100 * v), mode: "lines", name: "zero rate" },
     { x: d.grid.T, y: d.grid.inst_forward.map((v) => 100 * v), mode: "lines", name: "inst. forward" },
     { x: d.pillars.map((p) => p.T), y: d.pillars.map((p) => 100 * p.zero_rate), mode: "markers", name: "pillars",
-      marker: { size: 5, color: "#3563e9" } }],
+      marker: { size: 5, color: "#1f4fa8" } }],
   "Zero and instantaneous forward", "T (years)", "%", { showlegend: true, legend: { orientation: "h", y: -0.2 } });
 
   const cv = d.caplet_vol;

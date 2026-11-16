@@ -1,84 +1,134 @@
-
 # TensorQuant
 
-![TensorQuant Logo](https://img.shields.io/badge/TensorQuant-v0.0.3-blue.svg)
-![Python](https://img.shields.io/badge/python-v3.10+-blue.svg)
-![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
+**TensorQuant (tQuant)** is a Python quant-finance library built on **TensorFlow**. Every price is a TensorFlow
+graph from the market data to a number, so the sensitivities come from automatic differentiation (AAD): one backward
+pass gives delta, vega per volatility node, rho per curve pillar and the dividend sensitivities, also through the
+model calibrations. **tqstudio** is the web application on top of it: market data, calibrations and pricing in the
+browser, with the engine running on one machine and the pages open to the colleagues on the same network.
 
-**TensorQuant** is a Python financial library that uses TensorFlow as its computational engine. Leveraging tensor arrays, TensorQuant supports pricing, intensive risk management computations, and algorithmic differentiation. You can explore examples and use cases in the [**playground repository**](https://github.com/andrea220/tqPlayground) with Jupyter notebooks. The [**ReadTheDocs**](https://tquant.readthedocs.io/en/latest/index.html) documentation is currently deprecated (out of date). 
-
-It is particularly valuable in academic settings, such as the [Finance Master courses at the University of Siena](https://finance.unisi.it/it), where students gain hands-on experience with financial libraries and object-oriented programming. At the same time, TensorQuant is designed to support fast prototyping, replication of academic and industry results, and professional-grade applications.
-
-TensorQuant aims to strike a balance between ease of understanding and professional architecture: it is easy to use and extend, while remaining reliable, fast, and robust for financial modeling and risk management.
+This page is an overview. The details are in the technical documents (see [Documentation](#documentation)).
 
 ---
 
-## 📑 Table of Contents
+## At a glance
 
-- [🌟 Features](#-features)
-- [🛠️ Installation](#%EF%B8%8F-installation)
-- [🚀 Usage](#-usage)
-- [📝 License](#-license)
-- [📧 Contact](#-contact)
-
----
-
-## 🌟 Features
-
-- **Tensor Array Operations**: Efficient handling and manipulation of tensor arrays for financial data.
-- **Derivative Pricing**: Pricing financial derivatives.
-- **Algorithmic Differentiation**: Automatic differentiation for optimization and sensitivity analysis.
-- **Stochastic Models**: Simulations and solver tools for financial modeling.
-- **Extensibility**: Easy to extend and customize for a wide range of financial applications.
+- **Market data**: real snapshots from Bloomberg (equities and indices, dividends, listed options, FX, rate curve
+  quotes) or synthetic ones; curves bootstrapped from the quotes, equity vol surfaces and repo curves built from the
+  listed options.
+- **Instruments**: deposits, FRAs, swaps, OIS, caps / floors / collars, swaptions; vanilla (European, American),
+  digital, barrier and autocallable equity options.
+- **Pricers**: discounting and closed forms (Black-Scholes, Bjerksund-Stensland, Reiner-Rubinstein, Bachelier,
+  Black-76) and Monte Carlo.
+- **Models**: local volatility, displaced diffusion, Heston, Heston stochastic local volatility; Hull-White and G2++
+  for rates.
+- **Calibration**: equity models calibrated on a snapshot and stored as calibration sets, with the Jacobian that maps
+  the model sensitivities to the market; Hull-White / G2++ to caplets and swaptions.
+- **Greeks**: AAD to every market risk factor, in float64.
 
 ---
 
-## 🛠️ Installation
+## Architecture
 
-To install `TensorQuant`, use pip:
-
-```bash
-pip install tensorquant
+```
+  Bloomberg / synthetic            marketdata/  (snapshots, calibration sets)
+            |                                 |
+            v                                 v
+  MarketEnvironment  -- one access point to the market: curves, vol surfaces, spots, dividends, repo, FX, correlations
+            |              (every input a float64 tf.Variable: the risk factors)
+            v
+  Product  +  Pricer  ( + model: StochasticProcess / calibrated EquityModel )
+            |
+            v
+  price (TensorFlow graph)  -->  tape.gradient(price, market risk factors)  =  greeks
 ```
 
-Alternatively, clone the repository and install manually:
+- **Market data on disk** (`marketdata/`): a snapshot is a folder of CSV tables per date and time. `mdbuild` builds the
+  real ones from the Bloomberg Desktop API and, right after the download, bootstraps the rate curves and builds the
+  equity vol surfaces from the option quotes.
+- **`MarketEnvironment`**: the only access point to the market, a dictionary of market objects under keys such as
+  `IR:EUR:ESTR:SPOT` or `EQ:EUR:SX5E:VOL`. Their numbers are `tf.Variable`s with a stable identity, the risk factors
+  of every price. `get_equity(ticker)` gives a view of one underlying: spot, forward, dividends, repo, vol surface.
+- **Instruments** (`Product`): the description of a trade only (dates, strikes, schedules, underlying or rate index),
+  no market data and no pricing logic.
+- **Pricers** (`Pricer`): `pricer.price(product, market_env, autodiff=True)` builds the price inside a gradient tape;
+  `PricerAssignment` picks the default pricer of a product.
+- **Models** (`StochasticProcess`, `EquityModel`): the Monte Carlo pricers simulate a process on the market forwards. An
+  equity model is used either calibrated inside the pricing (greeks through the calibration) or calibrated once,
+  stored and held (fast pricing, greeks mapped through the stored Jacobian).
+- **Calibration**: equity vols from listed options, model calibration sets with their fit and drift, rates
+  calibration.
 
-```bash
-git clone https://github.com/andrea220/tQuant.git
-cd tQuant
-pip install .
+| Package | Content |
+|---|---|
+| `tensorquant/timehandles` | dates, calendars (TARGET, US, UK), day counts, schedules |
+| `tensorquant/numericalhandles` | interpolation (linear, monotone convex, cubic splines), Newton, implicit-function derivatives |
+| `tensorquant/markethandles` | `MarketEnvironment`, curves, vol surfaces, dividends, `Equity` view, bootstrap, I/O |
+| `tensorquant/index`, `flows`, `instruments` | rate indices, coupons and legs, the products |
+| `tensorquant/pricers` | closed-form, discounting and Monte Carlo pricers |
+| `tensorquant/models` | stochastic processes and equity model instances |
+| `tensorquant/calibration` | equity vols from options, calibration sets, caplet stripping, short-rate calibration |
+| `tensorquant/analytics` | swap exposures (EE, ENE, PFE) |
+| `tqstudio` | the web application (FastAPI) |
+| `marketdata` | snapshots, `mdbuild` (Bloomberg), configuration, calibration sets |
+
+---
+
+## tqstudio
+
+- **Market data**: one underlying at a glance: spot, dividends and repo, forwards, the implied vol surface with the
+  market quotes, correlations; rate curves and FX.
+- **Calibration**: the calibration sets (fit per model and underlying, smiles against the quotes, model tests), the
+  universe of the models to calibrate, and when to recalibrate Heston SLV.
+- **Tradepad**: define a trade and price it with the model of your choice: price first, then the greeks.
+
+```
+python -m tqstudio                   # real snapshots (marketdata/live)
+python -m tqstudio --data synthetic  # synthetic snapshots
 ```
 
 ---
 
-## 🚀 Usage
+## Documentation
 
-To get started using `TensorQuant`, here are some resources:
+| Document | Content |
+|---|---|
+| **Architecture** (`study/docs/architecture.tex`) | how the library is built: market data environment, instruments, pricers, models, calibration, the planned bridge with Murex |
+| **Models and Pricing** (`study/docs/models_and_pricing.tex`) | the models as implemented: market handles (curves, vol surfaces), dynamics, calibration, closed forms, simulation, sensitivities |
+| **Exercises** (`study/docs/exercises.tex`) | questions and exercises with the notebooks of `study/notebooks` |
+| `ROADMAP.md` / `DEVELOPMENT_LOG.md` | open work / completed developments with the numbers that verify them |
 
-### Examples
-- Visit the [**`Playground`**](https://github.com/andrea220/tqPlayground) for Jupyter notebooks containing examples and use cases.
-
-### Documentation
-- The [**`ReadTheDocs`**](https://tquant.readthedocs.io/en/latest/index.html) page is **deprecated**: it is out of date and not rebuilt for now.
-
-### GitHub Repository
-- Check out the open-source code on [**GitHub**](https://github.com/andrea220/tQuant).
-
----
-
-## 📝 License
-
-`TensorQuant` is licensed under the GPL-3.0 License. See the [LICENSE](LICENSE) file for more information.
+The PDFs are built with `latexmk` in `study/docs` (into `study/docs/build`) and opened from the tqstudio home page.
+The old ReadTheDocs documentation (`docs/`) is deprecated.
 
 ---
 
-## 📧 Contact
+## Getting started
 
-For any questions or suggestions, feel free to reach out:
+```
+python -m venv tqenv && tqenv\Scripts\activate          # Python 3.12
+pip install -r requirements.txt -e .
+python -m unittest discover -s tests                     # fast suite (TQ_SLOW=1 for the full one)
+```
 
-- **Email**: [carapelliandrea@gmail.com](mailto:carapelliandrea@gmail.com)
+```python
+import datetime as dt
+import tensorquant as tq
+
+mkt = tq.MarketEnvironment.from_folder("marketdata")     # latest snapshot
+tq.Settings.evaluation_date = mkt.evaluation_date
+
+today = mkt.evaluation_date
+option = tq.VanillaOption(tq.Currency.EUR, today, today + dt.timedelta(days=365), tq.OptionType.Put,
+                          strike=float(mkt.get_eq_spot("TICKER1")), underlying="TICKER1")
+pricer = tq.PricerAssignment.create(option)              # Black-Scholes
+pricer.price(option, mkt, autodiff=True)
+greeks = pricer.tape.gradient(option.price, mkt.risk_factors())   # delta, vega per node, rho per pillar, ...
+```
+
+More in `examples/` and `study/notebooks/`.
 
 ---
 
-Happy computing!
+## License and contact
+
+GPL-3.0, see [LICENSE](LICENSE). Contact: [carapelliandrea@gmail.com](mailto:carapelliandrea@gmail.com).

@@ -10,7 +10,7 @@ notebook and updates the three documents together.
 |---|---|---|---|
 | Exercises | `exercises.tex` | `chapters/equity.tex`, `chapters/rates.tex` | questions, answers, exercises |
 | Models and Pricing | `models_and_pricing.tex` | `models/market_handles.tex`, `models/models.tex`, `models/products.tex` | definitions as implemented: market handles, simulation models, products (analytic and MC pricing); no teaching material (that goes in Exercises) |
-| Architecture | `architecture.tex` | `architecture/*.tex` | technical, one chapter per block of the package-layout diagram (`architecture/layout_diagram.tex`): overview (layout, AAD), market data, market environment, instruments, pricers, models (+ calibration), analytics, foundations (dates, numerics), testing |
+| Architecture | `architecture.tex` | `architecture/*.tex` | technical, one chapter per block of the package-layout diagram (`architecture/layout_diagram.tex`): overview (layout, AAD), market data environment (snapshots, market environment, risk factors, equity view), instruments, pricers, models, calibration, bridge with Murex (TBD) |
 
 - `preamble.tex` is shared: packages, math macros (`\E`, `\Q`, `\dd`, ...), `\nb{...}` (notebook reference),
   `\code{...}` (library names), `\pending` (section still to be written). Macros live only there; the Q/A

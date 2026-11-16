@@ -12,16 +12,15 @@ class AutocallableOption(Product):
     """
     Equity autocallable option instrument.
 
-    Questa classe contiene solo le **anagrafiche di prodotto** (schedule e parametri di payoff);
-    la logica di pricing è demandata a un pricer esterno (es. il notebook Monte Carlo).
+    The class holds only the **trade terms** (schedules and payoff parameters); the pricing is done by a pricer
+    (:class:`AutocallableMCPricer`).
 
-    Convenzioni:
-    - Tutti i livelli sono espressi in **percentuale dello strike/fixing**:
-      - `autocall_barrier = 100` → 100% dello strike
-      - `coupon_barriers[i] = 70` → 70% dello strike
-      - `coupon_rates[i] = 5` → 5% di cedola
-    - `date_grid` è la griglia di simulazione già costruita esternamente
-      (merge tra coupon, autocall e griglia di discretizzazione aggiuntiva).
+    Conventions:
+    - All the levels are in **percent of the strike (initial fixing)**:
+      - ``autocall_barrier = 100`` -> 100% of the strike;
+      - ``coupon_barriers[i] = 70`` -> 70% of the strike;
+      - ``coupon_rates[i] = 5`` -> a 5% coupon.
+    - The simulation grid is built by the pricer (fixing dates merged with the model's time steps).
     """
 
     def __init__(
@@ -52,9 +51,8 @@ class AutocallableOption(Product):
         """
         Initialize an AutocallableOption.
 
-        Tutte le schedule (coupon/autocall fixing e payment) sono passate dall'esterno,
-        così puoi costruirle con `ScheduleGenerator` nel modo che preferisci
-        (incluso merge con altre date di discretizzazione per il modello).
+        All the schedules (coupon / autocall fixing and payment dates) are given by the caller, built for instance
+        with ``ScheduleGenerator``.
 
         Forward start: with a ``strike_date`` after ``start_date`` the strike (initial level) is the spot fixed on that
         date, so ``strike`` is ``None``; every barrier and the put strike are in % of it, and the coupon and autocall
@@ -80,13 +78,13 @@ class AutocallableOption(Product):
         self.strike_date = strike_date
         self.underlying = underlying
 
-        # schedule principali
+        # schedules
         self.coupon_fixing_dates: List[datetime.date] = list(coupon_fixing_dates)
         self.coupon_payment_dates: List[datetime.date] = list(coupon_payment_dates)
         self.autocall_fixing_dates: List[datetime.date] = list(autocall_fixing_dates)
         self.autocall_payment_dates: List[datetime.date] = list(autocall_payment_dates)
 
-        # sanity check sulle lunghezze
+        # consistent lengths
         n_coupons = len(self.coupon_fixing_dates)
         if len(self.coupon_payment_dates) != n_coupons:
             raise ValueError(
@@ -100,13 +98,13 @@ class AutocallableOption(Product):
                 f"({len(self.autocall_fixing_dates)} vs {len(self.autocall_payment_dates)})"
             )
 
-        # parametri di payoff scalar
+        # scalar payoff parameters
         self.payoff_barrier = float(payoff_barrier)
         self.payoff_participation = float(payoff_participation)
         self.put_strike = float(put_strike)       # strike of the redemption put, % of the strike (initial level)
         self.memory = memory
 
-        # vettori coupon/barriere (con broadcast)
+        # coupon and barrier vectors (a single value is broadcast)
         def _broadcast(x: Sequence[float], name: str, n: int) -> List[float]:
             if len(x) == 1 and n > 1:
                 return [float(x[0])] * n
@@ -125,32 +123,31 @@ class AutocallableOption(Product):
             autocall_barrier, "autocall_barrier", n_autocall
         )
 
-        # payoff finale (solo derivato, senza capitale)
+        # final payoff (derivative only, no capital redemption)
         self.redemption_payoff: Optional[Callable[..., float]] = None
         if payoff_type.lower() == "put":
             self.redemption_payoff = self.put_redemption
 
     @property
     def maturity_date(self) -> datetime.date:
-        """Alias per end_date, più esplicito in contesto equity."""
+        """Alias of ``end_date``, clearer for equity products."""
         return self.end_date
 
     def schedule_dataframe(self) -> "pd.DataFrame":
         """
-        Ritorna un DataFrame con i dettagli delle schedule coupon e autocall,
-        mostrandole **affiancate**: se una data è sia coupon che autocall,
-        viene riportata sulla stessa riga.
+        The coupon and autocall schedules **side by side**: a date that is both a coupon and an autocall date is on
+        one row.
 
-        Colonne principali:
-            - fixing_date, payment_date: chiave comune
+        Columns:
+            - fixing_date, payment_date: the common key
             - coupon_rate_pct, coupon_barrier_pct
             - autocall_barrier_pct
-            - memory (costante per il prodotto)
+            - memory (the same for the whole product)
             - payoff_barrier_pct
         """
         rows: List[dict] = []
 
-        # chiavi (fixing, payment) per ciascuna gamba
+        # (fixing, payment) keys of each leg
         coupon_keys = list(zip(self.coupon_fixing_dates, self.coupon_payment_dates))
         autocall_keys = list(zip(self.autocall_fixing_dates, self.autocall_payment_dates))
 
@@ -182,7 +179,7 @@ class AutocallableOption(Product):
 
         df = pd.DataFrame(rows)
 
-        # payoff_barrier si applica solo alla riga finale (maturity)
+        # payoff_barrier applies to the last row (maturity) only
         if not df.empty:
             df["payoff_barrier_pct"] = None
             df.loc[df.index[-1], "payoff_barrier_pct"] = self.payoff_barrier

@@ -1,4 +1,36 @@
-\section{Market Environment}\label{sec:arch-market-environment}
+\section{Market Data Environment}\label{sec:arch-market-data-environment}\label{sec:arch-market-environment}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Snapshots on disk}\label{sec:arch-snapshots}\label{sec:arch-market-data}
+A snapshot is a folder \code{marketdata/<yyyymmdd>/<calibration\_set>/} (\code{calibration\_set} = time of the
+snapshot, e.g.\ \code{2240}: several snapshots a day) with one CSV per data block; every file is optional.
+Values are quotes, not objects: the library builds the market objects when loading.
+
+\begin{center}
+\small
+\begin{tabular}{@{}L{3.6cm}L{11.6cm}@{}}
+\toprule
+File & Columns \\
+\midrule
+\code{ir\_curves.csv} & \code{ccy, curve, pillar, value, quote, daycount, interp} (zero rates on pillar dates) \\
+\code{ir\_vol.csv} & \code{ccy, curve, vol\_type, expiry, strike, vol} (caplet vols) \\
+\code{ir\_swaption\_vol.csv} & \code{ccy, curve, expiry, tenor, strike\_offset, vol, vol\_type} \\
+\code{eq\_spot.csv} & \code{ticker, ccy, spot, repo, div\_yield} \\
+\code{eq\_dividends.csv} & \code{ticker, ccy, ex\_date, pay\_date, amount} \\
+\code{eq\_vol.csv} & \code{ticker, ccy, expiry, strike, vol} (Black vols on absolute strikes) \\
+\code{fx\_spot.csv}, \code{fx\_vol.csv} & \code{base, quote, spot}; \code{base, quote, expiry, strike, vol} \\
+\code{correlations.csv} & \code{factor\_1, factor\_2, corr} (pairs; factor = key prefix, e.g.\ \code{EQ:EUR:TICKER1}) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{MarketEnvironment.from\_folder} (arguments: the root folder, the date and the calibration set) loads
+the latest snapshot when the last two are \code{None}; the evaluation date is the folder date. \code{from\_frames} builds the market
+from the tables, \code{to\_frames} / \code{to\_folder} write it back (exact round trip). The synthetic snapshots
+come from \code{tq.generate\_market\_data} (tables) / \code{tq.generate\_market} (in memory), seeded:
+Nelson--Siegel OIS curves (EUR, GBP, USD) and EUR 6M as ESTR + spread, SSVI equity and FX smiles, caplet vols and
+swaption cube from one G2++, 50 tickers with discrete dividends, correlations.
+\nb{market\_handles.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{MarketEnvironment and keys}\label{sec:arch-market-env}
@@ -68,8 +100,9 @@ point of the model factories (\code{from\_equity}). Dividend model from the data
 \toprule
 Member & What it is \\
 \midrule
-\code{spot}, \code{repo}, \code{div\_yield} & the market variables (\code{div\_yield} is \code{None} with a cash schedule;
-  \code{repo} is a constant 0 when the market has none) \\
+\code{spot}, \code{div\_yield} & the market variables (\code{div\_yield} is \code{None} with a cash schedule) \\
+\code{repo}, \code{repo\_rate(T)} & a scalar variable or a \code{RateCurve} of zero repo rates (a constant 0 when the
+  market has none); \code{repo\_rate(T)} is the rate to $T$ (the zero rate of the curve) \\
 \code{dividends} & the \code{DividendCurve}: \code{ex\_dates}, \code{payment\_dates}, \code{amounts} (one variable),
   \code{dividends\_before(T)}, \code{to\_dataframe()} \\
 \code{vol\_surface}, \code{discount\_curve} & the market \code{VolatilitySurface} and the OIS curve of the currency \\
@@ -87,12 +120,85 @@ Member & What it is \\
 \emph{payment date} (the ex-date when the schedule has no payment dates), with dense weights (a dense gradient on the
 amounts vector). In the synthetic data the payment is 14 days after the ex-date.
 
-\emph{How \code{BlackScholesPricer} consumes the dividends.} Two arguments: \code{dividend\_model} (default
-\code{"continuous"}) and \code{use\_implied\_repo} (default \code{True}: the repo enters the carry). With a discrete schedule:
-\code{"discrete"} prices on \code{spot\_net} $= S - $ \code{pv\_dividends(T)} with carry $=$ repo;
-\code{"continuous"} turns the schedule into $q_{\mathrm{eff}}$, computed with the spot under \code{stop\_gradient}, so the
-AAD delta is the sticky-yield one (a bump-and-reprice recomputes $q_{\mathrm{eff}}$ and gives the sticky-cash delta).
-Without a schedule the market \code{DIVYIELD} is used whatever \code{dividend\_model}. The pricer leaves its inputs on
-the product for inspection: \code{spot}, \code{spot\_net}, \code{pv\_discrete\_dividends}, \code{repo\_margin},
-\code{risk\_free\_rate}, \code{discount\_factor}, \code{volatility}, \code{time\_to\_maturity} (a variable: theta),
-\code{forward}. \nb{dividends.ipynb}
+\paragraph{Where the data come from (live snapshots).} \code{marketdata/mdbuild} downloads them from the Bloomberg
+Desktop API (fields in \code{marketdata/config/settings.yaml}); single stocks (\code{Equity} yellow key) and equity
+indices (\code{Index} yellow key, listed under \code{equity\_indices} in \code{universe.yaml}) differ in the dividends,
+the options and, for SPX, the spot.
+
+\begin{center}
+\small
+\begin{tabular}{@{}L{2.4cm}L{6.4cm}L{6.4cm}@{}}
+\toprule
+Data & Single stocks (ENI, ISP, AAPL, MSFT) & Indices (SX5E, SPX) \\
+\midrule
+Spot & \code{PX\_LAST}, read again in the request of the option quotes (spot and options of the same moment;
+  previous close when the options are of an earlier session) & same; SPX (delayed price on this terminal): implied by
+  the options (\code{implied\_spot}: forward of the nearest expiry, plus the dividends, discounted) \\
+Currency & \code{CRNCY} & \code{CRNCY} \\
+Dividends & declared: \code{DVD\_HIST\_ALL} (cash, future ex-date, with the payment date; special cash, stock and rights
+  events excluded: the listed options are adjusted for them); projected: \code{BDVD\_ALL\_PROJECTIONS} (ex-date and
+  amount; payment = ex-date), dropped within 30 days of a declared one &
+  \code{BDVD\_PROJ\_DIV\_INDX\_PTS} with \code{PERIODICITY\_OVERRIDE = W} and \code{START\_DATE\_OVERRIDE} /
+  \code{END\_DATE\_OVERRIDE} (about 3 years projected): index points per week, each a discrete dividend (payment =
+  week date) \\
+Repo & not downloaded: implied by the listed options (put-call parity per expiry, \code{implied\_repo\_curve}) as a
+  curve (\code{eq\_repo.csv}); the borrow on top of the dividends above & same; beyond the projected dividends (about
+  3 years) it also carries the dividends \\
+Options (vol surface) & \code{CHAIN\_EXPIRATION\_DATES}, then \code{CHAIN\_TICKERS} per selected expiry (strikes 40\%--200\%
+  of the spot, unadjusted contracts, main exchange); American; main root and weekly roots (\code{ENI IM}, \code{2ENI},
+  \code{4ENI}) & same requests; European; one root (\code{SX5E}) or main and weekly (\code{SPX}, \code{SPXW}) \\
+Quotes & \code{PX\_BID}, \code{PX\_ASK}, \code{PX\_LAST} (settlement when there is no bid / ask),
+  \code{LAST\_UPDATE\_BID\_RT} (the session of the quote) & same \\
+History & \code{PX\_LAST} daily, 10 years, split-adjusted (correlations) & same \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The surface and the repo curve are built right after the download by \code{calibrate\_snapshot\_vols}
+(\code{calibration/equityvol.py}): implied forward and repo per expiry, a smile per expiry, the surface on the
+listed expiries. The method (filters, de-Americanization, repo, lognormal-mixture smiles, interpolation and
+extrapolation) is in \emph{Models and Pricing}, Equity volatilities, Construction from listed options.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Interest-rate curves: data and bootstrap}\label{sec:arch-ir-data}
+The curves are bootstrapped from the members of Bloomberg curves (ICVS), listed in \code{universe.yaml} under
+\code{curves} as \code{"<CCY> <name>": <ticker>}: EUR ESTR \code{YCSW0514 Index}, EUR 6M \code{YCSW0045 Index},
+USD SOFR \code{YCSW0490 Index}, GBP SONIA \code{YCSW0141 Index}.
+
+\begin{center}
+\small
+\begin{tabular}{@{}L{2.6cm}L{12.6cm}@{}}
+\toprule
+Data & Source \\
+\midrule
+Curve quotes & bulk field \code{CURVE\_TENOR\_RATES} of the curve ticker: per member its tenor, ticker and
+  \code{Mid Yield} (in \%, stored in decimals); the member is the index fixing (an \code{Index} ticker), an OIS, an FRA
+  (Ibor curves, up to 18M) or a swap; \code{ir\_quotes.csv} (\code{ccy, curve, tenor, instrument, quote, bloomberg,
+  last\_update}) \\
+Fixings & \code{PX\_LAST} (in \%) and \code{LAST\_UPDATE\_DT} of \code{ESTRON}, \code{EUR006M}, \code{SOFRRATE},
+  \code{SONIO/N} (\code{Index}); \code{ir\_fixings.csv} \\
+Rate vols & not downloaded (caplet vols and swaption cube: internal service, to come) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{bootstrap\_from\_quotes} (\code{markethandles/bootstrapping.py}) builds one instrument per quote with the
+conventions of \code{QUOTE\_CONVENTIONS} (overnight curves first, the Ibor one discounted on its overnight curve), solves
+the pillar rates with \code{newton} on an AAD Jacobian and registers \code{RateCurve}s with \code{MONOTONE\_CONVEX}
+interpolation, each with \code{jacobian}, \code{calib\_quote\_dv01} and \code{calibration\_quotes}.
+\code{bootstrap\_snapshot} runs it right after the download and writes \code{ir\_curves.csv} (zero rates on the pillar
+dates), \code{ir\_curves\_jacobian.csv} and \code{ir\_calibration.csv}; \code{from\_folder} then reads the curves
+without bootstrapping (a snapshot with quotes only is bootstrapped when loaded). Conventions, interpolation and the
+par sensitivities: \emph{Models and Pricing}, Interest-rate curves (Monotone convex interpolation, Bootstrap from
+market quotes).
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{FX: data}\label{sec:arch-fx-data}
+FX pairs are \code{Curncy} tickers of the universe (\code{EURUSD}, \code{GBPUSD}, \code{EURGBP}, \code{EURCHF},
+\code{USDJPY}): \code{PX\_LAST} gives the spot, 1 base = $x$ quote, stored in \code{fx\_spot.csv} (\code{base, quote,
+spot}) and in the market as \code{FX:<quote>:<pair>:SPOT}; the daily \code{PX\_LAST} history (10 years) enters the
+correlations. Forwards come from covered interest parity on the default curves of the two currencies
+(\code{get\_fx\_forward}): a pair whose currency has no curve in the snapshot (CHF, JPY) has the spot only. FX vols are
+not downloaded (synthetic snapshots only: \code{fx\_vol.csv}).
+
+

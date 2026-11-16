@@ -1,27 +1,159 @@
 \section{Instruments}\label{sec:arch-instruments}
+The trade descriptions: what is paid, when and on what. An instrument holds no market data and no pricing logic; a
+pricer reads it together with the \code{MarketEnvironment} (Section~\ref{sec:arch-pricers}). One subsection per asset
+class; the common base first.
+
+\paragraph{\code{Product}.} The abstract base (\code{instruments/product.py}) holds the currency \code{ccy}
+(\code{Currency} enum), \code{start\_date} and \code{end\_date}, and the slot \code{price}, written by
+\code{Pricer.price} (a float64 tensor; reading it before pricing raises). Every instrument is a \code{Product}, so the
+factory (\code{PricerAssignment}) and the pricers dispatch on its class. Conventions:
+\begin{itemize}[nosep]
+  \item the instrument describes the trade only: dates, strikes, levels, schedules, the underlying's ticker or the rate
+        index; the market objects are looked up by the pricer (\code{market\_env.get\_equity(product.underlying)},
+        the curves of \code{product.ccy} and of the index);
+  \item notional 1 by default for the rate instruments built from quotes; the equity options are per unit of
+        underlying (the autocallable has its own \code{notional});
+  \item outputs that pricers leave on the product for inspection (\code{forward}, \code{implied\_volatility} of an
+        option, the discount / estimation curve names of a swap) are diagnostics, not inputs;
+  \item enums in \code{markethandles/utils.py}: \code{OptionType} (\code{Call} $= +1$, \code{Put} $= -1$, used as
+        $\phi$ in the payoffs), \code{ExerciseType}, \code{PayoffType}, \code{BarrierType}, \code{SwapType}
+        (\code{Payer} $= +1$, \code{Receiver} $= -1$), \code{Position}.
+\end{itemize}
+
+\paragraph{Adding an instrument.}
+\begin{enumerate}[nosep]
+  \item subclass \code{Product} (or \code{Option} for a single-underlying option), store only the trade terms, validate
+        them in the constructor (\code{ValueError} with the reason);
+  \item reuse \code{flows/} for any schedule of coupons and \code{index/} for rate fixings;
+  \item a generator in \code{helpers.py} if the instrument is quoted by convention (term, quote);
+  \item a pricer (Section~\ref{sec:arch-pricers}) and, for a default one, the \code{isinstance} entry in
+        \code{PricerAssignment};
+  \item tests: payoff identities (parities, limits) and the pricer against an independent check.
+\end{enumerate}
 
 % ─────────────────────────────────────────────────────────────────────────────
-\subsection{Products, cash flows and indices}\label{sec:arch-products}
-\code{Product} and the instruments; \code{flows/} coupons and legs; generators.
+\subsection{Interest-rate instruments}\label{sec:arch-products}\label{sec:arch-rates-instruments}
+Deposits, FRAs, swaps, OIS, caps / floors and swaptions (\code{instruments/}), their cash flows (\code{flows/}), the
+rate indices (\code{index/}) and the generators that build them from quotes.
 
-\pending
+\begin{center}
+\small
+\begin{tabular}{@{}L{3.2cm}L{3.3cm}L{8.6cm}@{}}
+\toprule
+Instrument & Module & Content \\
+\midrule
+\code{Deposit} & \code{deposit.py} & rate, trade / start / end date, notional, day count \\
+\code{Fra} & \code{forward.py} & fixed rate on an \code{IborIndex} period, notional, day count, side
+  (\code{SwapType}); \code{fixing\_date} from the index \\
+\code{Swap} & \code{swap.py} & a \code{FixedRateLeg} and a \code{FloatingRateLeg} on an \code{IborIndex}, built from
+  the schedules of the two legs; \code{swap\_type} payer / receiver of the fixed rate \\
+\code{Ois} & \code{ois.py} & as \code{Swap}, the floating leg on an \code{OvernightIndex} (compounded overnight rate) \\
+\code{CapFloor} & \code{capfloor.py} & a strip of caplets (\code{OptionType.Call}) or floorlets (\code{Put}): a
+  \code{FloatingRateLeg} of the periods (\code{caplets}), strike, notional, index \\
+\code{Collar} & \code{capfloor.py} & long a cap, short a floor (two \code{CapFloor}s) \\
+\code{Swaption} & \code{swaption.py} & European, physically settled: the underlying forward-starting \code{Swap} (its
+  fixed rate is the strike), \code{expiry}, \code{payer}, \code{tenor\_years} (the cube lookup) \\
+\bottomrule
+\end{tabular}
+\end{center}
 
-Equity options derive from \code{Option}, which holds the option type, the strike (a float64 variable), the
-exercise type and the underlying. \code{VanillaOption} is European or American; \code{DigitalOption} is European, with a
-\code{payoff\_type} (\code{CashOrNothing} or \code{AssetOrNothing}, enum \code{PayoffType}) and a \code{cash\_amount}.
-\code{BlackScholesPricer} prices both, the digitals through \code{digital\_calc} (vol at the strike) or, with
-\code{digital\_spread} $= h$, as a centred spread of vanillas at $K(1 \pm h)$ on the smile; the factory maps a digital
-to it.
-\code{VanillaMCPricer} prices both too; for the digital payoff \code{digital\_smoothing} sets the sigmoid width (default
-1\% of the strike, 0 for the hard indicator). \nb{digital\_options.ipynb}
+\paragraph{Cash flows (\code{flows/}).} \code{CashFlow} (date, amount, \code{has\_occurred}) $\to$ \code{Coupon}
+(nominal, accrual start / end, reference period, day counter, accrual period and accrued amount) $\to$
+\begin{itemize}[nosep]
+  \item \code{FixedCoupon}: an \code{InterestRate} (rate, day count, compounding), amount known at construction;
+  \item \code{FloatingCoupon}: index, fixing days, gearing and spread, in arrears or not; its \code{fixing\_date}
+        comes from the index. Rate and amount are \code{None} until a pricer fills them: the forward on the
+        estimation curve (\code{FloatingCouponDiscounting}, Ibor: $(P(s)/P(e) - 1)/\tau_{\text{index}}$;
+        \code{OisCouponDiscounting}, overnight: the compounded rate $(P(s)/P(e) - 1)/\tau$) or, for a fixing already
+        past, the stored fixing of the index.
+\end{itemize}
+\code{FixedRateLeg} and \code{FloatingRateLeg} build the coupons from parallel lists (payment, accrual start and end
+dates, notionals, rates or gearings and spreads) and show them with \code{display\_flows()}. The leg discounting
+classes (\code{pricers/fixedflow.py}, \code{pricers/floatingflow.py}) price a leg as the sum of its coupons; paid
+coupons are worth zero.
 
-The barrier option class, \code{BarrierOption} in \code{instruments/barrier.py}, adds the level \code{barrier}, the
-type \code{barrier\_type} (an enum \code{BarrierType} with the members \code{DownIn}, \code{DownOut}, \code{UpIn} and
-\code{UpOut}, and the flags \code{is\_down} and \code{is\_in}) and the dates \code{monitoring\_dates}, where \code{None}
-means continuous monitoring (property \code{continuous}). \code{BlackScholesPricer} prices it through \code{barrier\_calc}
-(\code{pricers/black.py}); \code{VanillaMCPricer} through \code{\_bridge\_survival} (continuous) or
-\code{\_discrete\_survival} (monitoring dates merged into the grid).
+\paragraph{Rate indices (\code{index/}).} \code{Index} (abstract): a name, a fixing calendar and a time series of
+past fixings (\code{add\_fixing}, \code{fixing(date)}: the stored value of a past date, an error for a missing one).
+\begin{itemize}[nosep]
+  \item \code{IborIndex(calendar, tenor, time\_unit, currency, fixing\_days)}: name \code{"<CCY>:<tenor>"}
+        (\code{EUR:6M}); \code{fixing\_date(value\_date)} and \code{fixing\_maturity}, its day count;
+  \item \code{OvernightIndex(calendar, currency)}: the overnight rate of a currency;
+  \item \code{InflationIndex}: present, not used by any pricer yet.
+\end{itemize}
+The index name links the instrument to the market: a swap, FRA or cap on \code{EUR:6M} is projected on the curve
+\code{IR:EUR:6M:SPOT} and discounted on the default curve of the currency (\code{get\_ir\_curve(ccy)}, the
+overnight one); the caplet vols are \code{IR:EUR:6M:VOL}, the swaption cube \code{IR:EUR:6M:SWVOL}.
 
-With the autocall at an unreachable level, an \code{AutocallableOption} is a strip of digitals (put barrier 0) or a
-put knocked in at expiry (coupons 0).
-\nb{digital\_strip.ipynb}, \nb{down\_and\_in\_put.ipynb}
+\paragraph{Generators (\code{instruments/helpers.py}).} A generator holds the market conventions of a quoted
+instrument (spot lag, periods, day counts, calendar, business-day convention, index) and \code{build(trade\_date,
+quote, term)} returns the instrument at that quote: \code{DepositGenerator} (term \code{"ON"}, \code{"3M"}, \dots),
+\code{FraGenerator} (term \code{"6M-12M"}), \code{OisGenerator} and \code{SwapGenerator} (term \code{"5Y"}, schedules
+from \code{ScheduleGenerator}), \code{CapFloorGenerator} (\code{build}, \code{build\_collar}: periods of the index
+after the first, which is already fixed) and \code{SwaptionGenerator} (expiry and tenor on a \code{SwapGenerator}). The
+curve bootstrap builds its instruments this way (\code{QUOTE\_CONVENTIONS}, Section~\ref{sec:arch-ir-data}), and so do
+the tests and the Tradepad.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Equity instruments}\label{sec:arch-equity-instruments}\label{sec:arch-equity-options}
+Instruments on an equity or an equity index (options for now); the market objects come from the \code{Equity} view of
+the underlying (Section~\ref{sec:arch-equity}).
+
+\begin{center}
+\small
+\begin{tabular}{@{}L{3.2cm}L{3.3cm}L{8.6cm}@{}}
+\toprule
+Instrument & Module & Content \\
+\midrule
+\code{VanillaOption} & \code{option.py} & call / put, strike, European or American, underlying \\
+\code{DigitalOption} & \code{digital.py} & European; cash-or-nothing (\code{cash\_amount}) or asset-or-nothing \\
+\code{BarrierOption} & \code{barrier.py} & single barrier, knock-in / knock-out, up / down, continuous or discrete
+  monitoring, no rebate \\
+\code{AutocallableOption} & \code{autocallable.py} & coupon and autocall schedules, final put, optional forward start \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{\code{Option}.} The base of the single-underlying options (\code{instruments/option.py}): option type,
+strike (a float64 variable: a product input, not a market risk factor), exercise type and the underlying's ticker
+(\code{underlying}, the \code{<TICKER>} of the market keys \code{EQ:<CCY>:<TICKER>:\dots}). The start date is the trade
+date, the end date the expiry and payment date. After pricing, \code{forward} and \code{implied\_volatility} hold the
+forward and the vol the pricer used.
+
+\paragraph{\code{VanillaOption}.} European or American (\code{ExerciseType}; Bermudan is in the enum but not priced).
+Payoff $\max(\phi(S_T - K), 0)$.
+
+\paragraph{\code{DigitalOption}.} European, with a \code{payoff\_type} (\code{CashOrNothing}, default, or
+\code{AssetOrNothing}; \code{PlainVanilla} is refused) and a \code{cash\_amount} (default 1): pays
+\code{cash\_amount} or $S_T$ when $\phi(S_T - K) > 0$. Priced in closed form (vol at the strike, or a centred spread
+of vanillas on the smile, \code{digital\_spread}) and by Monte Carlo (sigmoid smoothing of the indicator,
+\code{digital\_smoothing}, default 1\% of the strike, 0 for the hard indicator). \nb{digital\_options.ipynb}
+
+\paragraph{\code{BarrierOption}.} A vanilla payoff times $1_{\{\text{hit}\}}$ (knock-in) or $1_{\{\text{not hit}\}}$
+(knock-out); \code{barrier} is an absolute level, \code{barrier\_type} a \code{BarrierType} (\code{DownIn},
+\code{DownOut}, \code{UpIn}, \code{UpOut}, with the flags \code{is\_down} and \code{is\_in}). \code{monitoring\_dates}
+\code{None} means continuous monitoring (property \code{continuous}); a list means discrete monitoring on those dates
+(\code{[end\_date]}: barrier observed at expiry only). No rebate; past monitoring dates are ignored (no fixing
+history: the barrier is assumed not hit so far). Knock-in + knock-out = vanilla. Priced in closed form
+(Reiner--Rubinstein, Broadie--Glasserman--Kou shift for discrete monitoring) and by Monte Carlo (Brownian-bridge
+survival for continuous monitoring, monitoring dates on the grid for discrete).
+
+\paragraph{\code{AutocallableOption}.} An equity autocallable, investor's side, as a derivative (no capital
+redemption):
+\begin{itemize}[nosep]
+  \item \code{strike}: the initial level; all the levels below are in \% of it;
+  \item coupons: \code{coupon\_fixing\_dates}, \code{coupon\_payment\_dates}, \code{coupon\_rates} (\% of the
+        notional), \code{coupon\_barriers}, \code{memory} (the unpaid coupons are paid at the next coupon above its
+        barrier);
+  \item autocall: \code{autocall\_fixing\_dates}, \code{autocall\_payment\_dates}, \code{autocall\_barrier}: the
+        product ends at the first fixing at or above the barrier;
+  \item final redemption if never called: a put, \code{payoff\_participation} $\times \max(\text{put\_strike} -
+        S_T/S_0, 0)$, knocked in when $S_T/S_0$ is below \code{payoff\_barrier} (observed at expiry);
+  \item forward start: with a \code{strike\_date} after the start date the initial level is the spot fixed on that
+        date (\code{strike} \code{None}), and every fixing must follow it;
+  \item lists of rates and barriers are broadcast from a single value; \code{schedule\_dataframe()} shows the coupon
+        and autocall schedules side by side.
+\end{itemize}
+The schedules are built outside (\code{ScheduleGenerator}, or the Tradepad defaults). Priced by Monte Carlo
+(\code{AutocallableMCPricer}) under any equity model. With the autocall at an unreachable level it is a strip of
+digitals (put barrier 0) or a put knocked in at expiry (coupons 0). \nb{digital\_strip.ipynb},
+\nb{down\_and\_in\_put.ipynb}

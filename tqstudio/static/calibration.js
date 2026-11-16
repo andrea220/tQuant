@@ -5,7 +5,7 @@ const fmt = (x, d = 2) => (x === null || x === undefined || Number.isNaN(x) ? ""
 const AXIS = { gridcolor: "#eef1f6", zerolinecolor: "#dde2ea", linecolor: "#dde2ea" };
 const LAYOUT = { margin: { l: 55, r: 15, t: 38, b: 45 }, font: { size: 12, family: "Segoe UI, system-ui, sans-serif",
   color: "#18202f" }, paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)" };
-const MODEL_COLORS = { Heston: "#3563e9", DisplacedDiffusion: "#e8833a", HestonSLV: "#12805c", LocalVol: "#a43fd1" };
+const MODEL_COLORS = { Heston: "#1f4fa8", DisplacedDiffusion: "#e8833a", HestonSLV: "#12805c", LocalVol: "#a43fd1" };
 const LABEL = { Heston: "Heston", DisplacedDiffusion: "Displaced diffusion", HestonSLV: "Heston SLV", LocalVol: "Local vol",
   Black: "Black" };
 const QUALITY = { good: "#12805c", fair: "#e8833a", poor: "#c2362f" };

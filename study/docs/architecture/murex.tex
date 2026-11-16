@@ -1,0 +1,22 @@
+\section{Bridge with Murex (TBD)}\label{sec:arch-murex}
+Planned, not started: a link between tQuant and Murex, so that the library can check the front-office system day by
+day and reprice its portfolios independently. The direction of the data is Murex $\to$ tQuant (extracts, datamart
+reports); tQuant never writes into Murex. Planned uses:
+\begin{itemize}[nosep]
+  \item \emph{Daily market data checks}: the Murex market data of the day (curves, equity spots, dividends, repo, FX)
+        compared with the tQuant snapshot built from Bloomberg, with tolerances per data type and a report of the
+        differences.
+  \item \emph{Vol surfaces}: the Murex equity and rates vol surfaces against the surfaces tQuant builds from the
+        listed options (Section~\ref{sec:arch-equity}) and the rate vols, node by node (vol points, at fixed tenors and
+        moneyness).
+  \item \emph{Calibrations}: the parameters of the Murex models (Heston, local vol, Hull--White, \dots) against the
+        tQuant calibration sets (Section~\ref{sec:arch-calibration-sets}), and the model fit of each on the same
+        surface.
+  \item \emph{Portfolio repricing}: the Murex trades (an extract mapped onto the tQuant instrument templates, see the
+        trades and portfolios item of \code{ROADMAP.md}) repriced with tQuant on the same market, prices and greeks
+        compared trade by trade and aggregated by book, the differences explained by market data, model or
+        conventions.
+\end{itemize}
+To define: the Murex extracts available (format, frequency, scope), the mapping of the Murex instrument templates
+and market data keys onto the \code{MarketEnvironment} keys, the tolerances, and where the daily reports are run
+and published (tqstudio).

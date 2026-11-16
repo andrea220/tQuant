@@ -1,0 +1,135 @@
+\section{Calibration}\label{sec:arch-calibration-chapter}
+How the models are fitted to the market, how the calibrated models are stored and reused, and how often each part is
+refreshed. The equity vol surfaces themselves (from listed options) are market data: Section~\ref{sec:arch-equity}.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Two ways to calibrate}\label{sec:arch-calibration}
+Every equity model can be used in two ways.
+\begin{itemize}[nosep]
+  \item \emph{Inside the pricing} (\code{Model.from\_equity(equity, maturity, strike)}, a model class given to a
+        pricer): the calibration runs at every pricing call, inside the pricer's tape. The price always uses today's
+        parameters and its market greeks include the move of the parameters (greeks through the calibration). Simple,
+        but the calibration time is paid at every price.
+  \item \emph{Calibrated once and held} (\code{Model.calibrate(equity)} $\to$ an \code{EquityModel} instance given to a
+        pricer): the parameters are fixed numbers (\code{tf.Variable}s) bound to today's market by
+        \code{model.process(equity)}. Pricing is fast; the greeks are model greeks (\code{model.parameters}) plus the
+        direct market greeks, and \code{par\_greeks} maps the model greeks to the market with the calibration Jacobian
+        stored at calibration time.
+\end{itemize}
+For the models of the calibration sets, the two give the same greeks on the calibration market
+(\code{tests/test\_model\_instances.py}); the instance diverges from the market as the market moves away from the
+calibration date, which is measured by \code{check\_calibration}.
+
+\paragraph{Differentiable calibration (implicit function).} The least-squares calibrations (Heston, displaced diffusion) run in NumPy / SciPy and end with the implicit step
+(\code{\_implicit\_step}, helpers in \code{numericalhandles/implicit.py}): at the optimum the gradient $g$ of the
+objective, its Hessian $H$ and $\partial g/\partial m$ for the calibration inputs $m$ (relative strikes, target prices,
+weights) are computed once, eagerly, as numbers (\code{optimality\_derivatives}: one backward pass per parameter);
+\code{implicit\_solution} returns the parameters as a tensor of $m$ with a custom gradient
+$\mathrm{d}p/\mathrm{d}m = -H^{-1}\,\partial g/\partial m$ (parameters on a bound fixed). The caller's tape never
+differentiates through the second-order graph of $g$ (first order only). Inside \code{from\_equity} this makes the
+parameters differentiable functions of the market; \code{calibrate} takes one Jacobian per parameter to all the risk
+factors and stores it (\code{EquityModel.jacobian}), so that the par greeks of an instance equal the greeks through the
+calibration (\code{tests/test\_model\_instances.py}).
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{What each equity model fits}\label{sec:arch-equity-calibration}
+\begin{center}
+\small
+\begin{tabular}{@{}L{3.1cm}L{12.1cm}@{}}
+\toprule
+Model & Calibration \\
+\midrule
+Local vol & none: the local vol is computed from the surface at every pricing (the model has only settings) \\
+Displaced diffusion & per surface maturity, $(\beta, \sigma)$ by least squares on the call prices per unit forward
+  (bounded; \code{\_fit\_slices}), then the implicit step and the forward pieces (\code{forward\_from\_slices}) \\
+Heston & the five parameters on the whole surface (strikes per unit forward, call prices, each maturity weighted by
+  $1/$ATM vega), bounded least squares on a cheap COS then polished on the full-precision COS, then the implicit
+  step; start from the ATM vols ($\kappa = 1.5$, $\xi = 0.5$, $\rho = -0.6$) or \code{initial} \\
+Heston SLV & \code{HestonModel.calibrate} (Heston part), the local vol settings, then \code{calibrate\_leverage}: the
+  $\E[v \mid X]$ table (50\,000 particles, 50 rows a year to the last surface maturity, 41 smoother nodes per row)
+  and, with \code{bias\_correction}, the Richardson-corrected table that gives the price \\
+\bottomrule
+\end{tabular}
+\end{center}
+The fit is reported by \code{model\_fit(model, equity)} (model and market vols on the surface nodes: closed forms for
+Heston and displaced diffusion, Monte Carlo for Heston SLV). Quality is the rms error in vol points where a diffusive
+model is meaningful (\code{\_fit\_errors}: maturities from one month, strikes within two standard deviations): good up
+to 1, fair up to 2.5, poor above. Typical timings on the real snapshot: displaced diffusion 30--40~s, Heston a few
+seconds, Heston SLV about 20~s.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Calibration sets}\label{sec:arch-calibration-sets}
+The models are calibrated less often than the market is downloaded, and stored apart from the snapshots
+(\code{calibration/models.py}):
+\begin{itemize}[nosep]
+  \item \code{calibrate\_snapshot\_models(snapshot, root, plan=...)} calibrates the equities of a snapshot, one model
+        at a time (a failure is recorded and does not stop the set), and writes
+        \code{<root>/<yyyymmdd>/<hhmm>/}: \code{calibration\_info.json} (source snapshot, models, times),
+        \code{summary.csv} (per underlying and model: status ok / error / skipped, quality, fit errors, seconds,
+        parameters), and per underlying \code{<ticker>/<model>\_<table>.csv} (the tables of \code{to\_frames}: settings,
+        parameters, Jacobian, report; for Heston SLV also the nested Heston and local vol tables and the leverage
+        nodes) and \code{<ticker>/<model>\_fit.csv};
+  \item \code{list\_calibration\_sets}, \code{load\_calibration\_set}, \code{load\_model(folder, ticker, name)}: read
+        them back (\code{from\_frames}, exact round trip);
+  \item \code{check\_calibration(model, equity)}: the fit of stored parameters on a newer market (\code{stale} above
+        \code{STALE\_VOLPTS} = 1 vol point);
+  \item \code{model\_test(models, equity, mkt)}: vanillas, down-and-in puts observed at expiry and cash digitals,
+        priced with each model on shared paths, against Black and local vol.
+\end{itemize}
+The sets live in \code{marketdata/calibrations/<source>/} (git-ignored). They are run from the command line
+(\code{python -m tqstudio.calibrate}, options \code{--date}, \code{--set}, \code{--models}, \code{--tickers},
+\code{--slv}) or from the tqstudio Calibration tab. Which models are calibrated for which underlying is the
+\emph{universe}: \code{marketdata/config/calibration.yaml}, one flag per model and underlying by asset class
+(defaults per asset class; edited in the Universe sub-tab; rates models listed but off), turned into the
+\code{plan} \code{\{ticker: [models]\}}. The tqstudio Tradepad prices with the models of the latest set that holds the
+underlying (Heston, displaced diffusion, Heston SLV), bound to the current market.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Refresh frequency: what moves when}\label{sec:arch-calibration-frequency}
+A model instance is several layers that need not be refreshed together:
+\begin{center}
+\small
+\begin{tabular}{@{}L{4.2cm}L{4.2cm}L{6.8cm}@{}}
+\toprule
+Layer & Refreshed & How \\
+\midrule
+Forward (spot, repo, dividends, curve) & every pricing & read from the market by \code{process(equity)} \\
+Local vol (and the local vol part of SLV) & every pricing & rebuilt from today's surface by \code{process} \\
+Heston, displaced diffusion parameters & daily, with a calibration set & \code{calibrate}; held between sets \\
+SLV table $\E[v \mid X]$ & when the surface has moved & \code{calibrate\_leverage(equity)}, Heston held \\
+SLV Heston part & rarely (weekly, or on a trigger) & \code{HestonModel.calibrate} \\
+\bottomrule
+\end{tabular}
+\end{center}
+Heston SLV is the slowest model to calibrate and the most stable to hold, so it runs on its own, asynchronous
+schedule: the Heston parameters and the conditional expectation are kept until a rule says they no longer describe
+the market, while the local vol it multiplies is always today's. Because the leverage is
+$\sigma_{\mathrm{LV}}(t, S)/\sqrt{\E[v \mid X]}$, a held table on a fresh local vol still reprices the vanillas
+approximately; the error grows with the distance between the market of the table and today's. The tqstudio
+Calibration tab has a Heston SLV view (\code{slv\_monitor}, \code{slv\_check} in \code{tqstudio/views/calibration.py})
+that compares the latest SLV calibration of each underlying with the latest market and suggests a recalibration
+when any rule of \code{SLV\_RULES} fails:
+\begin{itemize}[nosep]
+  \item age above 7 days;
+  \item spot move above 5\%;
+  \item surface change above 1 vol point rms (at tenors 3M--3Y and moneyness 80--120\% of the spot, sticky moneyness);
+  \item on request, the Monte Carlo fit of the stored model on the latest market above 1 vol point rms
+        (\code{slv\_check}, through \code{check\_calibration}).
+\end{itemize}
+It also shows the drift of the Heston part (closed form) and the ATM 1Y vol then and now. A recalibration today
+redoes the whole model (Heston and table); refreshing the table alone in a set (Heston held), and the IMI-style
+two-speed Heston with a time-dependent $\varepsilon(t)$, are in \code{ROADMAP.md}.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Rates calibration}\label{sec:arch-rates-calibration}
+\code{calibration/} also holds the rates side, used in the tests and the examples (not in the calibration sets yet):
+\begin{itemize}[nosep]
+  \item \code{strip\_caplet\_vols(market\_env, generator, quotes)} / \code{cap\_flat\_vols}
+        (\code{capletstripping.py}): flat cap vols to caplet vols and back;
+  \item \code{calibrate\_gaussian\_short\_rate(market\_env, generator, factors, ...)} (\code{shortrate.py}): Hull--White
+        (\code{factors=1}) or G2++ (\code{factors=2}) to caplet and / or swaption vols: model caplets in closed form,
+        swaptions batched (approximate or exact), Hull--White $\sigma(t)$ on \code{sigma\_times} (\code{"caplets"}: one
+        vol per caplet), \code{fixed} parameters, bounded least squares on vega-scaled residuals with the Jacobian by
+        AAD (\code{tf.function}); returns the parameters (with \code{at\_bound}) for a \code{GaussianShortRateModel}.
+\end{itemize}
+The curve bootstrap is a calibration too, of the curves to the quotes (Section~\ref{sec:arch-ir-data}).

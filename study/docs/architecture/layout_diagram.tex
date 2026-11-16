@@ -48,12 +48,12 @@
   \node[box=red!8, text width=2.4cm] (greeks) at (13.0, -0.9)
     {\hyperref[sec:arch-aad-principle]{\textbf{Greeks}}\\ \code{pricer.tape}\\ gradient w.r.t.\ the\\ risk factors};
   \node[box=gray!8, text width=2.4cm] (analytics) at (13.0, -3.1)
-    {\hyperref[sec:arch-analytics]{\textbf{Analytics}}\\ swap exposure\\ (EE, ENE, PFE)};
+    {\textbf{Analytics}\\ swap exposure\\ (EE, ENE, PFE)};
 
   % ── foundations ──
   \node[box=gray!20, minimum width=15.3cm, align=center] (base) at (6.65, -4.9)
-    {\hyperref[sec:arch-foundations]{\code{timehandles}}: dates, calendars, day counts, schedules \qquad
-     \hyperref[sec:arch-foundations]{\code{numericalhandles}}: interpolation, Newton, \code{DTYPE}};
+    {\code{timehandles}: dates, calendars, day counts, schedules \qquad
+     \code{numericalhandles}: interpolation, Newton, \code{DTYPE}};
 
   % ── arrows ──
   \draw[flow] (snap.east) -- (snap.east -| mkt.west);

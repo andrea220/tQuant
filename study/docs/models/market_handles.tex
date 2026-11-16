@@ -4,8 +4,9 @@ of the prices, and the sensitivities of a price are its derivatives w.r.t.\ thes
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Interest-rate curves}\label{sec:mp-curves}
-A curve holds continuously compounded zero rates $r_i$ on pillars $T_i$ (Act/365), linear in between and flat outside the
-pillars (definitions of \citealp[ch.~1]{brigo2006}):
+A curve holds continuously compounded zero rates $r_i$ on pillars $T_i$ (Act/365) (definitions of
+\citealp[ch.~1]{brigo2006}); between the pillars the rates are either linear (the synthetic curves) or monotone convex
+(the bootstrapped curves, below). Linear, flat outside the pillars:
 \[
   P(0,T) = e^{-r(T)\,T},\qquad r(T) = r_i + \frac{r_{i+1}-r_i}{T_{i+1}-T_i}\,(T - T_i)\quad (T_i \le T < T_{i+1}).
 \]
@@ -18,10 +19,58 @@ pillars (definitions of \citealp[ch.~1]{brigo2006}):
 Each currency has an overnight curve (ESTR, SONIA, SOFR), the discount curve of everything in that currency; an Ibor
 index has its own projection curve (EUR 6M) for its forward fixings.
 
-\paragraph{Bootstrap.} The instruments are built from the quotes (deposits and OIS for the overnight curve; FRAs and
-swaps for EUR 6M), with one pillar at the end date of each. The pillar rates are solved by Newton's method until every
-instrument has zero NPV, each priced as in \S\ref{sec:mp-linear}; the Jacobian $\partial \mathrm{NPV}_i/\partial r_j$ of the final step links
-the pillar sensitivities to the quote sensitivities.
+\paragraph{Monotone convex interpolation.} Linear zero rates give an instantaneous forward that jumps at every
+pillar. The bootstrapped curves use the monotone convex method \citep{hagan2006}: with $T_0 = 0$, the discrete forwards
+$f^d_i = (r_i T_i - r_{i-1} T_{i-1})/(T_i - T_{i-1})$ are kept exactly (so are the pillar zero rates), the instantaneous
+forward is continuous, equal at the inner nodes to the length-weighted average of the two neighbouring discrete forwards
+and extrapolated at the ends, and on each interval it is $f^d_i + g(x)$, $x = (T - T_{i-1})/(T_i - T_{i-1})$, with $g$
+quadratic or piecewise quadratic, $\int_0^1 g = 0$, chosen among four cases by the signs of $g(0)$ and $g(1)$ so that
+monotone discrete forwards give a monotone forward. Flat forward after the last pillar; no positivity floor.
+
+\paragraph{Bootstrap from market quotes: the quotes.} Each curve is built from the members of the market's standard
+curve for that index: a list of tenors, each with its instrument and its mid rate (decimals), taken all at the same
+time. The members are the index fixing (overnight or Ibor), then the OIS (overnight curves) or the FRAs up to 18
+months and the swaps (the EUR 6M curve), out to 50 years. Every quote becomes one instrument of notional 1 whose NPV
+is zero at the quoted rate.
+
+\paragraph{The instruments of each curve.} All dates on the currency calendar (TARGET for EUR, Federal Reserve for USD,
+England for GBP), modified following; the start is the spot date (two business days after today, or today for SONIA).
+\begin{center}
+\small
+\begin{tabular}{@{}L{2.6cm}L{12.6cm}@{}}
+\toprule
+Curve & Instruments (quote $\to$ instrument) \\
+\midrule
+ESTR, SOFR & overnight fixing $\to$ one-day deposit from today, Act/360; OIS rate $\to$ OIS from the spot date (T+2),
+  annual payments on both legs, Act/360, the floating leg compounding the overnight rate of the same curve \\
+SONIA & as ESTR / SOFR with Act/365 and spot T+0 \\
+EUR 6M & 6M fixing $\to$ spot FRA $0\times6$ (T+2, Act/360); FRA rate (tenors up to 18M) $\to$ FRA ending at its tenor and
+  starting six months earlier; swap rate $\to$ fixed annual 30/360 against 6M Act/360, the floating rates projected on
+  the 6M curve, all the cash flows discounted on ESTR \\
+\bottomrule
+\end{tabular}
+\end{center}
+The instruments are priced as in \S\ref{sec:mp-linear}. The overnight curves are built first; EUR 6M then uses the
+ESTR curve, already solved, for discounting (a multi-curve setup: projection and discounting on different curves).
+
+\paragraph{Pillars and solution.} The pillars are the end dates of the instruments, one per date (if two quotes end on
+the same date the first one is kept), as year fractions Act/365 from today; the unknowns are the continuously
+compounded zero rates at the pillars, interpolated monotone convex in between. Starting from $2\%$ on every pillar,
+the zero rates of a curve are solved \emph{together} by Newton's method on the vector of the NPVs, with the Jacobian
+$J_{ij} = \partial \mathrm{NPV}_i/\partial r_j$ by AAD, until both the NPVs and the step are below $10^{-8}$. A simultaneous
+solve, not pillar by pillar, because with the monotone convex interpolation the curve between two pillars depends on
+the neighbouring pillars too (a pillar-by-pillar bootstrap would have to iterate anyway). Every instrument reprices to
+zero at the solution (to about $10^{-15}$ on the market curves).
+
+\paragraph{Sensitivities to the quotes.} The Jacobian of the solution gives the sensitivity of any price $V$ to the
+quotes (par sensitivities):
+\[
+  \frac{\partial V}{\partial q} = \frac{\partial V}{\partial r}\,\big(-J^{-1}\big)\,
+  \mathrm{diag}\Big(\frac{\partial \mathrm{NPV}_i}{\partial q_i}\Big),
+\]
+with $\partial V/\partial r$ the AAD sensitivity to the zero rates of the pillars and $\partial \mathrm{NPV}_i/\partial q_i$
+(the quote DV01 of instrument $i$) by a one basis point bump of its quote alone, at fixed curve. The Jacobian and the
+quote DV01s are kept with the curve, so the par sensitivities need no new bootstrap.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Interest-rate volatilities}\label{sec:mp-ir-vols}
@@ -37,13 +86,14 @@ the pillar sensitivities to the quote sensitivities.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Equity spot, forward and dividends}\label{sec:mp-forward}
-An equity has a spot $S_0$, a repo $q_r$, either cash dividends $D_i$ with ex-dates $t_i$ and payment dates $p_i$ or a
-continuous yield $q$, and the discount curve $P(0,\cdot)$ of its currency. The forward, the same for every pricer and
-model:
+An equity has a spot $S_0$, a repo, either cash dividends $D_i$ with ex-dates $t_i$ and payment dates $p_i$ or a
+continuous yield $q$, and the discount curve $P(0,\cdot)$ of its currency. The repo is a term structure of zero rates
+$q_r(T)$ (linear between its pillars, flat outside), a constant in the simplest case. The forward, the same for every
+pricer and model:
 \begin{align*}
-  \text{cash dividends:}\quad & F(T) = \frac{\big(S_0 - \mathrm{PV}_{\mathrm{div}}(T)\big)\,e^{-q_r T}}{P(0,T)},\qquad
+  \text{cash dividends:}\quad & F(T) = \frac{\big(S_0 - \mathrm{PV}_{\mathrm{div}}(T)\big)\,e^{-q_r(T)\,T}}{P(0,T)},\qquad
     \mathrm{PV}_{\mathrm{div}}(T) = \sum_{t_i \le T} D_i\,P(0,p_i); \\
-  \text{yield:}\quad & F(T) = \frac{S_0\,e^{-(q + q_r)T}}{P(0,T)}.
+  \text{yield:}\quad & F(T) = \frac{S_0\,e^{-(q + q_r(T))T}}{P(0,T)}.
 \end{align*}
 A dividend is in the horizon by its ex-date (the stock drops then) and discounted from its payment date (the ex-date
 if none is given). The equivalent dividend yield to $T$ is $q_{\mathrm{eff}}(T) = -\ln\big(1 - \mathrm{PV}_{\mathrm{div}}(T)/S_0\big)/T$. Cash
@@ -54,3 +104,99 @@ dividends are used when the schedule is given (the yield is then ignored), the y
 Black implied vols $\sigma_{ij}$ on maturities $T_i$ (years) $\times$ absolute strikes $K_j$. For the closed-form pricers the vol at
 $(K, T)$ is bilinear in $(K, T)$ and flat outside the grid, so it depends on the four surrounding nodes. The local vol model
 builds its own representation from the same nodes, in total variance and forward log-moneyness (\S\ref{sec:mp-lv}).
+
+\paragraph{Construction from listed options.} The surface, the repo term structure and (for an index whose price is
+delayed against its options) the spot are built from the quotes of the listed options, one expiry at a time: first the
+forward of the expiry, then its smile, then the surface across the expiries.
+
+\paragraph{The quotes.} For each underlying the options are requested on selected expiries and strikes only:
+\begin{itemize}[nosep]
+  \item expiries: the first two listed (weeklies included), the monthlies up to three months, the quarterly ones up to
+        18 months, then one a year (the nearest to mid-December) up to about six years;
+  \item strikes, around an estimate of the forward $\hat F = (S_0 - \text{dividends to } T)\,e^{rT}$: for each target
+        moneyness $50\%, 60\%, \dots, 97.5\%, 100\%, \dots, 150\%$ of $\hat F$ the nearest listed out-of-the-money
+        option (put below $\hat F$, call above), plus a call and a put on each of the four strikes on either side of
+        $\hat F$ (for the put-call parity); about twenty options an expiry;
+  \item for each option the bid, the ask, the last price and the time of the last bid update; the spot is read in the
+        same request, so that spot and options are of the same moment.
+\end{itemize}
+The \emph{quote date} is the most frequent update date of the two-sided quotes. If it is not today (market closed),
+the spot is the close of that day. A bid / ask older than three days before the quote date is discarded; the option is
+then kept on its last price, treated as a \emph{settlement} price (bid = ask = last), and dropped if it has none. When
+the smile is fitted:
+\begin{itemize}[nosep]
+  \item a two-sided quote is used if bid $> 0$ and bid $\le$ ask $\le 3\times$ bid (a wider one is discarded), at its mid
+        $(\text{bid} + \text{ask})/2$, with weight 1;
+  \item a settlement price (no bid nor ask, positive last) is used at the last price with weight $0.25$: the long
+        expiries of the less liquid options often have only these;
+  \item a one-sided quote (bid or ask only) is discarded.
+\end{itemize}
+
+\paragraph{Forward and repo of an expiry.} European put-call parity gives the forward at a strike,
+$F = K + (C - P)/P(0,T)$, from mid prices; it is computed at the two strikes with a two-sided call and put that
+bracket the forward (settlement prices only when the expiry has no two-sided quote), and $F$ is their average. The
+listed single-stock options are American: each mid price is first turned into a European one, at the Black--Scholes
+vol that reprices it as an American option on the current forward \citep{bjerksund1993}, and the parity forward is
+recomputed until it lies between the two strikes and moves less than a tolerance (secant steps; if the parity jumps
+back and forth between two strike pairs, the mean of the two). The bid / ask prices give a range of forwards. With the
+dividends fixed (declared and forecast cash dividends), the rest of the carry is the repo,
+\[
+  q_r(T) = -\frac{1}{T}\,\ln\frac{F(T)\,P(0,T)}{S_0 - \mathrm{PV}_{\mathrm{div}}(T)},
+\]
+one pillar per expiry from 30 days (on shorter ones a small forward error is a large rate). An index whose spot is
+delayed takes the spot implied by its nearest expiry, $S_0 = F\,P(0,T) + \mathrm{PV}_{\mathrm{div}}(T)$, which has zero
+repo by construction.
+
+\paragraph{The smile model: a mixture of lognormals with a default mass.} The distribution of $S_T$ at the expiry is
+\citep{brigo2002}
+\[
+  S_T = 0 \text{ with probability } Q, \qquad
+  S_T = \xi_l\,F\,e^{\Sigma_l Z - \Sigma_l^2/2} \text{ with probability } p_l\ (l = 1,\dots,4),\qquad Z \sim N(0,1),
+\]
+with $Q + \sum_l p_l = 1$ and $\sum_l p_l \xi_l = 1$ (so $\E[S_T] = F$: the forward is repriced). $\xi_l$ is the mean
+of the $l$-th lognormal relative to the forward and $\Sigma_l = \sigma_l\sqrt{T}$ its total standard deviation. The
+undiscounted prices are sums of Black prices:
+\[
+  C(K) = \sum_l p_l\,\mathrm{Black}(\xi_l F, K, \Sigma_l),\qquad
+  P(K) = \sum_l p_l\,\mathrm{Black}_{\mathrm{put}}(\xi_l F, K, \Sigma_l) + Q\,K,
+\]
+and the model vol at $K$ is the Black vol of $C(K)$ or $P(K)$. The model is a density, so the smile has no strike
+arbitrage (call prices decreasing and convex in $K$), and it is fast (four Black prices). The lognormals with lower
+means and larger deviations make the put skew; the mass at zero, a default of the underlying, gives the steep skew of
+the short expiries; with one lognormal and no mass at zero it is Black. It describes the expiry only (no dynamics):
+the expiries are fitted one by one.
+
+\paragraph{Fit of the smile.} The quotes used are the out-of-the-money ones relative to the implied forward (puts below
+$F$, calls above), each turned into a Black vol $\sigma_i$ on the implied forward (for an American option the vol of
+its price on that forward, which is also the Black vol). Vols that cannot be computed, or outside $0.2$--$5$ times the
+median vol of the expiry, are discarded; an expiry with fewer than three quotes left is skipped (the surface
+interpolates through it). The parameters minimise
+\[
+  \sum_i \left(w_i\,\frac{V_{\mathrm{model}}(K_i) - \mathrm{Black}(F, K_i, \sigma_i\sqrt T)}{\mathcal V_i}\right)^2,
+\]
+the out-of-the-money price errors divided by the Black vega $\mathcal V_i$ of the quote (so about the vol errors), with
+the weights $w_i$ above (1 for a two-sided quote, $0.25$ for a settlement price). The fit is on the mid prices; the bid
+and ask are only reported against the fitted smile. Parametrisation and bounds: the weights $Q, p_l$ by a softmax (each
+away from 0 and 1, $Q$ at most about 17\%), the means by $\xi_l \propto e^{m_l}$ with $|m_l| \le 3$ (rescaled so that
+$\sum_l p_l \xi_l = 1$), the deviations $\Sigma_l = e^{s_l}$ between $0.005\sqrt T$ and $3\max(\sqrt T, 0.1)$. The start
+is ordered (from the lowest mean with the largest deviation to the highest mean with the smallest, central weights
+larger, $Q \approx 0.1\%$), which removes the exchange symmetry of the components; when that fit is above 0.2 vol
+points rms, a second one starts from the parameters of the previous expiry and the better is kept. The rms of the
+weighted vol errors measures the fit.
+
+\paragraph{The surface.} On the output grid, at the forward moneyness $K/F(t)$ (with the forward of the repo term
+structure above):
+\begin{itemize}[nosep]
+  \item between two expiries, the total variance $\sigma^2 t$ interpolated in time by a monotone cubic (PCHIP) through
+        the smiles of all the expiries;
+  \item before the first expiry, the vols of the first smile;
+  \item after the last expiry $T_n$, the last mixture carried to $t$: deviations $\Sigma_l\sqrt{t/T_n}$ (flat vols),
+        log-means scaled by $\sqrt{t/T_n}$, survival probability halfway between $1 - Q(T_n)$ and its exponential decay;
+        when its at-the-money vol is below the Heston-like level
+        $\sigma^2(t) = \theta + (v_0 - \theta)(1 - e^{-\kappa t})/(\kappa t)$, fitted to the at-the-money vols of the
+        expiries \citep{gatheral2006}, all the deviations are scaled up to reach it;
+  \item at extreme strikes where a vol cannot be inverted, the vol is linear in log-moneyness from the two nearest
+        nodes \citep{lee2004}.
+\end{itemize}
+The surface is stored on the listed expiries, then one point a year up to six years, at strikes from 50\% to 150\% of
+the spot.

@@ -288,7 +288,7 @@ function render(d) {
     Plotly.react($("chart-rho"), d.rho.map((r) => ({ type: "bar", name: r.curve, x: r.dates, y: r.rho })),
       { margin: { l: 60, r: 20, t: 10, b: 50 }, font: FONT, paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
         barmode: "group", showlegend: true, legend: { orientation: "h", y: 1.12 }, xaxis: { title: "pillar", ...AXIS },
-        yaxis: { title: "rho (1 bp)", ...AXIS }, colorway: ["#3563e9", "#e8833a", "#12805c"] },
+        yaxis: { title: "rho (1 bp)", ...AXIS }, colorway: ["#1f4fa8", "#e8833a", "#12805c"] },
       { displaylogo: false, responsive: true });
     const head = "<tr><th>Curve</th>" + d.rho[0].dates.map((x) => `<th>${x}</th>`).join("") + "<th>Total</th></tr>";
     const body = d.rho.map((r) => `<tr><td>${r.curve}</td>` + r.rho.map((x) => `<td>${fmtValue(x, 2)}</td>`).join("")

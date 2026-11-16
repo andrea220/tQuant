@@ -167,6 +167,37 @@ fixings and correlations of daily log returns. Left:
       (-0.3) after ten years at +0.3 / +0.8: a regime the 252-day window takes in full.
 - [x] tQuant / tqstudio reading the live snapshots (curves, equity vols and repo curves).
 
+## Cross-asset (not started)
+
+- [ ] **Quanto correction and a price currency.** Products whose payoff is paid in a currency other than the
+      underlying's (a EUR-settled option on SPX, a USD autocallable on SX5E): a `payment_ccy` on the `Product`
+      (default the underlying's currency) and, in the pricers, a `price_currency` for the result.
+      - Quanto (payoff in another currency at a fixed rate): the underlying's drift adjusted by
+        `-rho(S, X) sigma_S sigma_X` (X = FX rate quote per payment currency), discounting on the payment-currency
+        curve. Closed form for the Black-Scholes pricer (forward `F_quanto = F exp(-rho sigma_S sigma_X T)`, vol of the
+        FX surface at the forward and of the equity surface at the strike); in the Monte Carlo models the drift term of
+        the forward ratio (local vol, Heston, SLV, displaced diffusion), with the local vol of the FX if available.
+      - Composite / conversion (payoff converted at the future FX rate) as a separate flag, priced on the FX forward.
+      - `price_currency` on every pricer: the price (and the greeks) converted at the FX spot
+        (`MarketEnvironment.get_fx_spot`), the FX spot a risk factor of the price.
+      - Greeks: FX vol and the equity-FX correlation (`CORR:ALL:GLOBAL`, pair gradient) by AAD.
+      - Tests: rho = 0 = the domestic price converted; Black-Scholes quanto closed form vs Monte Carlo on a flat smile;
+        AAD correlation / FX vol greeks vs bumps; price currency = price times FX spot, delta to the FX spot.
+- [ ] **Cross-asset simulation model**: equities, rates and FX simulated jointly under one measure (the domestic
+      risk-neutral one of a base currency), the generalisation of the equity "Multi-asset process" of the tqstudio
+      engine below (item 4).
+      - Rates: a `GaussianShortRateModel` (Hull-White / G2++) per currency on its curve; FX: lognormal or local vol with
+        stochastic domestic / foreign rates (drift `r_d - r_f`), the foreign short rate under the domestic measure with
+        the quanto drift `-rho(r_f, X) sigma_r sigma_X`; equities: the existing models on their forwards, with
+        stochastic discounting in their currency and the quanto drift when foreign.
+      - One correlation matrix of all the noises (equity-equity, equity-FX, rate-rate, rate-FX, equity-rate): from the
+        historical log returns (`correlations.csv`, rate changes to add) or implied (quanto prices) where available;
+        completed to positive semi-definite.
+      - Consistency checks: every discounted asset a martingale under the domestic measure (bonds, FX forwards, equity
+        forwards in domestic terms), FX forwards = covered interest parity, zero correlations = the single-asset models.
+      - Uses: quanto and composite products in Monte Carlo, hybrids (equity / rates), portfolio exposures (EE, PFE) on
+        mixed portfolios (the swap exposure generator extended), the tqstudio portfolio pipeline.
+
 ## Future development (not prioritised)
 
 Sensitivities:
@@ -227,3 +258,22 @@ Interest rates:
       in the calibration (the model accepts it for any number of factors).
 - [ ] Swaptions: physical settlement only (EUR market swaptions are cash-settled with the IRR annuity); no Bermudans.
       Cap quotes are not part of the snapshot (only caplet vols); a market data file for them if needed.
+
+## Bridge with Murex (to be defined, not started)
+
+Link tQuant to Murex to check the front-office system day by day and reprice its portfolios independently. Data
+flow Murex -> tQuant only (extracts, datamart reports); tQuant never writes into Murex. Documented as a placeholder in
+`study/docs/architecture/murex.tex`.
+
+- [ ] **Daily market data checks**: Murex market data of the day (curves, equity spots, dividends, repo, FX) against
+      the tQuant snapshot built from Bloomberg, tolerances per data type, report of the differences.
+- [ ] **Vol surfaces**: Murex equity and rates vol surfaces against the tQuant surfaces (listed options, rate vols),
+      node by node in vol points at fixed tenors and moneyness.
+- [ ] **Calibrations**: Murex model parameters (Heston, local vol, Hull-White, ...) against the tQuant calibration
+      sets, and the fit of each on the same surface.
+- [ ] **Portfolio repricing**: Murex trades (extract mapped onto the tQuant instrument templates, see the trades and
+      portfolios item of the tqstudio engine above) repriced on the same market; prices and greeks compared trade by
+      trade and by book, differences explained by market data, model or conventions.
+- To define: the Murex extracts available (format, frequency, scope), the mapping of the Murex templates and market
+  data keys onto the `MarketEnvironment` keys, the tolerances, where the daily reports run and are published
+  (tqstudio).
