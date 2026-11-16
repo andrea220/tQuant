@@ -33,7 +33,30 @@
       <div class="selector">
         <label for="item" id="item-label">Underlying</label>
         <select id="item"></select>
+        <button id="universe-toggle" class="secondary compact" style="margin: 0">Universe</button>
         <span id="status" class="muted"></span>
+      </div>
+
+      <!-- universe of the selected asset class: the active tickers, add a ticker, download -->
+      <div id="view-universe" class="hidden">
+        <div class="panel">
+          <h2><span id="uv-title">Universe</span> <span id="uv-snapshot" class="muted"></span></h2>
+          <div class="form-row">
+            <button id="uv-add" class="compact" style="margin: 0">Add ticker</button>
+            <button id="dl-start" class="secondary compact" style="margin: 0">Download now</button>
+            <span id="dl-status" class="muted"></span>
+          </div>
+          <div id="uv-add-form" class="form-row hidden" style="margin-top: 12px">
+            <input id="uv-ticker" placeholder="Bloomberg ticker, e.g. UCG IM Equity" style="width: 320px">
+            <button id="uv-add-ok" class="compact" style="margin: 0">Add</button>
+            <button id="uv-add-cancel" class="secondary compact" style="margin: 0">Cancel</button>
+            <span id="uv-add-msg" class="muted"></span>
+          </div>
+          <div id="uv-table" class="hscroll" style="margin-top: 14px"></div>
+          <div id="uv-table2" class="hscroll" style="margin-top: 14px"></div>
+          <p id="dl-note" class="note"></p>
+          <pre id="dl-log" class="log hidden"></pre>
+        </div>
       </div>
 
       <!-- equity -->

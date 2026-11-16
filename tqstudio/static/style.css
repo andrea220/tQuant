@@ -148,6 +148,10 @@ button.link { width: auto; margin: 0 0 0 8px; padding: 0; background: none; colo
               font-weight: 600; text-transform: none; letter-spacing: 0; }
 button.link:hover { background: none; text-decoration: underline; }
 .pill.warn { background: #fff1e4; color: #b4560e; }
+.pill.ok { background: #e6f4ee; color: var(--pos); }
+.pill.off { background: #f0f2f6; color: var(--muted); }
+pre.log { margin: 12px 0 0; padding: 10px 12px; background: #f8f9fc; border: 1px solid var(--line); border-radius: 8px;
+          font: 12px/1.45 Consolas, monospace; max-height: 220px; overflow: auto; white-space: pre-wrap; }
 
 /* tradepad: deal panel on the right */
 .tradepad { grid-template-columns: 360px 1fr; }

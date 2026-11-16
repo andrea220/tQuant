@@ -14,7 +14,7 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -25,6 +25,8 @@ from .views.calibration import (CalibrationRuns, save_flags, set_folder, set_vie
 from .views.market import catalog, equity_tickers, fx_view, market_view, rates_view, snapshots
 from .views.tradepad import ModelCache, describe_trade, market_inputs, price_trade
 from .views.tradepad import catalog as tradepad_catalog
+from .views.universe import DownloadRuns, add_ticker, remove_ticker
+from .views.universe import universe_view as market_universe_view
 
 ROOT = Path(__file__).resolve().parent
 DATA_SOURCE = os.environ.get("TQSTUDIO_DATA", "live")   # live: Bloomberg snapshots; synthetic: generated ones
@@ -98,6 +100,12 @@ class Engine:
             tq.Settings.evaluation_date = mkt.evaluation_date
             return finish()
 
+    def refresh_latest(self) -> None:
+        """A new snapshot was written: the latest one (``None`` keys, Tradepad market) is looked up again."""
+        with self.lock:
+            self.markets.pop((None, None), None)
+            self.market = self._load(None, None)
+
     def tradepad(self, build, day: Optional[str] = None, request: Optional[dict] = None):
         with self.lock:
             mkt = self.snapshot(day, None)
@@ -159,6 +167,73 @@ def market_rates(ccy: str, curve: str, date: Optional[str] = None, set: Optional
 @app.get("/api/market/fx/{pair}")
 def market_fx(pair: str, date: Optional[str] = None, set: Optional[str] = None) -> dict:
     return _view("fx", pair, date, set, lambda mkt: fx_view(mkt, pair))
+
+
+downloads = DownloadRuns()
+_refreshed = {"result": None}                         # the last download whose snapshot the engine has picked up
+
+
+def is_local(request: Request) -> bool:
+    """The request comes from this machine (downloads and universe changes are allowed from here only)."""
+    return request.client is not None and request.client.host in ("127.0.0.1", "::1", "localhost")
+
+
+@app.get("/api/market/universe")
+def market_universe(request: Request, date: Optional[str] = None, set: Optional[str] = None) -> dict:
+    """The market data universe with the status of each instrument in the snapshot *date* / *set* (latest when
+    absent), and whether this client may start a download."""
+    found = snapshots(MARKET_DATA)
+    day = next((s for s in found if s["date"] == date), found[0] if found else None)
+    folder = None
+    if day is not None:
+        cset = set if set in day["sets"] else day["sets"][0]
+        folder = MARKET_DATA / day["date"].replace("-", "") / cset
+    return {**market_universe_view(folder), "source": DATA_SOURCE,
+            "can_download": DATA_SOURCE == "live" and is_local(request), "can_edit": is_local(request),
+            "download": downloads.status()}
+
+
+@app.post("/api/market/universe")
+def market_universe_add(request: Request, body: dict = Body(...)) -> dict:
+    """Add a Bloomberg ticker to the universe (``{"asset_class", "ticker"}``): downloaded at the next download."""
+    if not is_local(request):
+        raise HTTPException(status_code=403, detail="the universe can be changed only from the pc running tqstudio")
+    try:
+        return add_ticker(body.get("asset_class", ""), body.get("ticker", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/market/universe/remove")
+def market_universe_remove(request: Request, body: dict = Body(...)) -> dict:
+    """Remove a ticker from the universe (``{"asset_class", "ticker"}``): commented out, not downloaded any more."""
+    if not is_local(request):
+        raise HTTPException(status_code=403, detail="the universe can be changed only from the pc running tqstudio")
+    try:
+        return remove_ticker(body.get("asset_class", ""), body.get("ticker", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/market/download")
+def market_download(request: Request) -> dict:
+    if DATA_SOURCE != "live":
+        raise HTTPException(status_code=400, detail="downloads write live snapshots: start tqstudio with --data live")
+    if not is_local(request):
+        raise HTTPException(status_code=403, detail="downloads can be started only from the pc running tqstudio")
+    try:
+        return downloads.start()
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@app.get("/api/market/download")
+def market_download_status() -> dict:
+    status = downloads.status()
+    if not status["running"] and status.get("exit_code") == 0 and status.get("result") != _refreshed["result"]:
+        engine.refresh_latest()                       # the new snapshot becomes the latest (Tradepad, calibration)
+        _refreshed["result"] = status.get("result")
+    return status
 
 
 @app.get("/api/tradepad/catalog")

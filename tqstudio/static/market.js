@@ -343,6 +343,177 @@ function renderFx(d) {
   }
 }
 
+// ---------- universe of the asset class, add a ticker, download ----------
+const mark = (r) => (r.in_snapshot ? `<span class="pill ok">in snapshot</span>`
+  : `<span class="pill warn">next download</span>`);
+const dash = (x, f) => (x === null || x === undefined ? "–" : f(x));
+const UNIVERSE_TITLE = { equity: "Equity universe", rates: "Rates universe", fx: "FX universe" };
+const ADD_HINT = { equity: "Bloomberg ticker, e.g. UCG IM Equity or FTSEMIB Index",
+                   rates: "Bloomberg fixing, e.g. EUR003M Index", fx: "Bloomberg pair, e.g. EURJPY Curncy" };
+
+function renderUniverse() {
+  const d = state.universeData;
+  if (!d) return;
+  const s = d.snapshot;
+  const active = (rows) => rows.filter((r) => r.included).sort((a, b) => a.bbg.localeCompare(b.bbg));
+  const remove = d.can_edit
+    ? [["", (r) => `<button class="link remove" data-ticker="${r.bbg}">Remove</button>`]] : [];
+  $("uv-title").textContent = UNIVERSE_TITLE[state.cls];
+  $("uv-snapshot").textContent = s ? `status in the snapshot ${s.date} ${s.set}` : "no snapshot";
+  $("uv-ticker").placeholder = ADD_HINT[state.cls];
+  $("uv-table2").innerHTML = "";
+  if (state.cls === "equity") {
+    $("uv-table").innerHTML = table([
+      ["Bloomberg ticker", (r) => r.bbg],
+      ["Type", (r) => r.type],
+      ["Status", mark],
+      ["Ccy", (r) => r.ccy || ""],
+      ["Spot", (r) => dash(r.spot, (x) => fmt(x, 2))],
+      ["Spot source", (r) => r.spot_source || ""],
+      ["Dividends", (r) => (r.in_snapshot ? r.dividends : "")],
+      ["Options", (r) => (r.in_snapshot ? r.options : "")],
+      ["Quote date", (r) => r.quote_date || ""],
+      ["Model within bid / ask", (r) => dash(r.within_bid_ask, (x) => `${pct(x, 0)}%`)],
+      ["Settings", (r) => [r.option_root ? `options ${r.option_root}` : "", r.implied_spot ? "implied spot" : ""]
+        .filter(Boolean).join(", ")],
+      ...remove,
+    ], active(d.equity));
+  } else if (state.cls === "rates") {
+    $("uv-table").innerHTML = table([
+      ["Curve", (r) => r.name], ["Bloomberg (ICVS)", (r) => r.bbg], ["Kind", (r) => r.kind.toUpperCase()],
+      ["Status", mark], ["Quotes", (r) => r.quotes], ["Last update", (r) => r.last_update || ""],
+      ["Bootstrapped", (r) => (r.bootstrapped ? `${r.pillars} pillars` : "–")],
+    ], [...d.curves].sort((a, b) => a.name.localeCompare(b.name)));
+    $("uv-table2").innerHTML = table([
+      ["Fixing", (r) => r.bbg], ["Status", mark],
+      ["Value (%)", (r) => dash(r.value, (x) => pct(x, 3))], ["Date", (r) => r.fixing_date || ""], ...remove,
+    ], active(d.fixing));
+  } else {
+    $("uv-table").innerHTML = table([
+      ["Bloomberg ticker", (r) => r.bbg], ["Status", mark], ["Spot", (r) => dash(r.spot, (x) => fmt(x, 4))],
+      ...remove,
+    ], active(d.fx));
+  }
+  document.querySelectorAll("#view-universe button.remove").forEach((b) =>
+    b.addEventListener("click", () => removeTicker(b.dataset.ticker)));
+  $("uv-add").classList.toggle("hidden", !d.can_edit);
+  $("dl-start").classList.toggle("hidden", !d.can_download);
+  const notes = [];
+  if (state.cls === "rates") notes.push("Add ticker adds a rate fixing; new curves need their quote conventions in tQuant.");
+  notes.push(d.can_download
+    ? "Download now downloads the whole universe from the Bloomberg terminal of this pc, then bootstraps the curves " +
+      "and builds the equity vols (a few minutes); the new snapshot becomes the latest one."
+    : d.source !== "live" ? "Downloads are available with the live data (python -m tqstudio)."
+      : "Tickers can be added and downloads started only from the pc running tqstudio (its Bloomberg terminal).");
+  $("dl-note").textContent = notes.join(" ");
+  showDownload(d.download);
+}
+
+async function loadUniverse() {
+  try {
+    const res = await fetch(`/api/market/universe?${query()}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    state.universeData = data;
+    renderUniverse();
+  } catch (e) {
+    $("uv-table").innerHTML = `<span class="error">Error: ${e.message}</span>`;
+  }
+}
+
+function openUniverse(open) {
+  state.universe = open;
+  $("universe-toggle").classList.toggle("active-model", open);
+  $("view-universe").classList.toggle("hidden", !open);
+  for (const c of Object.keys(CLASSES)) $(`view-${c}`).classList.toggle("hidden", open || c !== state.cls);
+  $("item").disabled = open;
+  if (open) { $("status").textContent = ""; loadUniverse(); } else if (state.item) loadItem();
+  saveUrl();
+}
+
+function showAddForm(show) {
+  $("uv-add-form").classList.toggle("hidden", !show);
+  $("uv-add-msg").textContent = "";
+  if (show) { $("uv-ticker").value = ""; $("uv-ticker").focus(); }
+}
+
+async function addTicker() {
+  const ticker = $("uv-ticker").value.trim();
+  if (!ticker) return;
+  try {
+    const res = await fetch("/api/market/universe", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asset_class: state.cls, ticker }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    showAddForm(false);
+    await loadUniverse();
+    $("dl-status").textContent = `${data.ticker} ${data.action === "uncommented" ? "back in" : "added to"} the ` +
+      "universe: downloaded at the next download";
+  } catch (e) {
+    $("uv-add-msg").innerHTML = `<span class="error">${e.message}</span>`;
+  }
+}
+
+async function removeTicker(ticker) {
+  if (!confirm(`Remove ${ticker} from the universe? It will not be downloaded any more (past snapshots keep it).`)) return;
+  try {
+    const res = await fetch("/api/market/universe/remove", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ asset_class: state.cls, ticker }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    await loadUniverse();
+    $("dl-status").textContent = `${data.ticker} removed from the universe`;
+  } catch (e) {
+    $("dl-status").innerHTML = `<span class="error">${e.message}</span>`;
+  }
+}
+
+function showDownload(run) {
+  const log = $("dl-log");
+  $("dl-start").disabled = Boolean(run && run.running);
+  if (!run || (!run.running && run.exit_code === undefined)) { log.classList.add("hidden"); return; }
+  if (run.running) {
+    $("dl-status").textContent = `Downloading… started ${run.started.slice(11)} (${fmt(run.seconds, 0)} s)`;
+  } else if (run.exit_code === 0) {
+    $("dl-status").textContent = `Last download done in ${fmt(run.seconds, 0)} s: ${run.result || ""}`;
+  } else {
+    $("dl-status").innerHTML = `<span class="error">Last download failed (exit ${run.exit_code}): ` +
+      `${(run.errors || []).slice(-1)[0] || ""}</span>`;
+  }
+  log.textContent = (run.log || []).join("\n");
+  log.classList.toggle("hidden", !(run.log || []).length);
+}
+
+async function pollDownload() {
+  const run = await (await fetch("/api/market/download")).json();
+  showDownload(run);
+  if (run.running) { setTimeout(pollDownload, 3000); return; }
+  if (run.exit_code === 0) await reloadSnapshots();          // the new snapshot is the latest one
+}
+
+async function startDownload() {
+  if (!confirm("Download the whole market data universe from Bloomberg now?")) return;
+  try {
+    const res = await fetch("/api/market/download", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    showDownload(data);
+    setTimeout(pollDownload, 3000);
+  } catch (e) {
+    $("dl-status").innerHTML = `<span class="error">${e.message}</span>`;
+  }
+}
+
+async function reloadSnapshots() {
+  const snaps = await (await fetch("/api/snapshots")).json();
+  state.snapshots = snaps.snapshots;
+  $("snap-date").innerHTML = state.snapshots.map((s) => `<option>${s.date}</option>`).join("");
+  state.date = state.snapshots[0].date;
+  $("snap-date").value = state.date;
+  fillSets();
+  await loadSnapshot();
+}
+
 // ---------- navigation ----------
 const query = () => `date=${state.date}&set=${state.set}`;
 const items = () => {
@@ -353,7 +524,8 @@ const items = () => {
 };
 
 function saveUrl() {
-  history.replaceState(null, "", `?class=${state.cls}&item=${encodeURIComponent(state.item)}&${query()}`);
+  const uv = state.universe ? "universe=1&" : "";
+  history.replaceState(null, "", `?${uv}class=${state.cls}&item=${encodeURIComponent(state.item)}&${query()}`);
 }
 
 async function loadItem() {
@@ -365,7 +537,7 @@ async function loadItem() {
     const res = await fetch(`${url}?${query()}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
-    for (const c of Object.keys(CLASSES)) $(`view-${c}`).classList.toggle("hidden", c !== state.cls);
+    for (const c of Object.keys(CLASSES)) $(`view-${c}`).classList.toggle("hidden", state.universe || c !== state.cls);
     ({ equity: renderEquity, rates: renderRates, fx: renderFx })[state.cls](data);
     $("status").textContent = "";
     saveUrl();
@@ -382,7 +554,7 @@ function selectClass(cls, wanted) {
   $("item").innerHTML = list.map(([id, label]) => `<option value="${id}">${label}</option>`).join("");
   state.item = list.some(([id]) => id === wanted) ? wanted : (list[0] || [null])[0];
   $("item").value = state.item;
-  if (state.item) loadItem();
+  if (state.universe) { renderUniverse(); saveUrl(); } else if (state.item) loadItem();
 }
 
 async function loadSnapshot(wantedClass, wantedItem) {
@@ -395,6 +567,7 @@ async function loadSnapshot(wantedClass, wantedItem) {
     $(`count-${c}`).textContent = `${n} ${CLASSES[c].noun}`;
   }
   selectClass(wantedClass || state.cls, wantedItem || state.item);
+  if (state.universe) loadUniverse();
 }
 
 function fillSets(wanted) {
@@ -421,7 +594,17 @@ async function init() {
   $("ir-swaption-tenor").addEventListener("change", swaptionSmile);
   $("eq-smile-expiry").addEventListener("change", marketSmile);
   $("eq-vol-copy").addEventListener("click", copySurface);
+  $("universe-toggle").addEventListener("click", () => openUniverse(!state.universe));
+  $("uv-add").addEventListener("click", () => showAddForm($("uv-add-form").classList.contains("hidden")));
+  $("uv-add-ok").addEventListener("click", addTicker);
+  $("uv-add-cancel").addEventListener("click", () => showAddForm(false));
+  $("uv-ticker").addEventListener("keydown", (e) => { if (e.key === "Enter") addTicker(); });
+  $("dl-start").addEventListener("click", startDownload);
+  state.universe = p.get("universe") === "1";
   await loadSnapshot(CLASSES[p.get("class")] ? p.get("class") : "equity", p.get("item"));
+  openUniverse(state.universe);
+  const run = await (await fetch("/api/market/download")).json();          // a download started earlier
+  if (run.running) pollDownload();
 }
 
 init();
