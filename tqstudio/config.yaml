@@ -6,7 +6,7 @@
 marketdata_roots:
   - W:\Everyone\Quants\tqdata              # shared data (CL100400340051 writes it, the shared app reads it from Linux)
   - C:\dev\tQuant\marketdata               # LAPTOP-OIB56OK9: local copy, when the share is not reachable
-  - /mnt-quants/strategy/tqdata            # shared Linux machine (the app of the users)
+  - /mnt-quants/quants/tqdata            # shared Linux machine (the app of the users)
 
 # Who may edit the universe and start downloads: pcs with a Bloomberg terminal. No pc is allowed by default. A download
 # starts only from a tqstudio running on one of them (the download runs there, on its terminal), requested from one of
