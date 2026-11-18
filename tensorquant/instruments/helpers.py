@@ -203,7 +203,7 @@ class OisGenerator(ProductGenerator):
         self.calendar = calendar
         self.index = index
 
-    def build(self, trade_date: datetime.date, quote: float, term: str):
+    def build(self, trade_date: datetime.date, quote: float, term: str, forward: str = None, spread: float = 0.0):
         """
         Builds an OIS product based on the provided trade date, quote, and term.
 
@@ -211,6 +211,8 @@ class OisGenerator(ProductGenerator):
             trade_date (datetime.date): The trade date for the OIS.
             quote (float): The quote or rate for the OIS.
             term (str): The term or duration of the OIS.
+            forward (str, optional): Forward start after the spot date (e.g. ``"1Y"``); ``None`` = spot start.
+            spread (float): Spread over the compounded overnight rate (decimal).
 
         Returns:
             Ois: The constructed OIS product.
@@ -218,6 +220,9 @@ class OisGenerator(ProductGenerator):
         start_date = self.calendar.advance(
             trade_date, self.start_delay, TimeUnit.Days, self.roll_convention
         )
+        if forward:
+            n_fwd, unit_fwd = decode_term(forward)
+            start_date = self.calendar.advance(start_date, n_fwd, unit_fwd, self.roll_convention)
 
         period_maturity, time_unit = decode_term(term)
         maturity = self.calendar.advance(
@@ -272,6 +277,7 @@ class OisGenerator(ProductGenerator):
             day_count_fix,
             day_count_flt,
             self.index,
+            spread=spread,
         )
 
 
@@ -421,7 +427,7 @@ class SwapGenerator(ProductGenerator):
         self.calendar = calendar
         self.index = index
 
-    def build(self, trade_date: datetime.date, quote: float, term: str):
+    def build(self, trade_date: datetime.date, quote: float, term: str, forward: str = None, spread: float = 0.0):
         """
         Builds a swap product based on the provided trade date, quote, and term.
 
@@ -429,6 +435,8 @@ class SwapGenerator(ProductGenerator):
             trade_date (datetime.date): The trade date for the swap.
             quote (float): The quote or rate for the swap.
             term (str): The term or duration of the swap.
+            forward (str, optional): Forward start after the spot date (e.g. ``"1Y"``); ``None`` = spot start.
+            spread (float): Spread over the index of the floating leg (decimal).
 
         Returns:
             Swap: The constructed swap product.
@@ -436,6 +444,9 @@ class SwapGenerator(ProductGenerator):
         start_date = self.calendar.advance(
             trade_date, self.start_delay, TimeUnit.Days, self.roll_convention
         )
+        if forward:
+            n_fwd, unit_fwd = decode_term(forward)
+            start_date = self.calendar.advance(start_date, n_fwd, unit_fwd, self.roll_convention)
 
         period_maturity, time_unit = decode_term(term)
         maturity = self.calendar.advance(
@@ -491,6 +502,7 @@ class SwapGenerator(ProductGenerator):
             day_count_fix,
             day_count_flt,
             self.index,
+            spread=spread,
         )
 
 

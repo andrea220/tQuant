@@ -180,6 +180,39 @@ class TestIndependentChecks(RateTestCase):
             with self.subTest(product=name):
                 self.assertAlmostEqual(float(fair.price), 0.0, delta=1e-6)
 
+    def test_floating_spread(self):
+        """A spread s on the floating leg adds N s sum_i tau_i P(pay_i) to a payer (receives the floating leg);
+        zero spread = the swap of before."""
+        disc = self.mkt.get_ir_curve(tq.Currency.EUR)
+        s = 0.0025
+        for name in ("swap", "ois"):
+            q, term = TERMS[name]
+            base, wide = generators()[name].build(EVAL_DATE, q, term), generators()[name].build(EVAL_DATE, q, term,
+                                                                                            spread=s)
+            self.price(base)
+            self.price(wide)
+            expected = sum(NOTIONAL * s * c.accrual_period * float(disc.discount(c.date))
+                           for c in wide.floating_leg.leg_flows)
+            with self.subTest(product=name):
+                self.assertAlmostEqual(float(wide.price) - float(base.price), expected, delta=1e-6)
+                self.assertEqual(wide.spread, s)
+                self.assertAlmostEqual(float(base.price), PRICES[name], delta=1e-6)
+
+    def test_forward_start(self):
+        """Forward start: the swap starts the forward term after the spot date; its fair rate is the forward swap
+        rate, (P(start) - P(end)) / annuity on a single curve (OIS)."""
+        g = generators()["ois"]
+        spot = CAL.advance(EVAL_DATE, 2, tq.TimeUnit.Days, MF)
+        fwd = g.build(EVAL_DATE, 0.03, "2Y", forward="1Y")
+        self.assertEqual(fwd.start_date, CAL.advance(spot, 1, tq.TimeUnit.Years, MF))
+        self.assertEqual(fwd.end_date, CAL.advance(fwd.start_date, 2, tq.TimeUnit.Years, MF))
+        curve = self.mkt.get_ir_curve(tq.Currency.EUR)
+        annuity = sum(NOTIONAL * c.accrual_period * float(curve.discount(c.date)) for c in fwd.fixed_leg.leg_flows)
+        par = NOTIONAL * (float(curve.discount(fwd.start_date)) - float(curve.discount(fwd.end_date))) / annuity
+        at_par = g.build(EVAL_DATE, par, "2Y", forward="1Y")
+        self.price(at_par)
+        self.assertAlmostEqual(float(at_par.price), 0.0, delta=1e-6)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,9 +25,12 @@ class Swap(Product):
         day_counter_flt: DayCounter,
         index: Index,
         swap_type: SwapType = SwapType.Payer,
+        spread: float = 0.0,
     ) -> None:
+        """Fixed against floating swap (``spread``: added to the index rate of every floating coupon, decimal)."""
 
         super().__init__(ccy, start_date, end_date)
+        self._spread = float(spread)
 
         self._notional = notional
         self._day_counter_fix = day_counter_fix
@@ -38,7 +41,7 @@ class Swap(Product):
         self._rates = [fixed_rate] * len(pay_dates_fix)
         self._float_notionals = [notional] * len(pay_dates_flt)
         self._gearings = [1] * len(pay_dates_flt)
-        self._margins = [0] * len(pay_dates_flt)
+        self._margins = [self._spread] * len(pay_dates_flt)
 
         self._index = index
         self._swap_type = swap_type
@@ -108,6 +111,11 @@ class Swap(Product):
     @property
     def fixed_rate(self):
         return self._fixed_rate
+
+    @property
+    def spread(self) -> float:
+        """Spread over the index of the floating leg (decimal)."""
+        return self._spread
 
     @property
     def discount_curve(self) -> str:

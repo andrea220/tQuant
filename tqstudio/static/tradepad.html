@@ -60,6 +60,12 @@
           <div id="fields"></div>
         </div>
 
+        <div class="panel hidden" id="legs-panel">
+          <h2>Legs <span id="legs-npv" class="muted"></span></h2>
+          <div id="legs-summary" class="mini-info wide-info"></div>
+          <div class="legs" id="legs"></div>
+        </div>
+
         <div class="panel hidden" id="div-panel">
           <h2>Dividends to maturity <span id="div-total" class="muted"></span></h2>
           <div id="div-table" class="hscroll"></div>
@@ -87,8 +93,8 @@
           </div>
           <div class="panel" id="rho-panel">
             <h2>Rho per curve pillar <span class="muted">(1 bp)</span></h2>
-            <div id="chart-rho" class="chart"></div>
-            <div id="rho-table" class="hscroll" style="margin-top: 10px"></div>
+            <div id="rho-table" class="hscroll scroll-tall"></div>
+            <p id="rho-note" class="note"></p>
           </div>
         </div>
       </div>

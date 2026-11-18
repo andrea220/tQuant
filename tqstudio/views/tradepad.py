@@ -117,6 +117,41 @@ def _rate_currencies(mkt: tq.MarketEnvironment, needs: str) -> list[str]:
     return out
 
 
+FORWARD_STARTS = ["Spot", "1M", "3M", "6M", "1Y", "2Y", "3Y", "5Y", "10Y"]
+
+
+def swap_generators(mkt: tq.MarketEnvironment) -> dict:
+    """The swap generators of the curves in *mkt*, from their market conventions (``QUOTE_CONVENTIONS``, the same
+    ones the curves were bootstrapped with): ``{label: {ccy, curve, kind, conventions, discount, projection}}``."""
+    from tensorquant.markethandles.bootstrapping import QUOTE_CONVENTIONS
+
+    keys = mkt.risk_factors()
+    out = {}
+    for (ccy, name), conv in QUOTE_CONVENTIONS.items():
+        if f"IR:{ccy}:{name}:SPOT" not in keys:
+            continue
+        cal = type(conv["calendar"]()).__name__
+        lag = f"T+{conv['spot']}"
+        if conv["kind"] == "ois":
+            dc = conv["day_count"].name
+            label = f"{ccy} {name} OIS"
+            legs = {"fixed": f"1Y, {dc}", "floating": f"{name} compounded, 1Y, {dc}"}
+            discount = projection = f"IR:{ccy}:{name}:SPOT"
+        else:
+            if f"IR:{ccy}:{conv['discount']}:SPOT" not in keys:
+                continue
+            label = f"{ccy} {name} Euribor IRS" if ccy == "EUR" else f"{ccy} {name} IRS"
+            legs = {"fixed": f"{conv['fixed_period']}, {conv['fixed_day_count'].name}",
+                    "floating": f"{ccy} {name} index, {conv['index_months']}M, {conv['float_day_count'].name}"}
+            discount, projection = f"IR:{ccy}:{conv['discount']}:SPOT", f"IR:{ccy}:{name}:SPOT"
+        out[label] = {"ccy": ccy, "curve": name, "kind": conv["kind"], "discount": discount, "projection": projection,
+                      "spot": int(conv["spot"]), "calendar": conv["calendar"],
+                      "conventions": {"Spot lag": lag, "Calendar": cal, "Roll": "Modified Following",
+                                      "Fixed leg": legs["fixed"], "Floating leg": legs["floating"],
+                                      "Discount curve": discount, "Projection curve": projection}}
+    return out
+
+
 def catalog(mkt: tq.MarketEnvironment) -> dict:
     """Asset classes -> product types -> ``{fields, models}`` for the market *mkt* (the form of the Tradepad)."""
     tickers = equity_tickers(mkt)
@@ -154,12 +189,14 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
             "FRA": {"fields": rates_common("ibor") + [_select("start", "Start", ["1M", "3M", "6M", "9M", "12M", "18M"], "6M"),
                                                       _number("rate", "Rate (%)", 2.5, 0.01)],
                     "models": ["Discounting"]},
-            "Swap": {"fields": rates_common("ibor") + [swap_side(), _select("tenor", "Tenor", TENORS, "5Y"),
-                                                       _number("rate", "Fixed rate (%)", 2.5, 0.01)],
-                     "models": ["Discounting"]},
-            "OIS": {"fields": rates_common("ois") + [swap_side(), _select("tenor", "Tenor", TENORS, "5Y"),
-                                                     _number("rate", "Fixed rate (%)", 2.3, 0.01)],
-                    "models": ["Discounting"]},
+            "Swap": {"fields": [_select("generator", "Generator", list(swap_generators(mkt)))]
+                     + _group("Trade", _select("side", "Fixed leg", ["Pay fixed", "Receive fixed"]),
+                              _number("notional", "Notional", 1e7, 1e6),
+                              _select("forward", "Start", FORWARD_STARTS, "Spot"),
+                              _select("tenor", "Maturity", TENORS, "5Y"))
+                     + _group("Rates", _number("rate", "Fixed rate (%)", 2.5, 0.01),
+                              _number("spread_bp", "Floating spread (bp)", 0.0, 1.0)),
+                     "models": ["Discounting"], "legs": True},
             "Cap/Floor": {"fields": rates_common("caplet") + [_select("cap_floor", "Type", ["Cap", "Floor"]),
                                                               _select("tenor", "Maturity", TENORS[:-1], "5Y"),
                                                               _number("strike", "Strike (%)", 2.5, 0.05)],
@@ -194,7 +231,7 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
         },
     }
     products["Rates"] = {name: spec for name, spec in products["Rates"].items()      # products with data only
-                         if next(f for f in spec["fields"] if f["name"] == "ccy")["options"]}
+                         if spec["fields"][0]["options"]}
     return {"snapshot": mkt.evaluation_date.isoformat(), "asset_classes": products}
 
 
@@ -283,12 +320,11 @@ def _rates_product(mkt, f: dict, kind: str, rate_override: float = None):
         start = int(f["start"][:-1])
         return tq.FraGenerator(ccy, 2, 2, IBOR, MF, notional, A360, CAL, _ibor(ccy)).build(
             mkt.evaluation_date, rate, f"{start}M-{start + int(IBOR[:-1])}M")
-    if kind == "Swap":
-        return tq.SwapGenerator(ccy, 2, "1Y", IBOR, MF, notional, A360, A360, CAL, _ibor(ccy)).build(
-            mkt.evaluation_date, rate, f["tenor"])
-    if kind == "OIS":
-        return tq.OisGenerator(ccy, 2, "1Y", "1Y", MF, notional, A360, A360, CAL, tq.OvernightIndex(CAL, ccy)).build(
-            mkt.evaluation_date, rate, f["tenor"])
+    if kind == "Swap":                                  # the generator of the curve conventions (as the bootstrap)
+        g = f["_generator"]
+        forward = None if f.get("forward", "Spot") == "Spot" else f["forward"]
+        return tq.swap_generator(g["ccy"], g["curve"], notional).build(
+            mkt.evaluation_date, rate, f["tenor"], forward=forward, spread=float(f.get("spread_bp", 0.0)) / 1e4)
     caps = tq.CapFloorGenerator(ccy, 2, IBOR, MF, notional, A360, CAL, _ibor(ccy))
     if kind == "Cap/Floor":
         option_type = tq.OptionType.Call if f["cap_floor"] == "Cap" else tq.OptionType.Put
@@ -328,6 +364,52 @@ def _rho_buckets(mkt, greeks: dict, sign: float) -> list[dict]:
     return out
 
 
+def _sensitivity_table(mkt, greeks: dict, sign: float) -> dict | None:
+    """Rho of a rates product per curve pillar (1 bp) in two blocks: Par (to the quotes the curves were bootstrapped
+    from, :func:`par_sensitivities`; ``None`` for a curve without a stored Jacobian) and Zero (to the zero rates of the
+    pillars). Rows: the pillars of the curves by maturity, labelled by the tenor of their calibration instrument
+    (pillar dates for curves not built from quotes); the first row is the total.
+
+    Returns:
+        dict: ``curves`` (names), ``par_available`` (per curve), ``total`` and ``rows`` (``label``, ``par`` and
+        ``zero``: one value per curve, ``None`` where the curve has no such pillar), or ``None`` without curves.
+    """
+    from tensorquant.markethandles.bootstrapping import par_sensitivities
+
+    zero_keys = [k for k, blocks in greeks.items() if k.startswith("IR:") and k.endswith(":SPOT")
+                 and any(np.any(np.asarray(b)) for b in blocks)]
+    if not zero_keys:
+        return None
+    par = par_sensitivities(mkt, {k: greeks[k] for k in zero_keys})
+    keys = list(dict.fromkeys(zero_keys + [k for k, v in par.items() if v is not None and np.any(v.to_numpy())]))
+    rows, names = {}, []
+    for j, key in enumerate(keys):
+        _, ccy, name, _ = key.split(":")
+        names.append(f"{ccy} {name}")
+        curve = mkt.get_ir_curve(tq.Currency[ccy], name)
+        dv01 = getattr(curve, "calib_quote_dv01", None)
+        def tenor_label(label: str) -> str:              # 12M -> 1Y, 24M -> 2Y: one row per maturity across curves
+            n = label[:-1]
+            return f"{int(n) // 12}Y" if label.endswith("M") and n.isdigit() and int(n) % 12 == 0 else label
+
+        labels = ([tenor_label(lab.split(" ", 1)[1]) for lab in dv01.index]
+                  if dv01 is not None and len(dv01) == len(curve.pillars) else [_tenor(float(t)) for t in curve.pillars])
+        zero = [float(np.sum(b)) * 1e-4 * sign for b in greeks[key]] if key in greeks else [0.0] * len(labels)
+        par_values = par.get(key)
+        for i, (label, t) in enumerate(zip(labels, curve.pillars)):
+            row = rows.setdefault(label, {"label": label, "T": float(t), "par": [None] * len(keys),
+                                          "zero": [None] * len(keys)})
+            row["T"] = min(row["T"], float(t))
+            row["zero"][j] = zero[i]
+            if par_values is not None:
+                row["par"][j] = float(par_values.iloc[i]) * 1e-4 * sign
+    ordered = sorted(rows.values(), key=lambda r: r["T"])
+    available = [par.get(k) is not None for k in keys]
+    total = {"par": [sum(r["par"][j] or 0.0 for r in ordered) if available[j] else None for j in range(len(keys))],
+             "zero": [sum(r["zero"][j] or 0.0 for r in ordered) for j in range(len(keys))]}
+    return {"curves": names, "par_available": available, "total": total, "rows": ordered}
+
+
 def _equity_vega_map(eq, greeks: dict, scale: float) -> dict:
     vol_key = next(k for k in eq.risk_factors() if k.startswith("EQ:") and k.endswith(":VOL"))
     vega = scale * np.asarray(greeks[vol_key][0], float) / 100
@@ -352,6 +434,11 @@ def _fields(mkt, request: dict) -> tuple:
         raise ValueError(f"unknown product {request.get('asset_class')} / {request.get('product')}")
     fields = {fld["name"]: fld["default"] for fld in spec["fields"]}
     fields.update(request.get("fields", {}))
+    if "generator" in fields:                      # swaps: currency and curves from the generator
+        generator = swap_generators(mkt).get(fields["generator"])
+        if generator is None:
+            raise ValueError(f"unknown swap generator {fields['generator']}")
+        fields["ccy"], fields["_generator"] = generator["ccy"], generator
     return spec, fields
 
 
@@ -413,6 +500,75 @@ def market_inputs(mkt: tq.MarketEnvironment, request: dict) -> dict:
     return {"editable": {}, "info": info}
 
 
+def swap_legs(mkt: tq.MarketEnvironment, f: dict) -> dict:
+    """The swap of the deal fields *f* and its two legs on the market: per leg its direction, conventions, the curves
+    it is indexed to and discounted on, and one row per coupon (accrual start / end, payment date, fixing date,
+    year fraction, rate (fixed, or the index forward / past fixing), spread, amount, discount factor, PV), signed
+    for the deal's side (paid < 0, received > 0).
+
+    Returns:
+        dict: ``summary`` (``[label, value, decimals]``: generator conventions, dates), ``legs`` (fixed, floating)
+        and ``npv`` (sum of the leg PVs).
+    """
+    from tensorquant.pricers.floatingflow import FloatingCouponDiscounting, OisCouponDiscounting
+
+    g = f["_generator"]
+    product = _rates_product(mkt, f, "Swap")
+    ccy = tq.Currency[g["ccy"]]
+    discount = mkt.get_ir_curve(ccy, g["discount"].split(":")[2])
+    projection = mkt.get_ir_curve(ccy, g["projection"].split(":")[2])
+    pay_fixed = f.get("side", "Pay fixed") == "Pay fixed"
+    today = mkt.evaluation_date
+    fixed_rows, float_rows = [], []
+    for c in product.fixed_leg.leg_flows:
+        if c.date <= today:
+            continue
+        df = float(discount.discount(c.date))
+        amount = (-1 if pay_fixed else 1) * float(c.amount)
+        fixed_rows.append({"start": c.accrual_start_date.isoformat(), "end": c.accrual_end_date.isoformat(),
+                           "payment": c.date.isoformat(), "fixing": None, "year_fraction": float(c.accrual_period),
+                           "rate": float(product.fixed_rate), "spread": None, "amount": amount, "df": df,
+                           "pv": amount * df})
+    ois = g["kind"] == "ois"
+    cal = g["calendar"]()
+
+    def fixing_date(start):                             # the index fixing: spot lag business days before the start
+        d, n = start, g["spot"]
+        while n > 0:
+            d -= timedelta(days=1)
+            if cal.is_business_day(d):
+                n -= 1
+        return d
+
+    for c in product.floating_leg.leg_flows:
+        if c.date <= today:
+            continue
+        flow = OisCouponDiscounting(c) if ois else FloatingCouponDiscounting(c)
+        rate = float(flow.floating_rate(c.ref_period_start, c.ref_period_end, projection))
+        spread = float(c._spread)
+        df = float(discount.discount(c.date))
+        amount = (1 if pay_fixed else -1) * c.nominal * (rate + spread) * float(c.accrual_period)
+        fixing = None if ois else fixing_date(c.accrual_start_date)
+        float_rows.append({"start": c.accrual_start_date.isoformat(), "end": c.accrual_end_date.isoformat(),
+                           "payment": c.date.isoformat(), "fixing": fixing.isoformat() if fixing else None,
+                           "year_fraction": float(c.accrual_period), "rate": rate, "spread": spread, "amount": amount,
+                           "df": df, "pv": amount * df,
+                           "known": bool(fixing is not None and fixing <= today)})
+    conv = g["conventions"]
+    fixed_name, float_name = ("Pay", "Receive") if pay_fixed else ("Receive", "Pay")
+    legs = [{"name": "Fixed leg", "direction": fixed_name, "conventions": conv["Fixed leg"],
+             "index": None, "projection": None, "discount": g["discount"], "rows": fixed_rows,
+             "pv": sum(r["pv"] for r in fixed_rows)},
+            {"name": "Floating leg", "direction": float_name, "conventions": conv["Floating leg"],
+             "index": f"{g['ccy']} {g['curve']}" + (" overnight (compounded)" if ois else " Ibor"),
+             "projection": g["projection"], "discount": g["discount"], "rows": float_rows,
+             "pv": sum(r["pv"] for r in float_rows)}]
+    summary = [["Generator", f["generator"], None], ["Start date", product.start_date.isoformat(), None],
+               ["Maturity date", product.end_date.isoformat(), None]] + \
+              [[k, v, None] for k, v in conv.items() if k not in ("Fixed leg", "Floating leg")]
+    return {"summary": summary, "legs": legs, "npv": legs[0]["pv"] + legs[1]["pv"]}
+
+
 def describe_trade(mkt: tq.MarketEnvironment, request: dict) -> dict:
     """The trade built from the deal fields, before pricing: its main terms and, for the autocallable, the schedule
     (one row per fixing: fixing date, autocall date when it is an autocall observation, payment date, coupon
@@ -422,6 +578,8 @@ def describe_trade(mkt: tq.MarketEnvironment, request: dict) -> dict:
         dict: ``summary`` (``[label, value, decimals]``) and ``schedule`` (list of rows, or ``None``).
     """
     _, f = _fields(mkt, request)
+    if request.get("product") == "Swap":
+        return {**swap_legs(mkt, f), "schedule": None}
     if request.get("product") != "Autocallable":
         return {"summary": [], "schedule": None}
     product = _autocallable(mkt, f)
@@ -615,7 +773,7 @@ def _equity_greeks(mkt, state: dict) -> dict:
 
 def _price_rates(mkt, kind, f) -> dict:
     sign = -1.0 if f.get("position") == "Short" else 1.0
-    if kind in ("Swap", "OIS") and f.get("side") == "Receiver":
+    if kind == "Swap" and f.get("side") == "Receive fixed":
         sign = -sign                                  # the generators build payers (pay fixed)
     product = _rates_product(mkt, f, kind)
     pricer = tq.PricerAssignment.create(product)
@@ -627,10 +785,11 @@ def _price_rates(mkt, kind, f) -> dict:
     pricing_s = time.perf_counter() - t0
     price = sign * float(product.price)
     rho = _rho_buckets(mkt, greeks, sign)
+    sens_table = _sensitivity_table(mkt, greeks, sign)
     headline = [["PV", price, 2]]
     info = [["Currency", ccy, None], ["Notional", float(f["notional"]), 0]]
 
-    if kind in ("FRA", "Swap", "OIS"):                # fair rate: the PV is linear in the fixed rate
+    if kind in ("FRA", "Swap"):                       # fair rate: the PV is linear in the fixed rate
         r0, h = float(f["rate"]) / 100, 1e-4
         bumped = _rates_product(mkt, f, kind, r0 + h)
         tq.PricerAssignment.create(bumped).price(bumped, mkt)
@@ -661,7 +820,7 @@ def _price_rates(mkt, kind, f) -> dict:
                     "y": [_tenor(float(t)) for t in vs.maturity], "y_title": "expiry", "total": float(g.sum())}
         headline.append([f"Vega ({unit})", vega["total"], 2])
     headline.append(["Pricing [s]", pricing_s, 2])
-    return {"headline": headline, "info": info, "vega": vega, "rho": rho}
+    return {"headline": headline, "info": info, "vega": vega, "rho": rho, "sens_table": sens_table}
 
 
 def price_trade(mkt: tq.MarketEnvironment, cache: ModelCache, request: dict, n_paths: int = 50_000,

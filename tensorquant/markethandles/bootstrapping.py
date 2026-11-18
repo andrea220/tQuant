@@ -40,6 +40,36 @@ QUOTE_CONVENTIONS = {
 }
 
 
+def swap_generator(ccy: str, curve: str, notional: float = 1.0):
+    """The swap generator of a curve's market conventions (``QUOTE_CONVENTIONS``): :class:`OisGenerator` for an
+    overnight curve (annual fixed and compounded overnight legs), :class:`SwapGenerator` for an Ibor one (fixed leg of
+    ``fixed_period`` / ``fixed_day_count`` against the index); the instruments of the bootstrap and of the trade capture.
+
+    Args:
+        ccy (str): Currency code (``"EUR"``).
+        curve (str): Curve name (``"ESTR"``, ``"6M"``).
+        notional (float): Notional of the swaps built.
+
+    Raises:
+        KeyError: A curve without conventions.
+    """
+    conv = QUOTE_CONVENTIONS[(ccy, curve)]
+    currency = Currency[ccy]
+    cal, mf = conv["calendar"](), BusinessDayConvention.ModifiedFollowing
+    if conv["kind"] == "ois":
+        return OisGenerator(currency, conv["spot"], "1Y", "1Y", mf, notional, conv["day_count"], conv["day_count"], cal,
+                            OvernightIndex(cal, currency))
+    months = conv["index_months"]
+    return SwapGenerator(currency, conv["spot"], conv["fixed_period"], f"{months}M", mf, notional,
+                         conv["fixed_day_count"], conv["float_day_count"], cal,
+                         IborIndex(cal, months, TimeUnit.Months, currency))
+
+
+def _curve_of(conv: dict) -> str:
+    """The curve name of a ``QUOTE_CONVENTIONS`` entry."""
+    return next(name for (_, name), value in QUOTE_CONVENTIONS.items() if value is conv)
+
+
 def _quote_instrument(ccy: Currency, conv: dict, instrument: str, tenor: str, quote: float, today: datetime.date):
     """The calibration instrument of one quote (notional 1)."""
     cal, mf = conv["calendar"](), BusinessDayConvention.ModifiedFollowing
@@ -48,8 +78,7 @@ def _quote_instrument(ccy: Currency, conv: dict, instrument: str, tenor: str, qu
             return DepositGenerator(ccy, 0, mf, conv["day_count"], 1.0, cal).build(today, quote, "ON")
         if instrument != "ois":
             raise ValueError(f"OIS curve: unexpected instrument '{instrument}'")
-        return OisGenerator(ccy, conv["spot"], "1Y", "1Y", mf, 1.0, conv["day_count"], conv["day_count"], cal,
-                            OvernightIndex(cal, ccy)).build(today, quote, tenor)
+        return swap_generator(ccy.value, _curve_of(conv), 1.0).build(today, quote, tenor)
     months = conv["index_months"]
     index = IborIndex(cal, months, TimeUnit.Months, ccy)
     if instrument in ("fixing", "fra"):
@@ -57,8 +86,7 @@ def _quote_instrument(ccy: Currency, conv: dict, instrument: str, tenor: str, qu
         end = months if instrument == "fixing" else _tenor_months(tenor)
         return fra.build(today, quote, f"{end - months}M-{end}M")    # the fixing: a spot FRA on the index tenor
     if instrument == "swap":
-        return SwapGenerator(ccy, conv["spot"], conv["fixed_period"], f"{months}M", mf, 1.0, conv["fixed_day_count"],
-                             conv["float_day_count"], cal, index).build(today, quote, tenor)
+        return swap_generator(ccy.value, _curve_of(conv), 1.0).build(today, quote, tenor)
     raise ValueError(f"Ibor curve: unexpected instrument '{instrument}'")
 
 
@@ -148,6 +176,85 @@ def bootstrap_from_quotes(quotes: pd.DataFrame, evaluation_date: datetime.date,
         return out
     finally:
         Settings.evaluation_date = previous
+
+
+def _discount_dependency(curve: RateCurve, ccy: str, name: str, market_env: MarketEnvironment, disc_key: str):
+    """``dNPV_i / dz_disc`` of the calibration instruments of an Ibor curve w.r.t. the pillars of its discount curve
+    (``[n_instruments, n_disc_pillars]``), the instruments rebuilt from the stored quotes (labels ``"<instrument>
+    <tenor>"``); cached on the curve."""
+    cached = getattr(curve, "_discount_dependency", None)
+    if cached is not None:
+        return cached
+    conv = QUOTE_CONVENTIONS[(ccy, name)]
+    today = curve.reference_date
+    disc = market_env.get_ir_curve(Currency[ccy], conv["discount"])
+    previous = Settings.evaluation_date
+    Settings.evaluation_date = today
+    try:
+        rows = []
+        for label, quote in curve.calibration_quotes.items():
+            instrument, tenor = label.split(" ", 1)
+            product = _quote_instrument(Currency[ccy], conv, instrument, tenor, float(quote), today)
+            pricer = PricerAssignment.create(product)
+            with tf.GradientTape() as tape:
+                price = pricer.calculate_price(product, market_env)
+            grads = tape.gradient(price, disc.variables)
+            rows.append([0.0 if g is None else float(g) for g in grads])
+    finally:
+        Settings.evaluation_date = previous
+    curve._discount_dependency = numpy.array(rows)
+    return curve._discount_dependency
+
+
+def par_sensitivities(market_env: MarketEnvironment, zero_greeks: dict) -> dict:
+    """Sensitivities to the market quotes the curves were bootstrapped from (par sensitivities), from the
+    sensitivities to their zero rates and the stored bootstrap Jacobians: ``dV/dq = dV/dz (-J^-1) diag(dNPV_i/dq_i)``
+    per curve. An Ibor curve discounted on an OIS curve moves when the OIS quotes move (it is rebootstrapped on the new
+    discount curve): its zero sensitivity is first carried to the OIS pillars,
+    ``dV/dz_ois += dV/dz_ibor (-J_ibor^-1 dNPV_ibor/dz_ois)``, before the OIS curve is mapped to its quotes.
+
+    Args:
+        market_env (MarketEnvironment): The market with the curves (``jacobian``, ``calib_quote_dv01``,
+            ``calibration_quotes`` from the bootstrap or the stored snapshot).
+        zero_greeks (dict): ``{market key: [gradient per pillar variable]}`` of a price w.r.t. the curve pillars
+            (e.g. ``tape.gradient(price, market_env.risk_factors())``), per unit of zero rate.
+
+    Returns:
+        dict: ``{market key: pd.Series}`` of ``dV/dq`` per unit of quote, indexed by the calibration instruments
+        (``"ois 5Y"``, ``"swap 10Y"``, ...), for the curves with zero sensitivities and a stored Jacobian; ``None``
+        for a curve without one (not bootstrapped from quotes).
+    """
+    def vector(blocks) -> numpy.ndarray:
+        return numpy.array([0.0 if b is None else float(numpy.sum(b)) for b in blocks])
+
+    s = {k: vector(v) for k, v in zero_greeks.items() if k.startswith("IR:") and k.endswith(":SPOT")}
+    keys = list(s)
+    for key in keys:                                       # Ibor curves: carried to their discount curve first
+        _, ccy, name, _ = key.split(":")
+        conv = QUOTE_CONVENTIONS.get((ccy, name))
+        curve = market_env.get_ir_curve(Currency[ccy], name)
+        if conv is None or conv["kind"] != "ibor" or getattr(curve, "jacobian", None) is None:
+            continue
+        disc_key = f"IR:{ccy}:{conv['discount']}:SPOT"
+        if not numpy.any(s[key]):
+            continue
+        b = _discount_dependency(curve, ccy, name, market_env, disc_key)
+        dz = -numpy.linalg.solve(curve.jacobian.to_numpy(float), b)          # dz_ibor / dz_disc
+        disc = market_env.get_ir_curve(Currency[ccy], conv["discount"])
+        s.setdefault(disc_key, numpy.zeros(len(disc.variables)))
+        s[disc_key] = s[disc_key] + s[key] @ dz
+    out = {}
+    for key, sz in s.items():
+        _, ccy, name, _ = key.split(":")
+        curve = market_env.get_ir_curve(Currency[ccy], name)
+        jac = getattr(curve, "jacobian", None)
+        dv01 = getattr(curve, "calib_quote_dv01", None)
+        if jac is None or dv01 is None:
+            out[key] = None
+            continue
+        x = numpy.linalg.solve(jac.to_numpy(float).T, sz)                  # (dV/dz) J^-1, transposed
+        out[key] = pd.Series(-x * dv01.to_numpy(float), index=list(dv01.index))
+    return out
 
 
 def calibration_frames(curves: dict) -> tuple:

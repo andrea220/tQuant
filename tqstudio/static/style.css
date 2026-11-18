@@ -170,6 +170,23 @@ button.modal-close { width: auto; margin: 0; padding: 2px 10px; background: none
 button.modal-close:hover { background: var(--accent-soft); color: var(--text); }
 body.modal-open { overflow: hidden; }
 
+/* tradepad: rho table (Par / Zero x curves) */
+.scroll-tall { max-height: 520px; overflow: auto; }
+.sens-grid tr.total-row td { font-weight: 700; background: #f8f9fc; border-bottom: 1px solid var(--line); }
+.sens-grid td.group-start { text-align: right; }
+
+/* tradepad: swap legs side by side */
+.legs { display: grid; grid-template-columns: repeat(auto-fit, minmax(520px, 1fr)); gap: 14px; margin-top: 12px; }
+.leg { margin-bottom: 0; }
+.leg-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.leg-head .subpanel-title { margin-bottom: 0; }
+.leg-pv { margin-left: auto; font-variant-numeric: tabular-nums; }
+.leg-info { grid-template-columns: 1fr 1fr; margin: 0 0 10px; }
+.leg-table { font-size: 12px; }
+.leg-table th, .leg-table td { padding: 4px 7px; }
+.pill.pay { background: #fdecea; color: var(--neg); }
+.pill.receive { background: #e6f4ee; color: var(--pos); }
+
 /* market data: fit to the listed options */
 .fit-switches { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
 .fit-switches .segmented { flex: 1 1 340px; margin-bottom: 10px; }

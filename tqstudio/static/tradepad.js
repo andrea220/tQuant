@@ -139,7 +139,9 @@ function renderForm(keep = {}) {
 }
 
 function showModelFields() {
-  document.querySelectorAll(".mc").forEach((e) => e.classList.toggle("hidden", $("model").value === "Black-Scholes"));
+  // Monte Carlo settings only for the Monte Carlo models (not Black-Scholes, discounting, analytic rates pricers)
+  const closedForm = /^(Black-Scholes|Discounting|Analytic)/.test($("model").value);
+  document.querySelectorAll(".mc").forEach((e) => e.classList.toggle("hidden", closedForm));
 }
 
 function selectProduct(product) {
@@ -213,6 +215,52 @@ async function loadMarket() {
   } catch (e) {
     $("market-info").innerHTML = `<span class="error">${e.message}</span>`;
   }
+  loadLegs();
+}
+
+// swaps: the two legs and their cash flows on the market (fixed and floating, curves, PV), at every deal change
+async function loadLegs() {
+  const show = Boolean(spec().legs);
+  $("legs-panel").classList.toggle("hidden", !show);
+  if (!show) return;
+  try {
+    const res = await fetch("/api/tradepad/trade", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dealRequest()) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    renderLegs(data);
+  } catch (e) {
+    $("legs").innerHTML = `<span class="error">${e.message}</span>`;
+  }
+}
+
+function renderLegs(data) {
+  $("legs-npv").textContent = `(NPV of the flows ${fmtValue(data.npv, 2)})`;
+  $("legs-summary").innerHTML = data.summary.map(([l, v, d]) =>
+    `<div><span class="muted">${l}</span><b>${fmtValue(v, d)}</b></div>`).join("");
+  const num = (x, d) => (x === null || x === undefined ? "" : fmtValue(x, d));
+  $("legs").innerHTML = data.legs.map((leg) => {
+    const floating = leg.projection !== null;
+    const head = ["Start", "End", "Payment", ...(floating ? ["Fixing"] : []), "Year frac.", "Rate %",
+      ...(floating ? ["Spread bp"] : []), "Amount", "DF", "PV"];
+    const rows = leg.rows.map((r) => `<tr><td>${r.start}</td><td>${r.end}</td><td>${r.payment}</td>`
+      + (floating ? `<td>${r.fixing ? r.fixing + (r.known ? ' <span class="pill">fixed</span>' : "") : "compounded"}</td>` : "")
+      + `<td>${num(r.year_fraction, 5)}</td><td>${num(100 * r.rate, 4)}</td>`
+      + (floating ? `<td>${num(1e4 * r.spread, 1)}</td>` : "")
+      + `<td>${num(r.amount, 2)}</td><td>${num(r.df, 6)}</td><td>${num(r.pv, 2)}</td></tr>`).join("");
+    const dir = leg.direction === "Pay" ? "pay" : "receive";
+    return `<div class="subpanel leg">
+      <div class="leg-head"><span class="subpanel-title">${leg.name}</span><span class="pill ${dir}">${leg.direction}</span>
+        <span class="leg-pv">PV <b>${fmtValue(leg.pv, 2)}</b></span></div>
+      <div class="mini-info leg-info">
+        <div><span class="muted">Conventions</span><b>${leg.conventions}</b></div>
+        ${floating ? `<div><span class="muted">Index</span><b>${leg.index}</b></div>
+        <div><span class="muted">Projection curve</span><b>${leg.projection}</b></div>` : ""}
+        <div><span class="muted">Discount curve</span><b>${leg.discount}</b></div>
+      </div>
+      <div class="hscroll"><table class="leg-table"><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead>
+        <tbody>${rows}</tbody></table></div></div>`;
+  }).join("");
 }
 
 // equity products: the underlying's dividends with ex-date up to the expiry
@@ -285,15 +333,31 @@ function render(d) {
 
   $("rho-panel").classList.toggle("hidden", !d.rho.length);
   if (d.rho.length) {
-    Plotly.react($("chart-rho"), d.rho.map((r) => ({ type: "bar", name: r.curve, x: r.dates, y: r.rho })),
-      { margin: { l: 60, r: 20, t: 10, b: 50 }, font: FONT, paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
-        barmode: "group", showlegend: true, legend: { orientation: "h", y: 1.12 }, xaxis: { title: "pillar", ...AXIS },
-        yaxis: { title: "rho (1 bp)", ...AXIS }, colorway: ["#1f4fa8", "#e8833a", "#12805c"] },
-      { displaylogo: false, responsive: true });
-    const head = "<tr><th>Curve</th>" + d.rho[0].dates.map((x) => `<th>${x}</th>`).join("") + "<th>Total</th></tr>";
-    const body = d.rho.map((r) => `<tr><td>${r.curve}</td>` + r.rho.map((x) => `<td>${fmtValue(x, 2)}</td>`).join("")
-      + `<td><b>${fmtValue(r.total, 2)}</b></td></tr>`).join("");
-    $("rho-table").innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+    const t = d.sens_table;
+    if (t) {                                     // pillars x (Par | Zero) x curves, total first
+      const n = t.curves.length;
+      const cell = (x, ok = true) => `<td>${!ok ? '<span class="muted">n/a</span>' : x === null ? "" : fmtValue(x, 2)}</td>`;
+      const head = `<tr><th rowspan="2">Pillar</th><th colspan="${n}" class="group-start group-title">Par</th>`
+        + `<th colspan="${n}" class="group-start group-title">Zero</th></tr><tr>`
+        + t.curves.map((c, j) => `<th class="${j === 0 ? "group-start" : ""}">${c}</th>`).join("")
+        + t.curves.map((c, j) => `<th class="${j === 0 ? "group-start" : ""}">${c}</th>`).join("") + "</tr>";
+      const row = (label, par, zero, cls = "") => `<tr class="${cls}"><td>${label}</td>`
+        + par.map((x, j) => cell(x, t.par_available[j]).replace("<td>", j === 0 ? '<td class="group-start">' : "<td>")).join("")
+        + zero.map((x, j) => cell(x).replace("<td>", j === 0 ? '<td class="group-start">' : "<td>")).join("") + "</tr>";
+      const body = row("Total", t.total.par, t.total.zero, "total-row")
+        + t.rows.map((r) => row(r.label, r.par, r.zero)).join("");
+      $("rho-table").innerHTML = `<table class="fit-grid sens-grid"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+      const missing = t.curves.filter((c, j) => !t.par_available[j]);
+      $("rho-note").textContent = "Par: to the market quotes the curves are bootstrapped from (curve rebootstrapped; "
+        + "the Ibor curve moves with its discount curve). Zero: to the zero rates of the pillars, the other curves held."
+        + (missing.length ? ` No par sensitivity for ${missing.join(", ")} (no stored bootstrap Jacobian).` : "");
+    } else {
+      const head = "<tr><th>Curve</th>" + d.rho[0].dates.map((x) => `<th>${x}</th>`).join("") + "<th>Total</th></tr>";
+      const body = d.rho.map((r) => `<tr><td>${r.curve}</td>` + r.rho.map((x) => `<td>${fmtValue(x, 2)}</td>`).join("")
+        + `<td><b>${fmtValue(r.total, 2)}</b></td></tr>`).join("");
+      $("rho-table").innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+      $("rho-note").textContent = "";
+    }
   }
   $("results-section").classList.remove("hidden");
   $("empty").classList.add("hidden");

@@ -141,6 +141,26 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       (`sigma_times="caplets"`: one vol per caplet, `fixed={"a": ...}`): every ATM caplet repriced (< 0.001bp,
       constant HW: rms 3bp).
 
+- [x] Par sensitivities (`par_sensitivities(market_env, zero_greeks)`, `markethandles/bootstrapping.py`): sensitivity
+      to the quotes the curves were bootstrapped from, `dV/dq = dV/dz (-J^-1) diag(dNPV_i/dq_i)` from the zero
+      sensitivities (AAD) and the stored bootstrap Jacobian and quote DV01s; an Ibor curve discounted on an OIS curve is
+      carried to the OIS pillars first (`dz_ibor/dz_ois = -J_ibor^-1 dNPV_ibor/dz_ois`, the calibration instruments
+      rebuilt from the stored quotes and repriced with AAD, cached on the curve). Tests (`test_par_sensitivities.py`):
+      a calibration instrument (ESTR OIS 5Y, 6M swap 10Y, FRA, 6M fixing) has minus its quote DV01 on its own quote and
+      zero (1e-6 relative) on every other quote, ESTR quotes included for the 6M instruments; a 1Yx4Y 6M swap: sum of
+      par sensitivities x 1bp = PV change under a parallel 1bp move of every quote with both curves rebootstrapped
+      (within 2%, slow). In the Tradepad (rates products): rho table pillars x (Par | Zero) x curves, total first, Par
+      n/a for curves without a Jacobian. Real 5Y EUR 6M swap at the market par rate (2026-11-13): all its par
+      sensitivity on the 5Y swap quote (4563.6 per bp on 10M), zero on the ESTR quotes; first call per snapshot about
+      8 s (the 6M instruments repriced against ESTR), then 0.3 s.
+- [x] Tradepad swap screen on generators (`swap_generator(ccy, curve)`: the conventions of the bootstrap,
+      `QUOTE_CONVENTIONS`; the bootstrap uses it too): EUR 6M Euribor IRS (fixed 1Y 30/360, 6M Act/360, discounted on
+      ESTR), EUR ESTR / USD SOFR / GBP SONIA OIS; forward start and a floating spread (`Swap` / `Ois` `spread`,
+      generators `forward`, `spread`); the two legs with their flows, index, projection and discount curves. The old
+      screen had an Act/360 fixed leg and TARGET for every currency: the par rates now equal the Bloomberg quotes
+      (EUR 6M 2Y / 5Y / 10Y 3.382 / 3.387 / 3.433, ESTR 5Y 3.096, SOFR 5Y 4.671). Tests: spread = N s sum tau P, forward
+      start (`test_rate_pricers.py`), legs' PV = pricer PV in 5 cases (`test_tqstudio_tradepad_swap.py`).
+
 ## 4. Stochastic processes & Monte Carlo (`models/`, MC pricers, `analytics/`)
 
 - [x] dtype policy: **float64 everywhere** (decided; no float32 casts): GBM/ABM, `LocalVolatilityModel`,

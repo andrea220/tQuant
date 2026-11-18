@@ -27,9 +27,12 @@ class Ois(Product):
         day_counter_flt: DayCounter,
         index: OvernightIndex,
         swap_type: SwapType = SwapType.Payer,
+        spread: float = 0.0,
     ):
+        """Overnight index swap (``spread``: added to the compounded overnight rate of every floating coupon)."""
 
         super().__init__(ccy, start_date, end_date)
+        self._spread = float(spread)
 
         self._notional = notional
         self._day_counter_fix = day_counter_fix
@@ -39,7 +42,7 @@ class Ois(Product):
         self._notionals = [notional] * len(pay_dates_fix)
         self._rates = [fixed_rate] * len(pay_dates_fix)
         self._gearings = [1] * len(pay_dates_flt)
-        self._margins = [0] * len(pay_dates_flt)
+        self._margins = [self._spread] * len(pay_dates_flt)
         self._index = index
         self._swap_type = swap_type
 
@@ -104,6 +107,11 @@ class Ois(Product):
             FloatingRateLeg: The floating leg of the swap.
         """
         return self._floating_leg
+
+    @property
+    def spread(self) -> float:
+        """Spread over the compounded overnight rate (decimal)."""
+        return self._spread
 
     @property
     def fixed_rate(self):

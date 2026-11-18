@@ -148,8 +148,7 @@ fixings and correlations of daily log returns. Left:
       `UnitedKingdom` for SOFR / SONIA.
 - [ ] Check the bootstrapped curves against the internal service once available.
 - [ ] **Short end of the Ibor projection curves (synthetic deposits).** EUR 6M has no quote before its first pillar (the 6M fixing as a spot FRA 0x6, 2027-05-17 = 0.507Y on 2026-11-13): the first segment [0, 6M] is pure monotone convex interpolation, the instantaneous forward rises from 2.83% to a hump of 3.43-3.55% at 0.5-0.55Y and drops to 3.25% at 0.6Y (ESTR, quoted from 1W, has none). The quoted FRAs (1x7 to 12x18, monthly) are repriced exactly, so the 6M forwards at the FRA start dates are the market's; broken-date 6M fixings and the forward plot depend on the interpolation. Plan: synthetic deposits on the 6M curve at 1W, 1M, 2M, 3M, 4M, 5M with rate = ESTR simple rate on the same period + spread, spread = 6M fixing - ESTR 6M simple rate (about 57bp on 2026-11-13); not the 1M / 3M Euribor fixings (other indices, tenor basis 3M/6M of 10-15bp would put a step at 6M). Marked `synthetic` in `ir_calibration.csv`; their rates as functions of the ESTR curve and the 6M fixing, so that the par sensitivities map their risk to real quotes (ESTR members and the fixing), not to quotes that do not exist. Tests: quoted instruments still repriced to 0, no hump in the instantaneous forward below 1Y, par sensitivities of a short 6M-indexed product only on real quotes and equal to bump-and-rebootstrap.
-- [ ] Par sensitivities from the stored Jacobian: `dV/dq = dV/dr . (-J^-1) . diag(dNPV_i/dq_i)` per curve, in the
-      Tradepad and the portfolio views.
+- [ ] Par sensitivities in the portfolio views (done in the library and the Tradepad: see `DEVELOPMENT_LOG.md`).
 - [ ] Vol surfaces of caps / swaptions and FX from the internal service (`mdbuild/internal.py`): no BVOL (equity
       vols and repo: from the listed options, done).
 - [ ] Implied spot (SPX): the anchor expiry has zero repo by construction; a futures-based spot (ES) or a repo
@@ -206,10 +205,6 @@ fixings and correlations of daily log returns. Left:
 
 Sensitivities:
 
-- [ ] **Par sensitivities of the curves**: `CurveBootstrap.strip` stores `dNPV_i/dz_j` (`curve.jacobian`) and
-      `dNPV_k/dq_k` (`curve.calib_quote_dv01`) but nothing combines them. Par sensy `s_q = s_z dz/dq` with
-      `dz/dq = -(dNPV/dz)^-1 dNPV/dq` from the zero sensy `s_z` (rho per pillar, AAD). Test: par sensy of a calibration
-      instrument = its own quote DV01 on itself and 0 on the others; sum of par sensies vs a parallel quote bump.
 - [ ] **Calibration Jacobians, rest**: done for Heston and displaced diffusion (`EquityModel.jacobian`,
       `par_greeks`, equal to the AAD through the calibration: see `DEVELOPMENT_LOG.md`). Left: Hull-White / G2++
       (`calibrate_gaussian_short_rate`), the portfolio mapping (sum of `dV/dp` per underlying, one product), and the
