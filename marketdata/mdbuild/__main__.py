@@ -43,9 +43,15 @@ def build_vols(folder: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="mdbuild", description=__doc__)
-    parser.add_argument("--universe", default=str(BASE / "config" / "universe.yaml"))
-    parser.add_argument("--settings", default=str(BASE / "config" / "settings.yaml"))
+    parser.add_argument("--root", default=str(BASE),
+                        help="market data folder: config, snapshots, history, caches (default: this marketdata folder)")
+    parser.add_argument("--universe", help="default <root>/config/universe.yaml")
+    parser.add_argument("--settings", help="default <root>/config/settings.yaml")
     args = parser.parse_args()
+    root = Path(args.root)
+    args.universe = args.universe or str(root / "config" / "universe.yaml")
+    args.settings = args.settings or str(root / "config" / "settings.yaml")
+    print(f"market data folder {root}", flush=True)
     settings = yaml.safe_load(Path(args.settings).read_text(encoding="utf-8"))
     universe = load_universe(Path(args.universe))
     if settings.get("options"):
@@ -57,7 +63,7 @@ def main() -> None:
     hist = settings["history"]
     with BloombergSource(bbg["host"], bbg["port"], bbg["timeout_ms"], hist.get("adjust_splits", True),
                          hist.get("adjust_dividends", False)) as source:
-        folder = run(source, universe, settings, BASE, now, curves)
+        folder = run(source, universe, settings, root, now, curves)
     if (folder / "ir_quotes.csv").is_file():
         bootstrap_curves(folder)
     if (folder / "eq_option_quotes.csv").is_file():

@@ -10,8 +10,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from tqstudio.views.universe import (DownloadRuns, add_ticker, read_universe, remove_ticker,  # noqa: E402
-                                     universe_view)
+import socket  # noqa: E402
+from tqstudio.views.universe import (DownloadRuns, add_ticker, allowed_client, app_settings,  # noqa: E402
+                                     bloomberg_endpoint, bloomberg_reachable, read_universe, remove_ticker,
+                                     resolve_python, server_authorized, universe_view)
 
 UNIVERSE = """\
 tickers:
@@ -243,6 +245,109 @@ class TestDownloadRuns(unittest.TestCase):
         self.assertNotEqual(status["exit_code"], 0)
         self.assertIsNone(status["result"])
         self.assertTrue(any("ValueError" in e for e in status["errors"]))
+
+    def test_python_from_the_settings(self):
+        """Without a command: the first Python of the settings that exists and imports blpapi; none: a clear error
+        before starting anything."""
+        import tqstudio.views.universe as module
+        reachable, module.bloomberg_reachable = module.bloomberg_reachable, lambda host, port: True   # a terminal
+        self.addCleanup(setattr, module, "bloomberg_reachable", reachable)
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = Path(tmp) / "settings.yaml"
+            settings.write_text("python:\n  - " + str(Path(tmp) / "missing.exe") + "\n  - current\n",
+                                encoding="utf-8")
+            runs = DownloadRuns(cwd=Path(tmp), settings=settings)
+            try:
+                import blpapi  # noqa: F401
+                has_blpapi = True
+            except ImportError:
+                has_blpapi = False
+            if has_blpapi:                                  # the test Python: `python -m mdbuild` fails here (no module)
+                status = self.wait(runs) if runs.start() else None
+                self.assertEqual(status["python"], sys.executable)
+            settings.write_text("python:\n  - " + str(Path(tmp) / "missing.exe") + "\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                DownloadRuns(cwd=Path(tmp), settings=settings).start()
+
+
+class TestTerminalCheck(unittest.TestCase):
+    """The download checks the Bloomberg port before starting: no terminal, an error at once."""
+
+    def test_closed_and_open_port(self):
+        import socket as sk
+        server = sk.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+        try:
+            self.assertTrue(bloomberg_reachable("localhost", port))
+        finally:
+            server.close()
+        t0 = time.perf_counter()
+        self.assertFalse(bloomberg_reachable("localhost", port))             # nothing listens any more
+        self.assertLess(time.perf_counter() - t0, 3.0)
+
+    def test_no_terminal_no_process(self):
+        """A closed port: start raises at once (the page shows the popup), nothing is started."""
+        import socket as sk
+        probe = sk.socket()
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()                                                       # a free port: nothing listens
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config").mkdir()
+            (root / "config" / "settings.yaml").write_text(f"bloomberg:\n  host: localhost\n  port: {port}\n",
+                                                          encoding="utf-8")
+            self.assertEqual(bloomberg_endpoint(root), ("localhost", port))
+            runs = DownloadRuns(cwd=root, root=root)
+            t0 = time.perf_counter()
+            with self.assertRaises(ValueError) as err:
+                runs.start()
+            self.assertLess(time.perf_counter() - t0, 3.0)
+            self.assertIn("Bloomberg terminal", str(err.exception))
+            self.assertIsNone(runs.run)                                     # no process
+
+
+class TestAppSettings(unittest.TestCase):
+
+    def test_resolve_python(self):
+        """Candidates in order: a missing path skipped, an interpreter without the module skipped, ``current`` =
+        the running Python."""
+        self.assertEqual(resolve_python(["C:/no/such/python.exe", "current"], module="json"), sys.executable)
+        self.assertEqual(resolve_python([sys.executable], module="json"), sys.executable)
+        with self.assertRaises(ValueError) as err:
+            resolve_python(["C:/no/such/python.exe", "current"], module="no_such_module_xyz")
+        self.assertIn("not found", str(err.exception))
+        self.assertIn("no no_such_module_xyz", str(err.exception))
+
+    def test_authorized_pcs_only(self):
+        """Only the list counts: no pc by default, not even this one; a local request is this machine by its name."""
+        me = socket.gethostname()
+        self.assertFalse(allowed_client("127.0.0.1", []))                   # this pc, not in an empty list
+        self.assertFalse(allowed_client("127.0.0.1", ["OTHER-PC-XYZ"]))
+        self.assertTrue(allowed_client("127.0.0.1", [me]))                  # this pc, by its name
+        self.assertTrue(allowed_client("::1", [me.lower()]))                # names case-insensitive
+        self.assertFalse(allowed_client(None, [me]))
+        self.assertTrue(allowed_client("10.1.2.3", ["10.1.2.3"]))           # another pc by IP
+        self.assertFalse(allowed_client("10.1.2.4", ["10.1.2.3", "no-such-host-xyz.invalid"]))
+
+    def test_server_authorized(self):
+        """A download needs this machine in the list (the shared app, on a pc without a terminal, never downloads)."""
+        me = socket.gethostname()
+        self.assertTrue(server_authorized([me]))
+        self.assertFalse(server_authorized(["OTHER-PC-XYZ", "10.1.2.3"]))
+        self.assertFalse(server_authorized([]))
+
+    def test_settings_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = Path(tmp) / "settings.yaml"
+            empty.write_text("marketdata_roots:\n  - C:/x\n", encoding="utf-8")
+            self.assertEqual(app_settings(empty), {"authorized_pcs": [], "python": ["current"]})
+            self.assertEqual(app_settings(Path(tmp) / "missing.yaml"), {"authorized_pcs": [], "python": ["current"]})
+        real = app_settings()                                                 # tqstudio/config.yaml
+        self.assertIn(socket.gethostname().upper(), [p.upper() for p in real["authorized_pcs"]])
+        self.assertEqual(real["python"][-1], "current")
 
 
 if __name__ == "__main__":

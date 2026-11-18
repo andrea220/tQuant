@@ -19,6 +19,8 @@ import tensorquant as tq
 from tensorquant.calibration.models import (STALE_VOLPTS, check_calibration, list_calibration_sets,
                                             load_calibration_set, load_model, model_test)
 
+from ..paths import MARKETDATA
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -169,7 +171,7 @@ def parameter_view(model) -> dict:
 def _quotes(folder: Path, ticker: str, expiries: list[str]) -> dict:
     """Bid / mid / ask vols of the option quotes of the source snapshot, per listed expiry (``{}`` without them)."""
     info = load_calibration_set(folder)["info"]
-    snap = ROOT.parent / "marketdata" / "live" / date.fromisoformat(info["snapshot"]["date"]).strftime("%Y%m%d") \
+    snap = MARKETDATA / "live" / date.fromisoformat(info["snapshot"]["date"]).strftime("%Y%m%d") \
         / info["snapshot"]["set"] / "eq_vol_quotes.csv"
     if not snap.is_file():
         return {}
@@ -240,7 +242,7 @@ class CalibrationRuns:
 # universe: the models to calibrate per underlying (marketdata/config/calibration.yaml)
 # ----------------------------------------------------------------------------------------------------------------------
 
-CONFIG = ROOT.parent / "marketdata" / "config" / "calibration.yaml"
+CONFIG = MARKETDATA / "config" / "calibration.yaml"
 MODELS = {"equity": ["Heston", "DisplacedDiffusion", "HestonSLV"], "rates": ["HullWhite", "G2pp"], "fx": []}
 SUPPORTED = {"Heston", "DisplacedDiffusion", "HestonSLV"}     # models of the calibration sets (rates: not yet)
 

@@ -34,6 +34,8 @@ class BloombergSource:
         options = blpapi.SessionOptions()
         options.setServerHost(host)
         options.setServerPort(int(port))
+        options.setNumStartAttempts(1)                  # a closed terminal fails in seconds (default: 3 x 5 s)
+        options.setConnectTimeout(3000)
         self._session = blpapi.Session(options)
         if not self._session.start():
             raise ConnectionError(f"cannot start a Bloomberg session on {host}:{port} (is the terminal running?)")

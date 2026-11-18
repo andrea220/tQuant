@@ -25,13 +25,14 @@ from .views.calibration import (CalibrationRuns, save_flags, set_folder, set_vie
 from .views.market import catalog, equity_tickers, fit_view, fx_view, market_view, rates_view, snapshots
 from .views.tradepad import ModelCache, describe_trade, market_inputs, price_trade
 from .views.tradepad import catalog as tradepad_catalog
-from .views.universe import DownloadRuns, add_ticker, remove_ticker
+from .paths import MARKETDATA
+from .views.universe import DownloadRuns, add_ticker, allowed_client, app_settings, remove_ticker, server_authorized
 from .views.universe import universe_view as market_universe_view
 
 ROOT = Path(__file__).resolve().parent
 DATA_SOURCE = os.environ.get("TQSTUDIO_DATA", "live")   # live: Bloomberg snapshots; synthetic: generated ones
-MARKET_DATA = ROOT.parent / "marketdata" / ("live" if DATA_SOURCE == "live" else "")
-CALIBRATIONS = ROOT.parent / "marketdata" / "calibrations" / DATA_SOURCE   # calibration sets (git-ignored)
+MARKET_DATA = MARKETDATA / ("live" if DATA_SOURCE == "live" else "")     # the shared market data folder
+CALIBRATIONS = MARKETDATA / "calibrations" / DATA_SOURCE                    # calibration sets (git-ignored)
 DOCS_BUILD = ROOT.parent / "study" / "docs" / "build"      # LaTeX builds (latexmk in study/docs; not in git)
 DOCUMENTS = {"models": ("Models and Pricing", "models_and_pricing.pdf"),
              "technical": ("Architecture", "architecture.pdf")}
@@ -188,8 +189,15 @@ _refreshed = {"result": None}                         # the last download whose 
 
 
 def is_local(request: Request) -> bool:
-    """The request comes from this machine (downloads and universe changes are allowed from here only)."""
-    return request.client is not None and request.client.host in ("127.0.0.1", "::1", "localhost")
+    """The request comes from an authorized pc (``authorized_pcs`` of ``tqstudio/config.yaml``, read at each request):
+    it may change the universe."""
+    return allowed_client(request.client.host if request.client else None, app_settings()["authorized_pcs"])
+
+
+def can_download(request: Request) -> bool:
+    """A download may start: live data, this machine authorized (it has the Bloomberg terminal the download runs on)
+    and the request from an authorized pc."""
+    return DATA_SOURCE == "live" and server_authorized(app_settings()["authorized_pcs"]) and is_local(request)
 
 
 @app.get("/api/market/universe")
@@ -203,7 +211,8 @@ def market_universe(request: Request, date: Optional[str] = None, set: Optional[
         cset = set if set in day["sets"] else day["sets"][0]
         folder = MARKET_DATA / day["date"].replace("-", "") / cset
     return {**market_universe_view(folder), "source": DATA_SOURCE,
-            "can_download": DATA_SOURCE == "live" and is_local(request), "can_edit": is_local(request),
+            "can_download": can_download(request), "can_edit": is_local(request),
+            "server_authorized": server_authorized(app_settings()["authorized_pcs"]),
             "download": downloads.status()}
 
 
@@ -211,7 +220,7 @@ def market_universe(request: Request, date: Optional[str] = None, set: Optional[
 def market_universe_add(request: Request, body: dict = Body(...)) -> dict:
     """Add a Bloomberg ticker to the universe (``{"asset_class", "ticker"}``): downloaded at the next download."""
     if not is_local(request):
-        raise HTTPException(status_code=403, detail="the universe can be changed only from the pc running tqstudio")
+        raise HTTPException(status_code=403, detail="the universe can be changed only from the pcs of authorized_pcs (tqstudio/config.yaml)")
     try:
         return add_ticker(body.get("asset_class", ""), body.get("ticker", ""))
     except ValueError as exc:
@@ -222,7 +231,7 @@ def market_universe_add(request: Request, body: dict = Body(...)) -> dict:
 def market_universe_remove(request: Request, body: dict = Body(...)) -> dict:
     """Remove a ticker from the universe (``{"asset_class", "ticker"}``): commented out, not downloaded any more."""
     if not is_local(request):
-        raise HTTPException(status_code=403, detail="the universe can be changed only from the pc running tqstudio")
+        raise HTTPException(status_code=403, detail="the universe can be changed only from the pcs of authorized_pcs (tqstudio/config.yaml)")
     try:
         return remove_ticker(body.get("asset_class", ""), body.get("ticker", ""))
     except ValueError as exc:
@@ -233,11 +242,18 @@ def market_universe_remove(request: Request, body: dict = Body(...)) -> dict:
 def market_download(request: Request) -> dict:
     if DATA_SOURCE != "live":
         raise HTTPException(status_code=400, detail="downloads write live snapshots: start tqstudio with --data live")
+    if not server_authorized(app_settings()["authorized_pcs"]):
+        raise HTTPException(status_code=403, detail="Not authorized: this tqstudio runs on a pc without a Bloomberg "
+                                                    "terminal (not in authorized_pcs of tqstudio/config.yaml). Start "
+                                                    "the download from the tqstudio of an authorized pc: its snapshot "
+                                                    "appears here.")
     if not is_local(request):
-        raise HTTPException(status_code=403, detail="downloads can be started only from the pc running tqstudio")
+        who = request.client.host if request.client else "unknown"
+        raise HTTPException(status_code=403, detail=f"Not authorized: your pc ({who}) is not in authorized_pcs of "
+                                                    "tqstudio/config.yaml, the pcs allowed to start downloads.")
     try:
         return downloads.start()
-    except ValueError as exc:
+    except ValueError as exc:                          # already running, or no Python with blpapi
         raise HTTPException(status_code=409, detail=str(exc))
 
 

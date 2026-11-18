@@ -56,6 +56,16 @@
           <div id="uv-table2" class="hscroll" style="margin-top: 14px"></div>
           <p id="dl-note" class="note"></p>
           <pre id="dl-log" class="log hidden"></pre>
+          <div class="modal hidden" id="dl-error">
+            <div class="modal-box panel dl-error-box" role="alertdialog" aria-modal="true" aria-labelledby="dl-error-title">
+              <div class="modal-head">
+                <h2 id="dl-error-title" class="error">Download failed</h2>
+                <button id="dl-error-close" class="modal-close" aria-label="Close">&times;</button>
+              </div>
+              <p id="dl-error-text"></p>
+              <details id="dl-error-details"><summary class="muted">Details</summary><pre id="dl-error-log" class="log"></pre></details>
+            </div>
+          </div>
         </div>
       </div>
 

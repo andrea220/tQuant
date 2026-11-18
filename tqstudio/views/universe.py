@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -19,7 +20,8 @@ import pandas as pd
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-MARKETDATA = ROOT.parent / "marketdata"
+from ..paths import CODE_MARKETDATA, MARKETDATA  # noqa: E402  (shared data; mdbuild code in the repository)
+
 UNIVERSE = MARKETDATA / "config" / "universe.yaml"
 
 
@@ -28,7 +30,7 @@ def _mdbuild_universe():
     package); registered in ``sys.modules`` before running, as its dataclasses need."""
     name = "_tqstudio_mdbuild_universe"
     if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, MARKETDATA / "mdbuild" / "universe.py")
+        spec = importlib.util.spec_from_file_location(name, CODE_MARKETDATA / "mdbuild" / "universe.py")
         module = importlib.util.module_from_spec(spec)
         sys.modules[name] = module
         spec.loader.exec_module(module)
@@ -269,21 +271,119 @@ def remove_ticker(asset_class: str, ticker: str, path: Path = UNIVERSE) -> dict:
     raise ValueError(f"'{ticker}' not found in tickers / equity_indices")
 
 
-class DownloadRuns:
-    """``python -m mdbuild`` (from ``marketdata/``) started from the app in a separate process, one at a time; its
-    output read back. The Bloomberg terminal must be running on this machine."""
+from ..paths import CONFIG as APP_CONFIG  # noqa: E402  (tqstudio/config.yaml: authorized pcs, Python)
+LOCAL_HOSTS = ("127.0.0.1", "::1", "localhost")
 
-    def __init__(self, cwd: Path = MARKETDATA, command=None):
+
+def app_settings(path: Path = APP_CONFIG) -> dict:
+    """The rules of the app in ``tqstudio/config.yaml``: ``authorized_pcs`` (the pcs, by name or IP, allowed to change
+    the universe and to start downloads: the ones with a Bloomberg terminal; no pc is allowed by default) and ``python``
+    (interpreters for the download, tried in order; ``current`` = the one running tqstudio). Defaults when missing."""
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) if Path(path).is_file() else {}
+    app = data or {}
+    return {"authorized_pcs": [str(c).strip() for c in app.get("authorized_pcs") or []],
+            "python": [str(c).strip() for c in app.get("python") or ["current"]]}
+
+
+def _identities(host: str) -> set[str]:
+    """Names and addresses of the machine of *host* (this machine, by its name and addresses, for a local request)."""
+    if host in LOCAL_HOSTS:
+        name = socket.gethostname()
+        try:
+            addresses = set(socket.gethostbyname_ex(name)[2])
+        except OSError:
+            addresses = set()
+        return {name.lower(), *addresses, *LOCAL_HOSTS}
+    return {host.lower()}
+
+
+def allowed_client(host: str | None, pcs: list[str]) -> bool:
+    """Whether a request from *host* comes from one of the authorized *pcs* (names or IPs; names resolved at each
+    call, so an IP that changes keeps its name; a local request is this machine, by its name). Only the list counts:
+    no pc is allowed by default."""
+    if host is None or not pcs:
+        return False
+    ids = _identities(host)
+    for pc in pcs:
+        if pc.lower() in ids:
+            return True
+        try:
+            if ids & {info[4][0] for info in socket.getaddrinfo(pc, None)}:
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def server_authorized(pcs: list[str]) -> bool:
+    """Whether this machine (the one running tqstudio, where a download runs on its Bloomberg terminal) is one of the
+    authorized *pcs*: the shared app, on a machine without a terminal, never starts a download."""
+    return allowed_client("127.0.0.1", pcs)
+
+
+def resolve_python(candidates: list[str], module: str = "blpapi") -> str:
+    """The first interpreter of *candidates* that exists and imports *module* (``current`` = ``sys.executable``).
+
+    Raises:
+        ValueError: None of them does (the message lists what was tried and why).
+    """
+    tried = []
+    for candidate in candidates:
+        exe = sys.executable if candidate == "current" else candidate
+        if not Path(exe).is_file():
+            tried.append(f"{candidate}: not found")
+            continue
+        check = subprocess.run([exe, "-c", f"import {module}"], capture_output=True, text=True, timeout=60)
+        if check.returncode == 0:
+            return exe
+        tried.append(f"{candidate}: no {module}")
+    raise ValueError("no Python for the download: " + "; ".join(tried))
+
+
+def bloomberg_endpoint(root: Path = MARKETDATA) -> tuple[str, int]:
+    """Host and port of the Bloomberg terminal of the downloads (``bloomberg`` in ``<root>/config/settings.yaml``)."""
+    data = yaml.safe_load((Path(root) / "config" / "settings.yaml").read_text(encoding="utf-8")) or {}
+    bbg = data.get("bloomberg") or {}
+    return str(bbg.get("host", "localhost")), int(bbg.get("port", 8194))
+
+
+def bloomberg_reachable(host: str, port: int, timeout: float = 1.0) -> bool:
+    """Whether something listens on the Bloomberg port (the terminal's API service): a TCP connection, in about
+    *timeout* seconds at most (``localhost`` as 127.0.0.1: no wait on the IPv6 address first)."""
+    address = "127.0.0.1" if host in ("localhost", "::1") else host
+    try:
+        socket.create_connection((address, int(port)), timeout=timeout).close()
+        return True
+    except OSError:
+        return False
+
+
+class DownloadRuns:
+    """``python -m mdbuild --root <market data folder>`` (the code of the repository, the data of the shared folder)
+    started from the app in a separate process, one at a time; its output read back. The Bloomberg terminal must be
+    running on this machine. The interpreter is the first of the ``python`` candidates of the settings with ``blpapi``
+    (:func:`resolve_python`), unless *command* is given."""
+
+    def __init__(self, cwd: Path = CODE_MARKETDATA, command=None, settings: Path = APP_CONFIG, root: Path = MARKETDATA):
         self.cwd = Path(cwd)
-        self.command = command or [sys.executable, "-u", "-m", "mdbuild"]
+        self.root = Path(root)
+        self.command = command
+        self.settings = Path(settings)
         self.run = None
 
     def start(self) -> dict:
         if self.run is not None and self.run["process"].poll() is None:
             raise ValueError("a download is already running")
+        if self.command is None:                       # no process without a terminal: the error at once
+            host, port = bloomberg_endpoint(self.root)
+            if not bloomberg_reachable(host, port):
+                raise ValueError(f"ConnectionError: cannot reach the Bloomberg terminal on {host}:{port} "
+                                 "(is the terminal running?)")
+        command = self.command or [resolve_python(app_settings(self.settings)["python"]), "-u", "-m", "mdbuild",
+                                   "--root", str(self.root)]
         log = []
         env = {**os.environ, "PYTHONIOENCODING": "utf-8", "TF_ENABLE_ONEDNN_OPTS": "0"}
-        process = subprocess.Popen(self.command, cwd=self.cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        process = subprocess.Popen(command, cwd=self.cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                    text=True, encoding="utf-8", errors="replace", bufsize=1, env=env)
 
         def read():
@@ -293,7 +393,7 @@ class DownloadRuns:
 
         reader = threading.Thread(target=read, daemon=True)
         reader.start()
-        self.run = {"process": process, "log": log, "reader": reader,
+        self.run = {"process": process, "log": log, "reader": reader, "python": command[0],
                     "started": datetime.now().isoformat(timespec="seconds"), "t0": time.perf_counter(), "t1": None}
         return self.status()
 
@@ -306,6 +406,6 @@ class DownloadRuns:
             self.run["t1"] = time.perf_counter()
         end = self.run["t1"] or time.perf_counter()
         result = next((l.split("-> ")[-1].strip() for l in log if l.startswith("snapshot ->")), None)
-        return {"running": code is None, "exit_code": code, "started": self.run["started"],
+        return {"running": code is None, "exit_code": code, "started": self.run["started"], "python": self.run["python"],
                 "seconds": round(end - self.run["t0"], 1), "result": result, "log": log[-12:],
                 "errors": [l for l in log if "Error" in l or "Traceback" in l][-5:]}

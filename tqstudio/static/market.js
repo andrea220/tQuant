@@ -495,14 +495,18 @@ function renderUniverse() {
   document.querySelectorAll("#view-universe button.remove").forEach((b) =>
     b.addEventListener("click", () => removeTicker(b.dataset.ticker)));
   $("uv-add").classList.toggle("hidden", !d.can_edit);
-  $("dl-start").classList.toggle("hidden", !d.can_download);
+  $("dl-start").classList.toggle("hidden", d.source !== "live");   // pressed where not allowed: the popup says why
   const notes = [];
   if (state.cls === "rates") notes.push("Add ticker adds a rate fixing; new curves need their quote conventions in tQuant.");
   notes.push(d.can_download
     ? "Download now downloads the whole universe from the Bloomberg terminal of this pc, then bootstraps the curves " +
       "and builds the equity vols (a few minutes); the new snapshot becomes the latest one."
     : d.source !== "live" ? "Downloads are available with the live data (python -m tqstudio)."
-      : "Tickers can be added and downloads started only from the pc running tqstudio (its Bloomberg terminal).");
+      : !d.server_authorized
+        ? "This tqstudio runs on a pc without a Bloomberg terminal: downloads start from the tqstudio of an authorized pc "
+          + "(authorized_pcs in tqstudio/config.yaml); its snapshots appear here."
+        : "Tickers can be added and downloads started only from the authorized pcs (authorized_pcs in "
+          + "tqstudio/config.yaml).");
   $("dl-note").textContent = notes.join(" ");
   showDownload(d.download);
 }
@@ -566,20 +570,57 @@ async function removeTicker(ticker) {
   }
 }
 
+// download errors: a popup, closed once (the run it belongs to is remembered: it does not come back on a reload)
+const DISMISSED_KEY = "tqstudio.downloadErrorDismissed";
+function dismissedRun() {
+  try { return localStorage.getItem(DISMISSED_KEY); } catch (e) { return state.dismissedRun || null; }
+}
+function rememberDismissed(id) {
+  state.dismissedRun = id;
+  try { localStorage.setItem(DISMISSED_KEY, id); } catch (e) { /* private window: this page only */ }
+}
+
+function showDownloadError(message, log = [], runId = null) {
+  const terminal = /ConnectionError|Bloomberg session|terminal running/i.test(message);
+  const denied = /^Not authorized/.test(message);
+  $("dl-error-title").textContent = denied ? "Not authorized"
+    : terminal ? "Bloomberg terminal not reachable" : "Download failed";
+  $("dl-error-text").textContent = denied ? message.replace(/^Not authorized:\s*/, "")
+    : terminal
+      ? `${message.replace(/^\w*Error:\s*/, "")}. Open the Bloomberg terminal on this pc, log in, then press Download now again.`
+      : message;
+  $("dl-error-log").textContent = log.join("\n");
+  $("dl-error-details").classList.toggle("hidden", !log.length);
+  $("dl-error").dataset.run = runId || "";
+  $("dl-error").classList.remove("hidden");
+}
+
+function closeDownloadError() {
+  const box = $("dl-error");
+  if (box.classList.contains("hidden")) return;
+  box.classList.add("hidden");
+  if (box.dataset.run) rememberDismissed(box.dataset.run);
+}
+
 function showDownload(run) {
   const log = $("dl-log");
   $("dl-start").disabled = Boolean(run && run.running);
-  if (!run || (!run.running && run.exit_code === undefined)) { log.classList.add("hidden"); return; }
+  log.classList.add("hidden");
+  if (!run || (!run.running && run.exit_code === undefined)) return;
   if (run.running) {
     $("dl-status").textContent = `Downloading… started ${run.started.slice(11)} (${fmt(run.seconds, 0)} s)`;
+    log.textContent = (run.log || []).join("\n");
+    log.classList.toggle("hidden", !(run.log || []).length);
   } else if (run.exit_code === 0) {
-    $("dl-status").textContent = `Last download done in ${fmt(run.seconds, 0)} s: ${run.result || ""}`;
+    $("dl-status").textContent = `Last download done in ${fmt(run.seconds, 0)} s: ${run.result || ""}`
+      + (run.python ? ` (Python ${run.python})` : "");
   } else {
-    $("dl-status").innerHTML = `<span class="error">Last download failed (exit ${run.exit_code}): ` +
-      `${(run.errors || []).slice(-1)[0] || ""}</span>`;
+    $("dl-status").textContent = "";
+    if (run.started !== dismissedRun()) {
+      showDownloadError((run.errors || []).slice(-1)[0] || `the download ended with exit code ${run.exit_code}`,
+        run.log || [], run.started);
+    }
   }
-  log.textContent = (run.log || []).join("\n");
-  log.classList.toggle("hidden", !(run.log || []).length);
 }
 
 async function pollDownload() {
@@ -590,15 +631,16 @@ async function pollDownload() {
 }
 
 async function startDownload() {
-  if (!confirm("Download the whole market data universe from Bloomberg now?")) return;
+  const allowed = state.universeData && state.universeData.can_download;
+  if (allowed && !confirm("Download the whole market data universe from Bloomberg now?")) return;   // not allowed: the reason at once
   try {
     const res = await fetch("/api/market/download", { method: "POST" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
     showDownload(data);
     setTimeout(pollDownload, 3000);
-  } catch (e) {
-    $("dl-status").innerHTML = `<span class="error">${e.message}</span>`;
+  } catch (e) {                                   // not started: not authorized, no Python with blpapi, already running
+    showDownloadError(e.message);
   }
 }
 
@@ -707,6 +749,9 @@ async function init() {
   $("uv-add-cancel").addEventListener("click", () => showAddForm(false));
   $("uv-ticker").addEventListener("keydown", (e) => { if (e.key === "Enter") addTicker(); });
   $("dl-start").addEventListener("click", startDownload);
+  $("dl-error-close").addEventListener("click", closeDownloadError);
+  $("dl-error").addEventListener("click", (e) => { if (e.target === $("dl-error")) closeDownloadError(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDownloadError(); });
   state.universe = p.get("universe") === "1";
   await loadSnapshot(CLASSES[p.get("class")] ? p.get("class") : "equity", p.get("item"));
   openUniverse(state.universe);

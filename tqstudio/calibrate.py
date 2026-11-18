@@ -20,8 +20,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 DATA_SOURCE = os.environ.get("TQSTUDIO_DATA", "live")
-MARKET_DATA = ROOT.parent / "marketdata" / ("live" if DATA_SOURCE == "live" else "")
-CALIBRATIONS = ROOT.parent / "marketdata" / "calibrations" / DATA_SOURCE
+from .paths import MARKETDATA  # noqa: E402  (the shared market data folder)
+
+MARKET_DATA = MARKETDATA / ("live" if DATA_SOURCE == "live" else "")
+CALIBRATIONS = MARKETDATA / "calibrations" / DATA_SOURCE
 
 
 def snapshot_folder(day: str = None, calibration_set: str = None) -> Path:

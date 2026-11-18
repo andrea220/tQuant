@@ -169,6 +169,9 @@ button.modal-close { width: auto; margin: 0; padding: 2px 10px; background: none
                      line-height: 1; font-weight: 400; }
 button.modal-close:hover { background: var(--accent-soft); color: var(--text); }
 body.modal-open { overflow: hidden; }
+.dl-error-box { width: min(640px, 92vw); }
+.dl-error-box h2.error { color: var(--neg); }
+.dl-error-box p { margin: 0 0 12px; font-size: 14px; }
 
 /* tradepad: rho table (Par / Zero x curves) */
 .scroll-tall { max-height: 520px; overflow: auto; }
