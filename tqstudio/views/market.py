@@ -49,9 +49,47 @@ def _expiry(mkt: tq.MarketEnvironment, t: float) -> str:
     return (mkt.evaluation_date + timedelta(days=int(round(365 * t)))).isoformat()
 
 
-def rates_view(mkt: tq.MarketEnvironment, ccy: str, name: str) -> dict:
+INTERPOLATION_LABELS = {"LINEAR": "Linear zero rates", "MONOTONE_CONVEX": "Monotone convex (Hagan-West)"}
+
+
+def curve_quotes(curve, folder: Path | None, ccy: str, name: str) -> list[dict] | None:
+    """The market quotes the curve was bootstrapped from: per member of the Bloomberg curve its tenor, instrument,
+    quote, Bloomberg ticker and last update (``ir_quotes.csv`` of the snapshot), with the pillar date and the quote
+    DV01 of the bootstrap when it used the quote (``used`` False: a quote dropped for ending on the same date as an
+    earlier one). ``None`` for a curve not built from quotes."""
+    path = Path(folder) / "ir_quotes.csv" if folder is not None else None
+    if path is None or not path.is_file():
+        return None
+    q = pd.read_csv(path)
+    q = q[(q["ccy"] == ccy) & (q["curve"].astype(str) == name)]
+    if q.empty:
+        return None
+    dv01 = getattr(curve, "calib_quote_dv01", None)
+    instruments = dict(getattr(curve, "calibration_instruments", None) or [])
+    cal_path = Path(folder) / "ir_calibration.csv"
+    end_dates = {}
+    if cal_path.is_file():
+        cal = pd.read_csv(cal_path)
+        cal = cal[(cal["ccy"] == ccy) & (cal["curve"].astype(str) == name)]
+        end_dates = dict(zip(cal["instrument"], cal["end_date"]))
+    rows = []
+    for r in q.itertuples(index=False):
+        label = f"{r.instrument} {r.tenor}"
+        used = dv01 is not None and label in dv01.index
+        end = end_dates.get(label)
+        if end is None and label in instruments:
+            end = instruments[label].end_date.isoformat()
+        rows.append({"tenor": r.tenor, "instrument": r.instrument, "quote": float(r.quote),
+                     "bloomberg": getattr(r, "bloomberg", None), "last_update": str(getattr(r, "last_update", "") or ""),
+                     "used": bool(used), "end_date": end,
+                     "quote_dv01": float(dv01[label]) if used else None})
+    return rows
+
+
+def rates_view(mkt: tq.MarketEnvironment, ccy: str, name: str, folder: Path | None = None) -> dict:
     """Curve *ccy* / *name*: zero rates and discount factors at the pillars and standard tenors, zero and
-    instantaneous forward curves; caplet vols and the swaption cube of the index when the market has them.
+    instantaneous forward curves, interpolation, the market quotes it was bootstrapped from (snapshot *folder*);
+    caplet vols and the swaption cube of the index when the market has them.
 
     Raises:
         KeyError: If the curve is not in the market.
@@ -68,7 +106,9 @@ def rates_view(mkt: tq.MarketEnvironment, ccy: str, name: str) -> dict:
     grid = np.linspace(1 / 365, last, N_GRID)
     out = {"summary": {"curve": name, "currency": ccy, "key": curve.name, "snapshot": mkt.evaluation_date.isoformat(),
                        "pillars": len(pillars), "last_pillar": curve.dates[-1].isoformat(),
-                       "daycount": str(curve.daycounter_convention.name)},
+                       "daycount": str(curve.daycounter_convention.name),
+                       "interpolation": INTERPOLATION_LABELS.get(curve.interpolation_type, curve.interpolation_type)},
+           "quotes": curve_quotes(curve, folder, ccy, name),
            "pillars": [{"date": d.isoformat(), "T": t, "zero_rate": float(r), "discount_factor": float(curve.discount(t))}
                        for d, t, r in zip(curve.dates, pillars, np.asarray(curve.rates, float))],
            "tenors": tenors,

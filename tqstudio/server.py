@@ -171,7 +171,11 @@ def market_equity_fit(ticker: str, date: Optional[str] = None, set: Optional[str
 
 @app.get("/api/market/rates/{ccy}/{curve}")
 def market_rates(ccy: str, curve: str, date: Optional[str] = None, set: Optional[str] = None) -> dict:
-    return _view("rates", f"{ccy}:{curve}", date, set, lambda mkt: rates_view(mkt, ccy, curve))
+    def build(mkt):
+        folder = MARKET_DATA / mkt.evaluation_date.strftime("%Y%m%d") / str(mkt.calibration_set)
+        return rates_view(mkt, ccy, curve, folder)
+
+    return _view("rates", f"{ccy}:{curve}", date, set, build)
 
 
 @app.get("/api/market/fx/{pair}")

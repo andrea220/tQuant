@@ -348,7 +348,23 @@ let swaption = null;
 function renderRates(d) {
   const s = d.summary;
   $("ir-summary").innerHTML = cards([["Curve", `${s.currency} ${s.curve}`], ["Pillars", s.pillars],
-    ["Last pillar", s.last_pillar], ["Day count", s.daycount], ["Key", s.key]]);
+    ["Last pillar", s.last_pillar], ["Day count", s.daycount], ["Interpolation", s.interpolation], ["Key", s.key]]);
+  const quotes = d.quotes || [];
+  $("ir-quotes-panel").classList.toggle("hidden", !quotes.length);
+  if (quotes.length) {
+    const used = quotes.filter((q) => q.used).length;
+    $("ir-quotes-note").textContent = `${quotes.length} quotes, ${used} used in the bootstrap (one pillar per end date)`;
+    $("ir-quotes").innerHTML = table([
+      ["Tenor", (q) => q.tenor],
+      ["Instrument", (q) => ({ fixing: "Fixing", ois: "OIS", fra: "FRA", swap: "Swap" })[q.instrument] || q.instrument],
+      ["Quote %", (q) => pct(q.quote, 4)],
+      ["Bloomberg ticker", (q) => q.bloomberg || ""],
+      ["Last update", (q) => q.last_update || ""],
+      ["Pillar date", (q) => q.end_date || ""],
+      ["DV01 (1 bp, 1M notional)", (q) => (q.quote_dv01 === null ? "" : fmt(q.quote_dv01 * 100, 0))],
+      ["Used", (q) => (q.used ? "yes" : '<span class="muted">no</span>')],
+    ], quotes);
+  }
   $("ir-tenors").innerHTML = table([["Tenor", (r) => r.tenor], ["Zero %", (r) => pct(r.zero_rate, 4)],
     ["DF", (r) => fmt(r.discount_factor, 6)], ["3M fwd %", (r) => pct(r.forward_3m, 4)]], d.tenors);
   $("ir-pillars").innerHTML = table([["Date", (r) => r.date], ["T", (r) => fmt(r.T)],
