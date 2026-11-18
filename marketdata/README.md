@@ -34,7 +34,7 @@ A run updates the history (only the missing days; a new ticker gets the whole wi
 | `ir_fixings.csv` | `index, ccy, fixing_date, value` (decimal), `bloomberg` | `PX_LAST`, `LAST_UPDATE_DT` |
 | `ir_quotes.csv` | `ccy, curve, tenor, instrument, quote, bloomberg, last_update`: members of the ICVS curves of `universe.yaml` (`curves:`), mid, decimal; `fixing`, `fra`, `ois`, `swap`. tQuant bootstraps the curves on load | `CURVE_TENOR_RATES` |
 | `ir_curves.csv`, `ir_curves_jacobian.csv`, `ir_calibration.csv` | the curves bootstrapped from `ir_quotes.csv` right after the download (zero rates at the pillars), `dNPV_i / dr_j`, quotes and `dNPV_i / dq_i` for the par sensitivities: written when tensorquant is installed (optional), otherwise tQuant bootstraps on load | tQuant `bootstrap_snapshot` |
-| `correlations.csv` | `factor_1, factor_2, corr`: daily log returns, last 252 common dates; factors `EQ:<ccy>:<ticker>`, `FX:<quote>:<pair>` | history |
+| `correlations.csv` | `factor_1, factor_2, corr`: weekly log returns (Friday closes), correlations over every 13-week window of the 10-year history; per pair the 90th percentile between equities (stressed, for worst-of) and the median for the pairs with an FX rate (sign kept, for the quanto); the matrix repaired to a valid correlation (`snapshot_info.json`: settings, smallest eigenvalue before the repair, largest change); factors `EQ:<ccy>:<ticker>`, `FX:<quote>:<pair>` | history |
 | `snapshot_info.json` | time, universe, fields, row counts, what is missing | |
 
 The tables follow `MarketEnvironment.from_folder`; equity tickers are the Bloomberg ones without the yellow key,

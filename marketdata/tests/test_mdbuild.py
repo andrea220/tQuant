@@ -12,7 +12,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mdbuild.history import correlations, read_history, update_history   # noqa: E402
+from mdbuild.history import (correlations, nearest_correlation, read_history, rolling_correlations,  # noqa: E402
+                             update_history)
 from mdbuild.snapshot import build_tables, curve_quotes, run             # noqa: E402
 from mdbuild.universe import Curve, load_curves, load_universe, parse    # noqa: E402
 
@@ -123,6 +124,73 @@ class TestHistory(unittest.TestCase):
             self.assertEqual(len(full[full.ticker == "AAA IM Equity"]), len(pd.bdate_range("2016-11-12", TODAY)))
             self.assertLess(full["date"].min(), first["date"].max())
 
+    def test_rolling_percentile_correlations(self):
+        """Weekly log returns (Friday closes), 13-week windows along the history; per pair the 90th percentile
+        between equities and the median for the pairs with an FX rate: equal to a direct loop over the windows
+        (np.corrcoef, np.percentile); the equity pair above its full-sample correlation."""
+        src = FakeSource()
+        hist = src.history(TICKERS[:3], "PX_LAST", date(2016, 1, 1), TODAY)
+        names = {"AAA IM Equity": "EQ:EUR:AAA_IM", "BBB US Equity": "EQ:USD:BBB_US", "EURUSD Curncy": "FX:USD:EURUSD"}
+        out = rolling_correlations(hist, names, "W-FRI", 13, 90.0)
+        self.assertEqual(list(out.columns), ["factor_1", "factor_2", "corr"])
+        wide = hist.pivot(index="date", columns="ticker", values="value").resample("W-FRI").last()
+        rets = np.log(wide).diff()
+        for row in out.itertuples():
+            a = next(t for t, n in names.items() if n == row.factor_1)
+            b = next(t for t, n in names.items() if n == row.factor_2)
+            pair = rets[[a, b]].dropna().to_numpy()
+            windows = [np.corrcoef(pair[k - 13:k].T)[0, 1] for k in range(13, len(pair) + 1)]
+            fx = row.factor_1.startswith("FX:") or row.factor_2.startswith("FX:")
+            with self.subTest(pair=(a, b)):
+                self.assertAlmostEqual(row.corr, float(np.percentile(windows, 50 if fx else 90)), delta=1e-10)
+                if not fx:
+                    self.assertGreater(row.corr, np.corrcoef(pair.T)[0, 1])
+        self.assertGreaterEqual(out.attrs["min_eigenvalue"], 0.0)          # a valid matrix: nothing repaired
+        self.assertEqual(out.attrs["max_repair"], 0.0)
+        self.assertEqual((out.attrs["window"], out.attrs["percentile"], out.attrs["fx_percentile"]), (13, 90.0, 50.0))
+
+    def test_regime_and_short_history(self):
+        """Two regimes (correlation 0.2 then 0.8): the 90th percentile reads the high one; a ticker with a short
+        history does not shorten the windows of the other pair."""
+        rng = np.random.default_rng(3)
+        days = pd.bdate_range("2016-01-01", "2025-12-31")
+        half = len(days) // 2
+        z = rng.standard_normal((len(days), 3))
+        rho = np.where(np.arange(len(days)) < half, 0.2, 0.8)
+        r_b = rho * z[:, 0] + np.sqrt(1 - rho ** 2) * z[:, 1]
+        series = {"A": z[:, 0], "B": r_b, "C": z[:, 2]}
+        rows = []
+        for t, r in series.items():
+            prices = 100 * np.exp(np.cumsum(0.01 * r))
+            keep = slice(len(days) - 260, None) if t == "C" else slice(None)       # C: one year only
+            rows += [{"date": d, "ticker": t, "value": p} for d, p in zip(days[keep], prices[keep])]
+        hist = pd.DataFrame(rows)
+        out = rolling_correlations(hist, {"A": "A", "B": "B", "C": "C"})
+        got = {(r.factor_1, r.factor_2): r.corr for r in out.itertuples()}
+        self.assertGreater(got[("A", "B")], 0.75)                             # the high regime
+        self.assertLess(got[("A", "B")], 0.95)
+        pairs_ab = len(pd.Series(1, index=days).resample("W-FRI").last()) - 1 - 13 + 1
+        self.assertLess(out.attrs["min_windows"], 60)                         # the pairs with C: one year
+        full = rolling_correlations(hist[hist["ticker"] != "C"], {"A": "A", "B": "B"})
+        self.assertEqual(full.attrs["min_windows"], pairs_ab)                 # A-B on its whole history
+        self.assertAlmostEqual(full["corr"].iloc[0], got[("A", "B")], delta=1e-12)
+
+    def test_nearest_correlation(self):
+        valid = np.array([[1.0, 0.5, 0.2], [0.5, 1.0, 0.3], [0.2, 0.3, 1.0]])
+        out, low = nearest_correlation(valid)
+        np.testing.assert_allclose(out, valid, atol=1e-15)
+        self.assertGreater(low, 0.0)
+        broken = np.array([[1.0, 0.95, -0.9], [0.95, 1.0, 0.9], [-0.9, 0.9, 1.0]])   # percentiles: not a correlation
+        out, low = nearest_correlation(broken)
+        self.assertLess(low, 0.0)
+        np.testing.assert_allclose(np.diag(out), 1.0, atol=1e-15)
+        np.testing.assert_allclose(out, out.T, atol=1e-15)
+        self.assertGreaterEqual(np.linalg.eigvalsh(out).min(), -1e-12)
+        out, _ = nearest_correlation(broken, 1e-4)                 # the floor of the snapshots: positive definite
+        self.assertGreater(np.linalg.eigvalsh(out).min(), 0.0)
+        np.linalg.cholesky(out)
+        self.assertTrue((np.abs(out) <= 1.0 + 1e-12).all())
+
     def test_correlations_of_log_returns(self):
         src = FakeSource()
         hist = src.history(TICKERS[:3], "PX_LAST", date(2016, 1, 1), TODAY)
@@ -180,7 +248,8 @@ class TestSnapshot(unittest.TestCase):
         self.assertEqual(len(tables["correlations.csv"]), 3)
 
     def test_run_writes_a_snapshot(self):
-        settings = {"fields": FIELDS, "history": {"years": 10}, "correlation": {"window_days": 252},
+        settings = {"fields": FIELDS, "history": {"years": 10},
+                    "correlation": {"frequency": "W-FRI", "window": 13, "percentile": 90},
                     "output": {"snapshots": "live", "history": "history"}}
         with tempfile.TemporaryDirectory() as tmp:
             folder = run(FakeSource(), [parse(t) for t in TICKERS], settings, Path(tmp), datetime(2026, 11, 12, 17, 30),

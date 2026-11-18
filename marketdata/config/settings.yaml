@@ -37,8 +37,11 @@ options:
     USD: SOFRRATE Index
     GBP: SONIO/N Index
 
-correlation:
-  window_days: 252          # log returns of the last window (dates common to all the factors)
+correlation:                # per pair: the percentile of its rolling-window correlations over the whole history
+  frequency: W-FRI          # weekly log returns (last close of each week, Friday)
+  window: 13                # returns per window (13 weeks = 3 months)
+  percentile: 90            # between equities: a stressed, high correlation (worst-of)
+  fx_percentile: 50         # pairs with an FX rate: the median (a central estimate with its sign, for the quanto)
 
 output:
   snapshots: live           # marketdata/live/<yyyymmdd>/<hhmm>/ (git-ignored: licensed data)

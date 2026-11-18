@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 COLUMNS = ["date", "ticker", "value"]
+EIGEN_FLOOR = 1e-4          # smallest eigenvalue of a repaired correlation matrix
 
 
 def read_history(path: Path) -> pd.DataFrame:
@@ -49,6 +50,78 @@ def update_history(path: Path, source, tickers: list[str], field: str, years: in
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     full[COLUMNS].to_parquet(path, index=False)
     return full
+
+
+def nearest_correlation(matrix: np.ndarray, floor: float = 0.0) -> tuple[np.ndarray, float]:
+    """A valid correlation matrix close to *matrix* (symmetric, unit diagonal, positive semi-definite): eigenvalues
+    below *floor* raised to it, then the diagonal rescaled to 1. Returns the matrix and its smallest eigenvalue before
+    the repair (unchanged when it is not negative)."""
+    a = 0.5 * (matrix + matrix.T)
+    w, v = np.linalg.eigh(a)
+    if w.min() >= floor:
+        return a, float(w.min())
+    b = (v * np.maximum(w, floor)) @ v.T
+    d = np.sqrt(np.diag(b))
+    out = b / np.outer(d, d)
+    np.fill_diagonal(out, 1.0)
+    return out, float(w.min())
+
+
+def rolling_correlations(history: pd.DataFrame, names: dict[str, str], frequency: str = "W-FRI",
+                         window: int = 13, percentile: float = 90.0, fx_percentile: float = 50.0) -> pd.DataFrame:
+    """Correlations from their rolling values: log returns of the closes at *frequency* (the last close of each week),
+    correlation over every window of *window* returns along the whole history (one step a period), and per pair a
+    percentile of those window correlations: *percentile* between equities (a stressed, high correlation: the prudent
+    one for the worst-of sold to investors), *fx_percentile* for the pairs with an FX rate (the median: a central
+    estimate keeping its sign, the one the quanto drift needs). Each pair on its own common periods (a short history
+    does not shorten the others); the matrix repaired to a valid correlation (:func:`nearest_correlation`).
+
+    Args:
+        history: Long table ``date, ticker, value``.
+        names: Bloomberg ticker -> factor name of the correlation matrix (``"EQ:EUR:ENI_IM"``, ``"FX:USD:EURUSD"``).
+        frequency: Pandas period of the returns (``"W-FRI"``: weekly, Friday).
+        window: Returns per window (13 weeks = 3 months).
+        percentile: Percentile of the window correlations between equities (90).
+        fx_percentile: Percentile of the window correlations of the pairs with an FX rate (``FX:`` factors; 50).
+
+    Returns:
+        pd.DataFrame: ``factor_1, factor_2, corr`` (upper triangle), the layout of ``correlations.csv``; ``attrs``:
+        the settings, the number of windows per pair (minimum), the smallest eigenvalue before the repair and the
+        largest change of a pair made by the repair.
+
+    Raises:
+        ValueError: If no pair has a full window of common returns.
+    """
+    wide = history[history["ticker"].isin(names)].pivot(index="date", columns="ticker", values="value").sort_index()
+    tickers = [t for t in names if t in wide.columns]
+    closes = wide[tickers].resample(frequency).last()
+    returns = np.log(closes).diff()
+    n = len(tickers)
+    raw = np.eye(n)
+    counts = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            pair = returns[[tickers[i], tickers[j]]].dropna()
+            rolling = pair[tickers[i]].rolling(window).corr(pair[tickers[j]]).dropna()
+            rolling = rolling[np.isfinite(rolling)]
+            if len(rolling):
+                fx = names[tickers[i]].startswith("FX:") or names[tickers[j]].startswith("FX:")
+                raw[i, j] = raw[j, i] = float(np.percentile(rolling.to_numpy(), fx_percentile if fx else percentile))
+                counts.append(len(rolling))
+            else:
+                raw[i, j] = raw[j, i] = np.nan
+    if not counts:
+        raise ValueError("not enough common history for the correlations")
+    raw = np.nan_to_num(raw, nan=0.0)                       # a pair without a window: uncorrelated
+    fixed, min_eigen = nearest_correlation(raw, EIGEN_FLOOR)       # positive definite: Cholesky for the simulation
+    rows = [{"factor_1": names[tickers[i]], "factor_2": names[tickers[j]], "corr": float(fixed[i, j])}
+            for i in range(n) for j in range(i + 1, n)]
+    out = pd.DataFrame(rows, columns=["factor_1", "factor_2", "corr"])
+    out.attrs.update(method="rolling percentile", frequency=frequency, window=int(window), percentile=float(percentile),
+                     fx_percentile=float(fx_percentile),
+                     min_windows=int(min(counts)), min_eigenvalue=min_eigen,
+                     max_repair=float(np.max(np.abs(fixed - raw))) if n > 1 else 0.0)
+    return out
 
 
 def correlations(history: pd.DataFrame, names: dict[str, str], window: int) -> pd.DataFrame:

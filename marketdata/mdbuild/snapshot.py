@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .history import correlations, update_history
+from .history import correlations, rolling_correlations, update_history
 from .options import equity_option_quotes
 from .universe import Curve, Instrument
 
@@ -79,10 +79,12 @@ def curve_quotes(source, curves: list[Curve], field: str) -> pd.DataFrame:
 
 
 def build_tables(source, universe: list[Instrument], fields: dict, today: date, history: pd.DataFrame,
-                 window: int, curves: list[Curve] = (), options: dict = None,
+                 correlation, curves: list[Curve] = (), options: dict = None,
                  cache_dir: Path = None) -> dict[str, pd.DataFrame]:
     """Snapshot tables of *universe* on *today* (``{file name: frame}``); with *options* (the ``options`` block of
-    the settings) also ``eq_option_quotes.csv`` (chains cached in *cache_dir*)."""
+    the settings) also ``eq_option_quotes.csv`` (chains cached in *cache_dir*). *correlation*: the ``correlation``
+    block of the settings (``frequency``, ``window``, ``percentile``: :func:`rolling_correlations`), or a number of
+    daily returns (the last ones, :func:`correlations`)."""
     tickers = [i.bbg for i in universe]
     ref = source.reference(tickers, [fields["price"], fields["currency"], fields["name"], fields["last_update"]])
     tables: dict[str, pd.DataFrame] = {}
@@ -157,7 +159,12 @@ def build_tables(source, universe: list[Instrument], fields: dict, today: date, 
 
     names = {i.bbg: f"EQ:{currency[i.bbg]}:{i.code}" for i in equities}
     names.update({i.bbg: f"FX:{i.fx_quote}:{i.code}" for i in universe if i.kind == "fx"})
-    tables["correlations.csv"] = correlations(history, names, window)
+    if isinstance(correlation, dict):
+        tables["correlations.csv"] = rolling_correlations(
+            history, names, correlation.get("frequency", "W-FRI"), int(correlation.get("window", 13)),
+            float(correlation.get("percentile", 90.0)), float(correlation.get("fx_percentile", 50.0)))
+    else:
+        tables["correlations.csv"] = correlations(history, names, int(correlation))
     return tables
 
 
@@ -178,13 +185,14 @@ def run(source, universe: list[Instrument], settings: dict, base: Path, now: dat
     priced = [i.bbg for i in universe if i.kind in ("equity", "fx")]
     history = update_history(Path(base) / out["history"] / "prices.parquet", source, priced, fields["price"],
                              settings["history"]["years"], now.date())
-    tables = build_tables(source, universe, fields, now.date(), history, settings["correlation"]["window_days"],
+    tables = build_tables(source, universe, fields, now.date(), history, settings["correlation"],
                           curves, settings.get("options"), Path(base) / out.get("cache", "cache") / "option_chains")
     info = {"created": now.isoformat(timespec="seconds"), "source": type(source).__name__,
             "universe": [i.bbg for i in universe], "fields": fields,
             "history": {"rows": int(len(history)), "first": str(history["date"].min().date()) if len(history) else None},
             "rows": {name: int(len(frame)) for name, frame in tables.items()},
             "curves": {f"{c.ccy} {c.name}": c.bbg for c in curves},
+            "correlation": dict(tables["correlations.csv"].attrs),
             "missing": "ir_vol, fx_vol: from the internal service (not yet); curves: quotes only (ir_quotes.csv), "
                        "bootstrapped by tQuant; eq_vol / eq_repo: from the option quotes (eq_option_quotes.csv), "
                        "built by tQuant"}

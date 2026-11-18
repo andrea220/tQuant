@@ -147,13 +147,20 @@ one pillar per expiry from 30 days (on shorter ones a small forward error is a l
 delayed takes the spot implied by its nearest expiry, $S_0 = F\,P(0,T) + \mathrm{PV}_{\mathrm{div}}(T)$, which has zero
 repo by construction.
 
-\paragraph{Index dividends beyond the projections.} The forecasts of an index cover about three years; without
-dividends beyond them the repo would absorb them (rising by about the dividend yield) and, past the last listed expiry,
-the forward would grow as if none were paid. They are extrapolated to ten years at a constant yield: the last projected
-year is repeated with its weekly pattern, each dividend keeping the yield of the one it repeats on the forward just
-before its ex-date, $D(t + n) = D(t)\,F(t + n)/F(t)$, with $F$ on all the dividends before (the extrapolated ones
-included) and the repo held at its level at the last listed expiry within the projections. The repo is then implied
-from the options on the extended dividends as above.
+\paragraph{Index dividends: implied by the options, the repo held.} The options give one forward per expiry, for
+two unknowns, the dividends and the repo. As in market practice for indices, the dividends are taken from the market
+and the repo is kept a smooth financing / borrow level, not the residual of the carry. The forecasts are kept to two
+years, where they are reliable; the repo is held at the level implied at the last listed expiry within them, $q_0$;
+beyond, each listed expiry gives the present value of the dividends to it,
+\[
+  \mathrm{PV}_{\mathrm{div}}(T) = S_0 - F(T)\,P(0,T)\,e^{q_0 T},
+\]
+and the increase between two expiries is spread over the dividend dates of the period with the weekly pattern of the
+forecasts (their last year repeated: the May peak of the European index). Past the last listed expiry the dividends are
+extrapolated to ten years at a constant yield: the last year repeated, each dividend keeping the yield of the one it
+repeats on the forward just before its ex-date, $D(t + n) = D(t)\,F(t + n)/F(t)$, with the repo held. The repo is then
+implied from the options as above, flat at $q_0$ beyond the two years. Index dividend futures, when available, give the
+same market dividends directly.
 
 \paragraph{The smile model: a mixture of lognormals with a default mass.} The distribution of $S_T$ at the expiry is
 \citep{brigo2002}

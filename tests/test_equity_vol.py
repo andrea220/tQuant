@@ -446,12 +446,14 @@ class TestDividendExtrapolation(unittest.TestCase):
             written = calibrate_snapshot_vols(folder)
             self.assertIn("eq_dividends.csv", written)
             divs = pd.read_csv(folder / "eq_dividends.csv")
-            self.assertEqual(set(divs["source"]), {"download", "extrapolated"})
+            self.assertTrue((folder / "eq_dividends_download.csv").is_file())          # the download kept apart
+            self.assertEqual(set(divs["source"]), {"download", "extrapolated"})       # no dividend between cutoff and expiry
             self.assertEqual(int((divs["source"] == "download").sum()), len(EX_DATES))
             self.assertLessEqual(pd.to_datetime(divs["ex_date"]).max().date(), date(2036, 5, 15))
             first = divs.copy()
             report = pd.read_csv(folder / "eq_vol_calibration.csv")
             self.assertTrue(report["div_extrapolated_yield"].notna().all())
+            self.assertTrue(report["div_cutoff"].notna().all())
             mkt = MarketEnvironment.from_folder(tmp, EVAL_DATE, "1200")             # read back with the extrapolation
             eq = mkt.get_equity("X")
             self.assertEqual(len(eq.dividends), len(divs))
@@ -464,6 +466,72 @@ class TestDividendExtrapolation(unittest.TestCase):
             folder = make_market(0.0).to_folder(tmp, "1200")
             frame.to_csv(folder / "eq_option_quotes.csv", index=False)
             self.assertNotIn("eq_dividends.csv", calibrate_snapshot_vols(folder))
+
+
+class TestImpliedIndexDividends(unittest.TestCase):
+    """Index dividends implied by the listed forwards with the repo held (``implied_index_dividends`` in
+    ``calibrate_snapshot_vols``): a true market (quarterly dividends 0.8, flat repo 0.4%), options priced on it to 5
+    years, projections biased +30% beyond 2 years and missing beyond 3: the true dividends and the flat repo are
+    recovered."""
+
+    TRUE_REPO = 0.004
+    EXPIRIES = [EVAL_DATE + timedelta(days=365 * n) for n in (1, 2, 3, 4, 5)]
+
+    @staticmethod
+    def ex_dates(until):
+        out, d = [], date(2026, 8, 15)
+        while d <= until:
+            out.append(d)
+            d = date(d.year + (d.month + 3 > 12), (d.month + 2) % 12 + 1, 15)
+        return out
+
+    def market(self, ex_dates, amounts, repo):
+        curve = tq.RateCurve(EVAL_DATE, [0.25, 0.5, 1.0, 2.0, 5.0, 10.0], [0.026, 0.027, 0.028, 0.029, 0.032, 0.033],
+                             "LINEAR", A365)
+        return MarketEnvironment(market={
+            "IR:EUR:ESTR:SPOT": curve, "EQ:EUR:X:SPOT": S0, "EQ:EUR:X:REPO": repo,
+            "EQ:EUR:X:DIV": DividendCurve(reference_date=EVAL_DATE, ex_dates=ex_dates, amounts=amounts,
+                                          currency=Currency.EUR, daycounter_convention=A365),
+            "EQ:EUR:X:VOL": surface()})
+
+    def test_true_dividends_and_flat_repo(self):
+        tq.Settings.evaluation_date = EVAL_DATE
+        true_dates = self.ex_dates(date(2032, 5, 15))
+        truth = self.market(true_dates, [0.8] * len(true_dates), self.TRUE_REPO)
+        rows = []
+        for expiry in self.EXPIRIES:
+            for k in (85.0, 95.0, 100.0, 105.0, 115.0):
+                for cp in ("C", "P"):
+                    opt = tq.VanillaOption(Currency.EUR, EVAL_DATE, expiry,
+                                           tq.OptionType.Call if cp == "C" else tq.OptionType.Put, k, underlying="X")
+                    tq.BlackScholesPricer().price(opt, truth)
+                    p = float(opt.price)
+                    rows.append({"ticker": "X", "ccy": "EUR", "expiry": expiry.isoformat(), "strike": k,
+                                 "option_type": cp, "exercise": "European", "bid": p - 0.01, "ask": p + 0.01,
+                                 "last": np.nan, "quote_date": EVAL_DATE.isoformat(), "ref_spot": S0,
+                                 "spot_source": "snapshot"})
+        cutoff = date(2028, 5, 15)
+        bbg_dates = self.ex_dates(date(2029, 5, 15))                                  # projections to 3 years
+        bbg = [0.8 if d <= cutoff else 1.04 for d in bbg_dates]                       # +30% beyond the cutoff
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = self.market(bbg_dates, bbg, 0.0).to_folder(tmp, "1200")
+            pd.DataFrame(rows).to_csv(folder / "eq_option_quotes.csv", index=False)
+            (folder / "snapshot_info.json").write_text(json.dumps({"universe": ["X Index"]}))
+            calibrate_snapshot_vols(folder)
+            divs = pd.read_csv(folder / "eq_dividends.csv")
+            divs["ex"] = pd.to_datetime(divs["ex_date"]).dt.date
+            self.assertEqual(set(divs["source"]), {"download", "implied", "extrapolated"})
+            self.assertTrue((divs.loc[divs["source"] == "download", "ex"] <= cutoff).all())
+            implied = divs[divs["source"] == "implied"]
+            self.assertEqual(list(implied["ex"]), [d for d in true_dates if cutoff < d <= self.EXPIRIES[-1]])
+            np.testing.assert_allclose(implied["amount"], 0.8, rtol=1e-6)             # the true dividends
+            report = pd.read_csv(folder / "eq_vol_calibration.csv")
+            self.assertAlmostEqual(float(report["div_repo_held"].iloc[0]), self.TRUE_REPO, delta=1e-6)
+            repo = pd.read_csv(folder / "eq_repo.csv")
+            np.testing.assert_allclose(repo["rate"], self.TRUE_REPO, atol=1e-6)      # flat at every expiry
+            first = pd.read_csv(folder / "eq_dividends.csv")
+            calibrate_snapshot_vols(folder)                                           # rerun: same dividends
+            pd.testing.assert_frame_equal(pd.read_csv(folder / "eq_dividends.csv"), first)
 
 
 if __name__ == "__main__":

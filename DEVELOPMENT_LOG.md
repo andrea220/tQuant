@@ -161,6 +161,19 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       (EUR 6M 2Y / 5Y / 10Y 3.382 / 3.387 / 3.433, ESTR 5Y 3.096, SOFR 5Y 4.671). Tests: spread = N s sum tau P, forward
       start (`test_rate_pricers.py`), legs' PV = pricer PV in 5 cases (`test_tqstudio_tradepad_swap.py`).
 
+- [x] Index dividends implied by the options with the repo held (`implied_index_dividends`, in
+      `calibrate_snapshot_vols`): projections kept to 2 years, repo held at the level of the last listed expiry within
+      them, beyond each listed forward gives `PV_div(T) = S - F P e^{q0 T}`, the increase spread with the weekly
+      pattern of the projections, constant yield past the last expiry to 10 years; `eq_dividends.csv` with `source`
+      download / implied / extrapolated, the download kept in `eq_dividends_download.csv` (reruns read it). Market
+      practice: index dividends from the market, the repo a smooth financing level (the constant-yield extrapolation
+      of the projections made the SX5E repo fall from -0.93% to -1.53% at 6Y: dividends about 35% above the options').
+      Test: a true market (quarterly 0.8, flat repo 0.4%), options to 5 years, projections +30% beyond 2 years and
+      missing beyond 3: the true dividends recovered (1e-6) and the repo flat at every expiry. Snapshot 2026-11-13
+      rebuilt (85 s): SX5E repo flat -0.82% from 2028 to 2032, implied dividends 168 / 156 / 157 / 154 points a year
+      in 2029-2032 (constant yield then 2.26%), forward 10Y 7405; SPX flat -0.72%, implied dividends falling to 55
+      points in 2031 (open in the roadmap).
+
 ## 4. Stochastic processes & Monte Carlo (`models/`, MC pricers, `analytics/`)
 
 - [x] dtype policy: **float64 everywhere** (decided; no float32 casts): GBM/ABM, `LocalVolatilityModel`,
@@ -458,4 +471,9 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       drift of the Heston part (closed form) and, on request, the Monte Carlo fit of the stored SLV on the latest market;
       recalibrate above 7 days, 5% spot, 1 vol pt surface change or 1 vol pt rms fit. SX5E (16:19 calibration) on the
       16:09 snapshot: spot +0.11%, surface 0.05 vol pt, fit 0.34 vol pt: OK.
-
+- [x] Real market data, moved from the roadmap: rate curves from Bloomberg (the snapshot stores the ICVS curve members,
+      `ir_quotes.csv`: EUR ESTR S514, EUR 6M S45, USD SOFR S490, GBP SONIA S141, mid quotes; every instrument
+      repriced to 1e-15 on 2026-11-12); curves bootstrapped right after the download (`bootstrap_snapshot`:
+      `ir_curves.csv`, `ir_curves_jacobian.csv`, `ir_calibration.csv`; loading a snapshot 0.5 s instead of 63 s;
+      calendars `UnitedStates`, `UnitedKingdom`); tQuant / tqstudio reading the live snapshots (curves, equity vols,
+      repo curves).

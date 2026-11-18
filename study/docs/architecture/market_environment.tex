@@ -140,8 +140,10 @@ Dividends & declared: \code{DVD\_HIST\_ALL} (cash, future ex-date, with the paym
   amount; payment = ex-date), dropped within 30 days of a declared one &
   \code{BDVD\_PROJ\_DIV\_INDX\_PTS} with \code{PERIODICITY\_OVERRIDE = W} and \code{START\_DATE\_OVERRIDE} /
   \code{END\_DATE\_OVERRIDE} (about 3 years projected): index points per week, each a discrete dividend (payment =
-  week date); beyond them, to 10 years, extrapolated at a constant yield by \code{calibrate\_snapshot\_vols}
-  (\code{extrapolate\_dividends}; \code{source} = \code{extrapolated} in \code{eq\_dividends.csv}) \\
+  week date), kept to 2 years; beyond, implied by the listed forwards with the repo held, then constant yield to
+  10 years (\code{calibrate\_snapshot\_vols}, \code{implied\_index\_dividends}; \code{source} = \code{download} /
+  \code{implied} / \code{extrapolated} in \code{eq\_dividends.csv}, the download kept in
+  \code{eq\_dividends\_download.csv}) \\
 Repo & not downloaded: implied by the listed options (put-call parity per expiry, \code{implied\_repo\_curve}) as a
   curve (\code{eq\_repo.csv}); the borrow on top of the dividends above & same, on the projected and extrapolated
   dividends \\
