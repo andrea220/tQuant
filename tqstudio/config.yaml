@@ -10,6 +10,7 @@ marketdata_roots:
                                           # (downloads) and from the shared machine (the app of the users),
                                           # e.g. \\server\share\marketdata
   - C:\dev\tQuant\marketdata              # this laptop (LAPTOP-OIB56OK9): its own copy, when the share is not reachable
+  - C:\Users\S542279\Desktop\tQuant\marketdata   # CL100400340051: local copy
 
 # Who may edit the universe and start downloads (Market data > Universe): pcs by name or IP, the ones with a Bloomberg
 # terminal; no pc is allowed by default. A download starts only from a tqstudio running on one of them (the download
@@ -17,6 +18,7 @@ marketdata_roots:
 authorized_pcs:
   - <MY_PC_NAME>                          # my personal machine (with the Bloomberg terminal)
   - LAPTOP-OIB56OK9
+  - CL100400340051
 
 # Interpreters for the download and the processes the app starts, the first that exists and imports blpapi
 # (`current`: the Python running tqstudio).
@@ -24,4 +26,5 @@ python:
   - <MY_PC_VENV>\Scripts\python.exe       # 1) the venv of my personal machine (downloads: needs blpapi)
   - <SHARED_MACHINE_VENV>\Scripts\python.exe   # 2) the venv of the shared machine (the Python computations)
   - C:\dev\virtual_envs\tqenv\Scripts\python.exe
+  - C:\Users\S542279\AppData\Local\Programs\tqenv\Scripts\python.exe   # CL100400340051
   - current
