@@ -19,7 +19,7 @@ import tensorquant as tq
 from tensorquant.calibration.models import (STALE_VOLPTS, check_calibration, list_calibration_sets,
                                             load_calibration_set, load_model, model_test)
 
-from ..paths import MARKETDATA
+from ..paths import CODE_MARKETDATA, MARKETDATA
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -239,10 +239,10 @@ class CalibrationRuns:
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# universe: the models to calibrate per underlying (marketdata/config/calibration.yaml)
+# universe: the models to calibrate per underlying (marketdata/config/calibration.yaml in the repository)
 # ----------------------------------------------------------------------------------------------------------------------
 
-CONFIG = MARKETDATA / "config" / "calibration.yaml"
+CONFIG = CODE_MARKETDATA / "config" / "calibration.yaml"
 MODELS = {"equity": ["Heston", "DisplacedDiffusion", "HestonSLV"], "rates": ["HullWhite", "G2pp"], "fx": []}
 SUPPORTED = {"Heston", "DisplacedDiffusion", "HestonSLV"}     # models of the calibration sets (rates: not yet)
 

@@ -5,6 +5,7 @@ numpy==2.5.4
 scipy==1.18.1
 pandas==2.2.2
 python-dateutil==2.9.0.post0
+pyarrow==26.0.1
 
 # examples / study notebooks
 matplotlib==3.11.2

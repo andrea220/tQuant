@@ -47,7 +47,10 @@ class Engine:
         self.lock = threading.Lock()
         self.markets: dict = {}
         self.views: dict = {}
-        self.market = self._load(None, None)              # latest snapshot (Tradepad)
+        try:
+            self.market = self._load(None, None)          # latest snapshot (Tradepad)
+        except FileNotFoundError:
+            self.market = None                            # no snapshot yet: the app starts empty, waiting for a download
         self.models = ModelCache(CALIBRATIONS)
         self.jobs: dict = {}                              # pending second phases of the prices (greeks)
         self._job_ids = itertools.count(1)
@@ -129,6 +132,8 @@ async def no_cache_pages(request, call_next):
 
 @app.get("/api/tickers")
 def tickers() -> dict:
+    if engine.market is None:
+        return {"snapshot": None, "tickers": []}
     return {"snapshot": engine.market.evaluation_date.isoformat(), "tickers": equity_tickers(engine.market)}
 
 
@@ -397,7 +402,8 @@ def calibration_run_status() -> dict:
 
 @app.get("/api/documents")
 def documents() -> dict:
-    return {"snapshot": engine.market.evaluation_date.isoformat(), "source": DATA_SOURCE,
+    snapshot = engine.market.evaluation_date.isoformat() if engine.market is not None else None
+    return {"snapshot": snapshot, "source": DATA_SOURCE,
             "documents": [{"key": k, "title": title, "available": (DOCS_BUILD / name).is_file()}
                           for k, (title, name) in DOCUMENTS.items()]}
 

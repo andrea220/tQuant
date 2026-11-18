@@ -22,7 +22,18 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 from ..paths import CODE_MARKETDATA, MARKETDATA  # noqa: E402  (shared data; mdbuild code in the repository)
 
-UNIVERSE = MARKETDATA / "config" / "universe.yaml"
+UNIVERSE = MARKETDATA / "config" / "universe.yaml"           # universe lives with the data (per data folder)
+UNIVERSE_TEMPLATE = CODE_MARKETDATA / "config" / "universe.yaml"   # the repository's copy, used as read fallback / bootstrap
+SETTINGS = CODE_MARKETDATA / "config" / "settings.yaml"      # Bloomberg host/port, fields, history: same on every machine
+
+
+def _ensure_universe(path: Path = UNIVERSE) -> Path:
+    """Universe file in the data folder; copied from :data:`UNIVERSE_TEMPLATE` on first access (parent created)."""
+    path = Path(path)
+    if not path.is_file():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(Path(UNIVERSE_TEMPLATE).read_bytes())
+    return path
 
 
 def _mdbuild_universe():
@@ -42,7 +53,8 @@ _EXCLUDED = re.compile(r"^\s*#\s*-\s*(\S.*\s(?:Equity|Curncy|Index))\s*$")
 
 def read_universe(path: Path = UNIVERSE) -> dict:
     """The universe file: instruments (included, and excluded = commented ``- <ticker>`` lines of ``tickers`` /
-    ``equity_indices``), curves, option roots, implied-spot underlyings.
+    ``equity_indices``), curves, option roots, implied-spot underlyings. The data folder's copy when present, else
+    the repository's :data:`UNIVERSE_TEMPLATE` (read-only fallback).
 
     Returns:
         dict: ``equity`` / ``fx`` / ``fixing`` lists of ``{bbg, code, type, included}`` (equity ``type``: ``stock`` or
@@ -50,6 +62,8 @@ def read_universe(path: Path = UNIVERSE) -> dict:
     """
     u = _mdbuild_universe()
     path = Path(path)
+    if not path.is_file():
+        path = Path(UNIVERSE_TEMPLATE)
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     indices = {str(t).strip() for t in data.get("equity_indices") or []}
     out = {"equity": [], "fx": [], "fixing": []}
@@ -202,6 +216,7 @@ def add_ticker(asset_class: str, ticker: str, path: Path = UNIVERSE) -> dict:
         raise ValueError(f"'{ticker}': {asset_class} tickers end with {' or '.join(ASSET_CLASSES[asset_class])}")
     u.parse(ticker)                                         # raises on an invalid FX pair, etc.
     section = "equity_indices" if asset_class == "equity" and parts[-1] == "Index" else "tickers"
+    path = _ensure_universe(path)                           # write side: bootstrap the data copy from the template
     current = read_universe(path)
     active = {r["bbg"].upper() for k in ("equity", "fx", "fixing") for r in current[k] if r["included"]}
     if ticker.upper() in active:
@@ -256,6 +271,7 @@ def remove_ticker(asset_class: str, ticker: str, path: Path = UNIVERSE) -> dict:
     kind = {"equity": "equity", "fx": "fx", "rates": "fixing"}[asset_class]
     if ticker.upper() not in {r["bbg"].upper() for r in read_universe(path)[kind] if r["included"]}:
         raise ValueError(f"'{ticker}' is not an active {asset_class} ticker of the universe")
+    path = _ensure_universe(path)                           # write side: bootstrap the data copy from the template
     raw = Path(path).read_bytes().decode("utf-8")
     newline = "\r\n" if "\r\n" in raw else "\n"
     lines = raw.splitlines()
@@ -303,10 +319,11 @@ def allowed_client(host: str | None, pcs: list[str]) -> bool:
     no pc is allowed by default."""
     if host is None or not pcs:
         return False
+    pcs = [p for p in pcs if not (p.startswith("<") and p.endswith(">"))]      # placeholders in config.yaml: skipped
     ids = _identities(host)
-    for pc in pcs:
-        if pc.lower() in ids:
-            return True
+    if any(pc.lower() in ids for pc in pcs):                                    # cheap pass: match by name / IP string
+        return True
+    for pc in pcs:                                                              # slow pass: resolve the remaining names
         try:
             if ids & {info[4][0] for info in socket.getaddrinfo(pc, None)}:
                 return True
@@ -340,9 +357,10 @@ def resolve_python(candidates: list[str], module: str = "blpapi") -> str:
     raise ValueError("no Python for the download: " + "; ".join(tried))
 
 
-def bloomberg_endpoint(root: Path = MARKETDATA) -> tuple[str, int]:
-    """Host and port of the Bloomberg terminal of the downloads (``bloomberg`` in ``<root>/config/settings.yaml``)."""
-    data = yaml.safe_load((Path(root) / "config" / "settings.yaml").read_text(encoding="utf-8")) or {}
+def bloomberg_endpoint(root: Path | None = None) -> tuple[str, int]:
+    """Host and port of the Bloomberg terminal of the downloads (``bloomberg`` in :data:`SETTINGS`, in the repository)."""
+    del root                                                # kept for backwards compatibility; settings live in the repo
+    data = yaml.safe_load(Path(SETTINGS).read_text(encoding="utf-8")) or {}
     bbg = data.get("bloomberg") or {}
     return str(bbg.get("host", "localhost")), int(bbg.get("port", 8194))
 
@@ -375,12 +393,13 @@ class DownloadRuns:
         if self.run is not None and self.run["process"].poll() is None:
             raise ValueError("a download is already running")
         if self.command is None:                       # no process without a terminal: the error at once
-            host, port = bloomberg_endpoint(self.root)
+            host, port = bloomberg_endpoint()
             if not bloomberg_reachable(host, port):
                 raise ValueError(f"ConnectionError: cannot reach the Bloomberg terminal on {host}:{port} "
                                  "(is the terminal running?)")
+        universe = str(_ensure_universe(self.root / "config" / "universe.yaml"))     # bootstrap on first download
         command = self.command or [resolve_python(app_settings(self.settings)["python"]), "-u", "-m", "mdbuild",
-                                   "--root", str(self.root)]
+                                   "--root", str(self.root), "--universe", universe, "--settings", str(SETTINGS)]
         log = []
         env = {**os.environ, "PYTHONIOENCODING": "utf-8", "TF_ENABLE_ONEDNN_OPTS": "0"}
         process = subprocess.Popen(command, cwd=self.cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

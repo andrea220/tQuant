@@ -23,6 +23,8 @@ RATE_TENORS = {"1M": 1 / 12, "3M": 0.25, "6M": 0.5, "1Y": 1.0, "2Y": 2.0, "3Y": 
 def snapshots(root: Path) -> list[dict]:
     """Market data snapshots in *root* (``<yyyymmdd>/<set>/``), latest first: ``[{date, sets}]`` (sets latest first)."""
     out = []
+    if not Path(root).is_dir():
+        return out
     for day in sorted((d for d in Path(root).iterdir() if d.is_dir() and d.name.isdigit() and len(d.name) == 8),
                       key=lambda d: d.name, reverse=True):
         sets = sorted((s.name for s in day.iterdir() if s.is_dir() and not s.name.startswith("_")), reverse=True)

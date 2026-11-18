@@ -1,30 +1,23 @@
 # tqstudio: the configuration of the app (the same file on every machine; each machine takes what applies to it).
-# Placeholders in <...>: replace them with the real paths / names (a path that does not exist is skipped, so the
-# placeholders do no harm until then).
 
-# The shared market data folder (snapshots, calibration sets, market data configuration, price history), the first
-# valid one in this order (a folder with config/settings.yaml); `python -m tqstudio --marketdata <folder>` overrides it.
-# The app of every user reads it; the downloads of an authorized pc write it.
+# The market data folder (snapshots, price history, caches, config/universe.yaml), the first that exists in this order;
+# `python -m tqstudio --marketdata <folder>` overrides it. The app of every user reads it; the downloads of an
+# authorized pc write it. Config settings and calibration live in the repository now (marketdata/config/).
 marketdata_roots:
-  - <SHARED_MARKETDATA>                   # the shared marketdata folder, the same path from my personal machine
-                                          # (downloads) and from the shared machine (the app of the users),
-                                          # e.g. \\server\share\marketdata
-  - C:\dev\tQuant\marketdata              # this laptop (LAPTOP-OIB56OK9): its own copy, when the share is not reachable
-  - C:\Users\S542279\Desktop\tQuant\marketdata   # CL100400340051: local copy
+  - W:\Everyone\Quants\tqdata              # shared data (CL100400340051 writes it, the shared app reads it from Linux)
+  - C:\dev\tQuant\marketdata               # LAPTOP-OIB56OK9: local copy, when the share is not reachable
+  - /mnt-quants/strategy/tqdata            # shared Linux machine (the app of the users)
 
-# Who may edit the universe and start downloads (Market data > Universe): pcs by name or IP, the ones with a Bloomberg
-# terminal; no pc is allowed by default. A download starts only from a tqstudio running on one of them (the download
-# runs there, on its terminal), requested from one of them: the shared app, on a pc not listed, never downloads.
+# Who may edit the universe and start downloads: pcs with a Bloomberg terminal. No pc is allowed by default. A download
+# starts only from a tqstudio running on one of them (the download runs there, on its terminal), requested from one of
+# them: the shared app, on a pc not listed, never downloads.
 authorized_pcs:
-  - <MY_PC_NAME>                          # my personal machine (with the Bloomberg terminal)
-  - LAPTOP-OIB56OK9
-  - CL100400340051
+  - CL100400340051                         # this pc (shared data on W:)
+  - LAPTOP-OIB56OK9                        # my personal laptop
 
 # Interpreters for the download and the processes the app starts, the first that exists and imports blpapi
 # (`current`: the Python running tqstudio).
 python:
-  - <MY_PC_VENV>\Scripts\python.exe       # 1) the venv of my personal machine (downloads: needs blpapi)
-  - <SHARED_MACHINE_VENV>\Scripts\python.exe   # 2) the venv of the shared machine (the Python computations)
-  - C:\dev\virtual_envs\tqenv\Scripts\python.exe
-  - C:\Users\S542279\AppData\Local\Programs\tqenv\Scripts\python.exe   # CL100400340051
+  - C:\dev\virtual_envs\tqenv\Scripts\python.exe                                    # LAPTOP-OIB56OK9
+  - C:\Users\S542279\AppData\Local\Programs\tqenv\Scripts\python.exe                # CL100400340051
   - current

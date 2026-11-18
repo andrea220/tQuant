@@ -723,9 +723,11 @@ async function init() {
   state.snapshots = snaps.snapshots;
   state.source = snaps.source;
   $("snap-date").innerHTML = state.snapshots.map((s) => `<option>${s.date}</option>`).join("");
-  state.date = state.snapshots.some((s) => s.date === p.get("date")) ? p.get("date") : state.snapshots[0].date;
-  $("snap-date").value = state.date;
-  fillSets(p.get("set"));
+  if (state.snapshots.length) {
+    state.date = state.snapshots.some((s) => s.date === p.get("date")) ? p.get("date") : state.snapshots[0].date;
+    $("snap-date").value = state.date;
+    fillSets(p.get("set"));
+  }
 
   $("snap-date").addEventListener("change", () => { state.date = $("snap-date").value; fillSets(); loadSnapshot(); });
   $("snap-set").addEventListener("change", () => { state.set = $("snap-set").value; loadSnapshot(); });
@@ -752,8 +754,8 @@ async function init() {
   $("dl-error-close").addEventListener("click", closeDownloadError);
   $("dl-error").addEventListener("click", (e) => { if (e.target === $("dl-error")) closeDownloadError(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDownloadError(); });
-  state.universe = p.get("universe") === "1";
-  await loadSnapshot(CLASSES[p.get("class")] ? p.get("class") : "equity", p.get("item"));
+  state.universe = p.get("universe") === "1" || !state.snapshots.length;   // no snapshot yet: open Universe (download)
+  if (state.snapshots.length) await loadSnapshot(CLASSES[p.get("class")] ? p.get("class") : "equity", p.get("item"));
   openUniverse(state.universe);
   const run = await (await fetch("/api/market/download")).json();          // a download started earlier
   if (run.running) pollDownload();

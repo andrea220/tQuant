@@ -1,7 +1,9 @@
-"""Where the market data are: the shared ``marketdata`` folder (snapshots, calibration sets, configuration, price
-history, caches), the first valid one of ``tqstudio/config.yaml`` (``marketdata_roots``, tried in order) unless the
-environment variable ``TQSTUDIO_MARKETDATA`` names one (``python -m tqstudio --marketdata <folder>``). A folder is valid
-when it exists and holds ``config/settings.yaml``. The code (``marketdata/mdbuild``) stays in the repository."""
+"""Where the market data are: the shared ``marketdata`` folder (snapshots, price history, caches, and its own
+``config/universe.yaml``), the first valid one of ``tqstudio/config.yaml`` (``marketdata_roots``, tried in order) unless
+the environment variable ``TQSTUDIO_MARKETDATA`` names one (``python -m tqstudio --marketdata <folder>``). A folder is
+valid when it exists. The code (``marketdata/mdbuild``) and the machine-wide settings (``marketdata/config/settings.yaml``,
+``marketdata/config/calibration.yaml``) stay in the repository; ``universe.yaml`` lives with the data (edited from the
+app, one per data folder)."""
 
 from __future__ import annotations
 
@@ -17,8 +19,8 @@ ENV = "TQSTUDIO_MARKETDATA"
 
 
 def is_valid_root(folder) -> bool:
-    """A market data folder: it exists and holds ``config/settings.yaml``."""
-    return (Path(folder) / "config" / "settings.yaml").is_file()
+    """A market data folder: it exists (settings and calibration live in the repository now)."""
+    return Path(folder).is_dir()
 
 
 def candidate_roots(config: Path = CONFIG) -> list[Path]:
@@ -37,7 +39,7 @@ def resolve_root(override: str | None = None, config: Path = CONFIG) -> Path:
     override = override or os.environ.get(ENV)
     if override:
         if not is_valid_root(override):
-            raise FileNotFoundError(f"{override}: not a market data folder (no config/settings.yaml)")
+            raise FileNotFoundError(f"{override}: not a folder")
         return Path(override)
     tried = candidate_roots(config)
     for root in tried:
