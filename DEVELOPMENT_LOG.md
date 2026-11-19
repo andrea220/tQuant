@@ -477,3 +477,21 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       `ir_curves.csv`, `ir_curves_jacobian.csv`, `ir_calibration.csv`; loading a snapshot 0.5 s instead of 63 s;
       calendars `UnitedStates`, `UnitedKingdom`); tQuant / tqstudio reading the live snapshots (curves, equity vols,
       repo curves).
+- [x] Smile mixture without point masses: `LognormalMixture.fit` keeps the vols of the lognormals above
+      `MIN_VOL_FRACTION` = 1/4 of the at-the-money vol of the expiry (and 0.5%; argument `min_vol_fraction`, 0 = the old
+      0.5% bound). Without it the least squares, freer than the quotes need where the strikes are sparse, put a
+      lognormal on 0.5% vol, an almost point mass (2026-11-13: 12 of 25 expiries of AAPL / SX5E, up to 18.8% of
+      probability on AAPL 5 days, 12.2% on SX5E Dec-2032; the spike of the AAPL Dec-2027 density at 1.26 F) for
+      hundredths of a vol point. Variants compared on every AAPL / SX5E expiry: floor 1/4, 1/3, 1/2 of the ATM vol,
+      three lognormals (no fix on SX5E 2031-32, worse short expiries): 1/4 removes every lognormal below 3% vol, rms
+      up by < 0.01 vol pts on most expiries (at most +0.04), the same quotes within bid / ask; largest increase of
+      P(S_T < K) over 1% of F on the long expiries 0.02-0.04 -> 0.011-0.014; probabilities at 60-80% of F move by up
+      to 2.3 pts (SX5E 2031 P(S_T < 60%) 12.6% -> 14.9%). Whole snapshot recalibrated (copy): grid nodes beyond 30 days
+      within 0.2 vol pts between 70% and 130% (ISP 1.0), up to 4 in the 50% / 150% wings; large moves only in the
+      unquoted wings of the 3-7 day expiries (ISP 7 days at 150%: 98.6% -> 21.8%, the old one fitted a 54.5%
+      settlement with a point mass); two-sided quotes within bid / ask ISP 99.1% -> 100%, SPX 96.6% -> 96.0%, others
+      unchanged. Test: smooth skewed smile with 0.2 vol pt noise (free fit 15% of probability on a 0.6% vol lognormal,
+      jump of 5% in P(S_T < K); with the floor none below 1/4 ATM, smooth, rms within 0.05 vol pts). The notebook data
+      set (`study/notebooks/equity_vol_calibration_data.csv`) recalibrated, notebook and Models and Pricing 1.4
+      updated (the AAPL Dec-2027 scenarios change, the smile does not: 80% put 30.0%). The live snapshots keep the old
+      surfaces until their vols are recalibrated.

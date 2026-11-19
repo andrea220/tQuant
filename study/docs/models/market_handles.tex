@@ -273,28 +273,28 @@ lognormal does: the low-strike puts are dearer, their vols higher (the put skew;
 skew of the short expiries). A scenario with a high forward and a low vol puts less probability far above the forward:
 the high-strike calls are cheaper, their vols lower.
 
-\emph{Example} (AAPL, December 2027, $F = 376.6$, $T = 1.09$): the fitted scenarios are down ($p = 18\%$,
-$F_l = 278$, $\sigma_l = 32\%$), central ($63\%$, $394$, $24\%$), up ($17\%$, $424$, $14\%$), far up ($1\%$, $475$,
-about $0$) and default ($Q = 0.5\%$). The put with strike $80\%$ of the forward, $K = 301.3$:
+\emph{Example} (AAPL, December 2027, $F = 376.6$, $T = 1.09$): the fitted scenarios are a crash ($p = 1.9\%$,
+$F_l = 114$, $\sigma_l = 11\%$), lower ($52\%$, $349$, $30\%$), higher ($44\%$, $416$, $18\%$), far up ($2.0\%$,
+$461$, $6.7\%$) and default ($Q = 0.01\%$). The put with strike $80\%$ of the forward, $K = 301.3$:
 \begin{center}
 \begin{tabular}{lrrrrr}
   \toprule
   scenario & probability & forward & vol & put in the scenario & probability $\times$ put \\
   \midrule
-  down & 0.184 & 278.0 & 31.6\% & 50.74 & 9.36 \\
-  central & 0.627 & 393.8 & 23.8\% & 6.12 & 3.84 \\
-  up & 0.174 & 424.2 & 13.6\% & 0.14 & 0.02 \\
-  far up & 0.010 & 475.4 & 0.5\% & 0.00 & 0.00 \\
-  default & 0.005 & -- & -- & 301.26 & 1.49 \\
+  crash & 0.019 & 114.4 & 11.2\% & 186.87 & 3.48 \\
+  lower & 0.519 & 348.9 & 29.8\% & 20.72 & 10.75 \\
+  higher & 0.443 & 416.4 & 17.5\% & 1.00 & 0.44 \\
+  far up & 0.020 & 461.1 & 6.7\% & 0.00 & 0.00 \\
+  default & 0.0001 & -- & -- & 301.26 & 0.04 \\
   \midrule
   \multicolumn{5}{l}{price} & 14.71 \\
   \bottomrule
 \end{tabular}
 \end{center}
 The single Black vol that gives $14.71$ with $F = 376.6$ is $30.0\%$; one lognormal at the at-the-money vol of the
-mixture, $26.8\%$, would give $11.33$. Across the strikes the vol goes from $34.7\%$ (put at $60\%$, two thirds of its
-price from the down scenario, a third from default) to $26.8\%$ at the money (mostly the central scenario) and
-$24.1\%$ (call at $140\%$, the central and the low-vol up scenarios).
+mixture, $26.8\%$, would give $11.34$. Across the strikes the vol goes from $34.7\%$ (put at $60\%$, $55\%$ of its
+price from the crash scenario, $44\%$ from the high-vol lower one) to $26.8\%$ at the money (the lower and higher
+scenarios) and $24.1\%$ (call at $140\%$, the lower and the low-vol higher scenarios).
 
 \emph{Where the parameters come from.} They are not chosen: they are the free parameters of the fit below, set so
 that the model vols match the market vols of the expiry. The constraints hold by construction (positive
@@ -314,8 +314,13 @@ the out-of-the-money price errors divided by the Black vega $\mathcal V_i$ of th
 the weights $w_i$ above (1 for a two-sided quote, $0.25$ for a settlement price). The fit is on the mid prices; the bid
 and ask are only reported against the fitted smile. Parametrisation and bounds: the weights $Q, p_l$ by a softmax (each
 away from 0 and 1, $Q$ at most about 17\%), the forwards by $F_l \propto F e^{m_l}$ with $|m_l| \le 3$ (rescaled so that
-$\sum_l p_l F_l = F$), the vols by $\sigma_l\sqrt T = e^{s_l}$ with $\sigma_l$ between $0.5\%$ and $300\%$ (up to $0.3/\sqrt T$ on
-expiries shorter than about four days). The start is ordered (from the lowest forward with the highest vol to the
+$\sum_l p_l F_l = F$), the vols by $\sigma_l\sqrt T = e^{s_l}$ with $\sigma_l$ between a quarter of the at-the-money
+vol of the expiry (at least $0.5\%$) and $300\%$ (up to $0.3/\sqrt T$ on expiries shorter than about four days). The
+floor on the vols matters: the least squares has more freedom than the quotes need where the strikes are sparse, and
+without it puts a lognormal on a vol near zero, an almost point mass in the density (up to $12\%$ of probability on the
+2026-11-13 snapshot), for a gain of hundredths of a vol point; at a quarter of the at-the-money vol the density is
+smooth, the fit error grows by hundredths of a vol point at most and the quotes repriced within bid / ask are the
+same. The start is ordered (from the lowest forward with the highest vol to the
 highest forward with the lowest, central weights
 larger, $Q \approx 0.1\%$), which removes the exchange symmetry of the components; when that fit is above 0.2 vol
 points rms, a second one starts from the parameters of the previous expiry and the better is kept. The rms of the

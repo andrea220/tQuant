@@ -218,6 +218,32 @@ class TestLognormalMixture(unittest.TestCase):
         fit = LognormalMixture.fit(100.0, 1.0, k, vols)
         self.assertLess(np.abs(fit.implied_vols(100.0, k, 1.0) - vols).max(), 3e-3)
 
+    def test_fit_without_point_mass(self):
+        """Smooth skewed smile with 0.2 vol pt noise on sparse strikes: without the vol floor the fit puts 15% of the
+        probability on a lognormal of vol 0.6% (an almost point mass, a jump of 5% in P(S_T < K) over 1% of the
+        forward); with it no lognormal below 1/4 of the at-the-money vol, a smooth density and the fit within 0.05 vol
+        points of the unconstrained one."""
+        k = np.array([50, 60, 70, 80, 85, 90, 95, 97.5, 100, 102.5, 105, 110, 120, 128, 138, 149.0])
+        rng = np.random.default_rng(22)
+        x = np.log(k / 100.0)
+        vols = 0.26 - 0.25 * rng.uniform(0.5, 1.5) * x + 0.3 * rng.uniform(0.3, 1.5) * x ** 2 \
+            + rng.normal(0.0, 0.002, len(k))
+        grid, h = np.linspace(40.0, 180.0, 141), 1e-4
+
+        def largest_step(m):                                  # largest increase of P(S_T < K) over 1% of F
+            cdf = (m.price(100.0, grid + h, 1.0, "P") - m.price(100.0, grid - h, 1.0, "P")) / (2.0 * h)
+            return float(np.diff(cdf).max())
+
+        free = LognormalMixture.fit(100.0, 1.0, k, vols, min_vol_fraction=0.0)
+        self.assertGreater(free.weights[free.stdevs < 0.03].sum(), 0.10)
+        self.assertGreater(largest_step(free), 0.04)
+        fit = LognormalMixture.fit(100.0, 1.0, k, vols)
+        atm = float(np.interp(100.0, k, vols))
+        self.assertGreaterEqual(fit.stdevs.min(), 0.25 * atm * (1.0 - 1e-9))
+        self.assertLess(largest_step(fit), 0.02)
+        self.assertLess(fit.rms - free.rms, 5e-4)
+        self.assertLess(np.abs(fit.implied_vols(100.0, k, 1.0) - vols).max(), 3e-3)
+
     def test_black_implied_vol_round_trip(self):
         m = LognormalMixture(weights=[1.0], means=[1.0], stdevs=[0.3], default=0.0)
         for cp in ("C", "P"):

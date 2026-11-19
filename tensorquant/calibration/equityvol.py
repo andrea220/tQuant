@@ -25,7 +25,10 @@ Stage 2 (smile of an expiry):
   multiplicative means ``xi_l`` (``sum p_l xi_l = 1``: the forward is repriced) and total standard deviations
   ``Sigma_l`` of the log; ``Q + sum p_l = 1``. Prices are sums of Black prices (``Q K`` more for a put): a legitimate
   density, so the smile is free of strike arbitrage. Fit to the out-of-the-money quotes of one expiry by least
-  squares on vega-weighted prices (about the vol errors), numpy closed forms.
+  squares on vega-weighted prices (about the vol errors), numpy closed forms. The vols of the lognormals are kept
+  above ``MIN_VOL_FRACTION`` (1/4) of the at-the-money vol: without that floor the least squares, freer than the
+  quotes need where the strikes are sparse, would put a lognormal on a vol near zero, an almost point mass in the
+  density (up to 12% of probability on real snapshots) for a gain of hundredths of a vol point.
 
 Stage 3 (surface, :func:`build_equity_vol`): quotes filtered (two-sided, ask <= 3 bid; settlement prices ``last``
 used where there is no bid / ask, with a lower weight), forward and repo of every expiry, Black vols of the
@@ -75,6 +78,8 @@ __all__ = ["implied_volatility", "implied_forward", "implied_repo_curve", "black
 # Bjerksund-Stensland is finite and increasing in the vol on this range (NaN below ~1.5%, below the European
 # price at very high vols); equity vols are well inside it
 _VOL_LOW, _VOL_HIGH = 0.02, 3.0
+# smile mixture: vols of the lognormals at least this fraction of the at-the-money vol of the expiry (and 0.5%)
+MIN_VOL_FRACTION = 0.25
 
 
 def _option_type(option_type: Union[str, OptionType]) -> OptionType:
@@ -382,7 +387,8 @@ class LognormalMixture:
 
     @classmethod
     def fit(cls, forward: float, t: float, strikes, vols, n: int = 4, default: bool = True,
-            weights=None, x0: Optional[np.ndarray] = None) -> "LognormalMixture":
+            weights=None, x0: Optional[np.ndarray] = None,
+            min_vol_fraction: float = MIN_VOL_FRACTION) -> "LognormalMixture":
         """Least-squares fit to the implied vols of one expiry (out-of-the-money prices divided by the Black vega:
         about the vol errors).
 
@@ -395,6 +401,8 @@ class LognormalMixture:
             default (bool): With the default mass.
             weights: Optional weights of the quotes ``[k]`` (e.g. lower for settlement-only quotes).
             x0 (np.ndarray, optional): Start parameters (e.g. the fit of the previous expiry, ``fit.params``).
+            min_vol_fraction (float): Lower bound of the vols of the lognormals as a fraction of the at-the-money
+                vol (linear in the strike between the quotes around the forward), never below 0.5%; ``0``: 0.5% only.
 
         Returns:
             LognormalMixture: The fitted mixture (``params``: unconstrained parameters, ``rms``: weighted rms of
@@ -413,9 +421,9 @@ class LognormalMixture:
             model = np.where(put, m.price(forward, strikes, 1.0, "P"), m.price(forward, strikes, 1.0, "C"))
             return w * (model - target) / vega
 
+        order = np.argsort(strikes)
+        atm = float(np.interp(forward, strikes[order], vols[order]))
         if x0 is None:                                    # ordered start: low mean / high vol first (no exchange)
-            order = np.argsort(strikes)
-            atm = float(np.interp(forward, strikes[order], vols[order]))
             span = np.linspace(-1.0, 1.0, n) if n > 1 else np.zeros(1)
             logits = -span ** 2
             means = 0.12 * span * max(atm * root_t, 0.05)
@@ -427,7 +435,8 @@ class LognormalMixture:
         lower[:n_logits], upper[:n_logits] = -15.0, 15.0     # weights (and the default mass) away from 0 and 1
         if default:
             upper[0] = np.log(0.2)                         # Q up to about 17%
-        lower[-n:], upper[-n:] = np.log(0.005 * root_t), np.log(3.0 * max(root_t, 0.1))
+        vol_floor = max(0.005, min_vol_fraction * atm)    # no lognormal near a point mass
+        lower[-n:], upper[-n:] = np.log(vol_floor * root_t), np.log(3.0 * max(root_t, 0.1))
         first_mean = n + 1 if default else n
         lower[first_mean: first_mean + n], upper[first_mean: first_mean + n] = -3.0, 3.0   # log means
         fit = least_squares(residuals, np.clip(x0, lower + 1e-9, upper - 1e-9), bounds=(lower, upper),

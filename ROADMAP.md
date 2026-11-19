@@ -18,19 +18,12 @@ in their own or another currency, new and live trades, with stable AAD greeks. E
    total variance along the smile. For the beta: strikes to about 30%-200% of the spot with denser nodes below 70%,
    checked in the Fit view (Surface vs Model Valuation within bid / ask on the wings) and on the local vol (arbitrage
    warnings); autocallable prices and vegas before / after on SX5E and a single stock.
-   **Degenerate smile scenarios (same area).** The lognormal mixture of an expiry often puts one scenario on the
-   lower bound of its vol (`sigma_l` = 0.5%, `stdevs` bound `0.005 sqrt(T)`): an almost point mass in the density,
-   valid (no arbitrage) but not realistic. The least squares has more freedom (12 free parameters) than the quotes
-   need where the strikes are sparse, and nothing penalises a narrow scenario. Snapshot 2026-11-13 (notebook
-   `study/notebooks/equity_vol_calibration.ipynb`, §5.1, the spike of the AAPL density at 1.26 F): AAPL 2027-12
-   p = 1.0% at 1.26 F, 2028-03 3.8% at 1.42 F, 2028-12 5.4% at 0.75 F; SX5E 2028-12 4.1% at 0.78 F, 2030-12 3.3% at
-   0.64 F, 2031-12 6.9% at 0.62 F (sigma_l 0.5-0.9%), all with an excellent fit (rms 0.01-0.07 vol pts), so the fit
-   error does not flag them. On AAPL 2027-12 the vols stay smooth (< 0.1 vol pt) but P(S_T > K) drops 2.2 pts between
-   1.26 and 1.28 F against 1.5-2.1 around. The pricers read the stored grid, not the mixture, so the mass reaches them
-   only through the node vols; but the SX5E masses sit at 60-80% of the forward, where the autocallable barriers are.
-   Options: a higher floor on `sigma_l` (a fraction of the at-the-money vol, e.g. a third or a half), a small penalty
-   on narrow scenarios or on the curvature of the density, three scenarios on the expiries with few quotes; check the
-   fit rms of every expiry, the grid vols and the autocallable prices / vegas before and after.
+   Smile mixture, what is left after the vol floor (point masses removed, DEVELOPMENT_LOG): the density beyond the
+   quotes is not constrained (AAPL Dec-2027: a 1.9% crash scenario at 0.30 F below the lowest quote at 0.49 F, the
+   smile bending down below 0.4 F; the old fit had 0.5% of default there instead), and settlement-only expiries keep a
+   second mode where their quotes have a kink (SX5E Dec-2032 around 0.52 F). Both matter once the grid reaches 30%:
+   an explicit wing rule beyond the last quote (linear in total variance against log-moneyness, within Lee's bounds)
+   instead of the mixture's own tail.
 2. [ ] **Autocallable terms as traded.** The Tradepad holds constant barriers: step-down autocall barriers (one per
    observation, already broadcast in `AutocallableOption`, to expose in the form and the schedule), coupon types
    (standard and memory done; fixed coupons), final redemption variants (put knocked in at expiry with a barrier, put
