@@ -1,5 +1,5 @@
 """Market data views (equity underlying, rate curve, FX pair) and the snapshot catalog: plain JSON-ready data
-(numbers, strings, lists) for the web app and the ``testviews`` notebooks."""
+(numbers, strings, lists) for the web app."""
 
 from __future__ import annotations
 
