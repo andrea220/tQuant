@@ -326,19 +326,39 @@ larger, $Q \approx 0.1\%$), which removes the exchange symmetry of the component
 points rms, a second one starts from the parameters of the previous expiry and the better is kept. The rms of the
 weighted vol errors measures the fit.
 
+\paragraph{The smile beyond the quotes.} Between the lowest and the highest quote of an expiry the smile is the
+mixture; beyond them no quote constrains the mixture's tail, which can bend down or carry a bump. There the total
+variance $w(k) = \sigma^2 T$, $k = \ln(K/F)$, continues as a straight line from the edge of the quotes, with the
+slope of the mixture at the edge, kept within Lee's bound $|w'| \le 2$ \citep{lee2004} and never decreasing away from
+the money. A straight line drops the curvature of the smile at the edge, which can make the density negative:
+butterfly arbitrage is absent when \citep{gatheral2006}
+\[
+  g(k) = \Big(1 - \frac{k\,w'}{2w}\Big)^2 - \frac{w'^2}{4}\Big(\frac1w + \frac14\Big) + \frac{w''}{2} \ge 0,
+\]
+checked on the straight wing ($w'' = 0$) out to $10\%$ and $400\%$ of the forward. Where it fails, the line starts
+further out, the mixture kept up to that point; if no starting point works, the mixture's own tail is kept (a
+density, free of arbitrage) and marked unreliable, as on expiries of a few days quoted only near the money.
+
 \paragraph{The surface.} On the output grid, at the forward moneyness $K/F(t)$ (with the forward of the repo term
 structure above):
 \begin{itemize}[nosep]
+  \item calendar step: at the same forward moneyness the total variance of an expiry must not be below that of the
+        earlier ones; where it is, it is raised to them. Only raised, since lowering part of a smile would make its
+        density negative; a reliable point (quoted or on a straight wing) only by earlier reliable points, so an
+        unreliable tail never moves a quote nor a reliable wing (calendar arbitrage can remain only between unreliable
+        tails of expiries of a few days, far from the money);
   \item between two expiries, the total variance $\sigma^2 t$ interpolated in time by a monotone cubic (PCHIP) through
-        the smiles of all the expiries;
+        the smiles of all the expiries, which keeps the monotonicity of the calendar step;
   \item before the first expiry, the vols of the first smile;
   \item after the last expiry $T_n$, the last mixture carried to $t$: the vols $\sigma_l$ unchanged (flat),
         $\ln\xi_l = \ln(F_l/F)$ scaled by $\sqrt{t/T_n}$, survival probability halfway between $1 - Q(T_n)$ and its exponential decay;
         when its at-the-money vol is below the Heston-like level
         $\sigma_H^2(t) = \theta + (v_0 - \theta)(1 - e^{-\kappa t})/(\kappa t)$, fitted to the at-the-money vols of the
-        expiries \citep{gatheral2006}, all the vols $\sigma_l$ are scaled up by the same factor to reach it;
+        expiries \citep{gatheral2006}, all the vols $\sigma_l$ are scaled up by the same factor to reach it; the edges of
+        the quotes carried in $\ln(K/F)/\sqrt t$ and the same wings, never below the last expiry;
   \item at extreme strikes where a vol cannot be inverted, the vol is linear in log-moneyness from the two nearest
         nodes \citep{lee2004}.
 \end{itemize}
-The surface is stored on the listed expiries, then one point a year up to six years, at strikes from 50\% to 150\% of
-the spot.
+The surface is stored on the listed expiries, then one point a year up to six years, at strikes from $30\%$ to $200\%$
+of the spot, every $5\%$ below $95\%$ (where the barriers of the autocallables sit), then $97.5\%$, $100\%$, \dots,
+$150\%$, $175\%$, $200\%$.

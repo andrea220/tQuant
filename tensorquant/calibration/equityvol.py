@@ -36,9 +36,19 @@ out-of-the-money quotes (the American implied vol on the implied forward is the 
 (outside 0.2-5 x the median of the expiry), a mixture fitted per expiry (standard start; above 0.2 vol points also a warm start from the previous
 expiry, the better fit kept). On the
 grid (by default the calibrated listed expiries, then one point a year to 6 years, x ``GRID_MONEYNESS`` of the
-spot; ``GRID_TENORS`` is a fixed alternative), at the forward moneyness ``K / F(t)``:
+spot, 30% to 200%, every 5% below 95%; ``GRID_TENORS`` is a fixed alternative), at the forward moneyness ``K / F(t)``.
+Each smile is the mixture between the outermost quotes of its expiry; beyond them no quote constrains the mixture's
+tail, so the total variance ``w = sigma^2 t`` continues linear in ``k = ln(K/F)`` (slope of the mixture at the
+junction, within Lee's bounds and never decreasing away from the money). The straight wing drops the curvature of the
+smile: where that would make the density negative (Gatheral's ``g(k) < 0``) the junction moves outward, the mixture
+kept up to it; if no junction works the mixture's tail is kept (a density, free of arbitrage) and marked unreliable.
+Then:
 
-- between the expiries: monotone (PCHIP) interpolation of the total variance in time;
+- between the expiries: monotone (PCHIP) interpolation of the total variance in time, after the calendar step: at the
+  same forward moneyness the total variance of an expiry is raised to that of the earlier ones where it is lower
+  (raising keeps the smile free of butterfly arbitrage, a lowering would not); a reliable point (quoted or on a
+  straight wing) only by earlier reliable points, so an unreliable tail (very short expiries quoted near the money
+  only) never moves a quote nor a reliable wing;
 - before the first: the vol of the first expiry;
 - after the last: the last mixture extrapolated (vols of the lognormals flat, means scaled by ``sqrt(t / T_n)``,
   survival ``P(t) = (P(T_n) + exp(-lambda t)) / 2``), its at-the-money vol raised to the Heston-like reference level
@@ -452,7 +462,10 @@ class LognormalMixture:
 # ----------------------------------------------------------------------------------------------------------------------
 
 GRID_TENORS = (1 / 12, 2 / 12, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0)
-GRID_MONEYNESS = (0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 0.975, 1.0, 1.025, 1.05, 1.1, 1.15, 1.2, 1.3, 1.4, 1.5)
+GRID_MONEYNESS = (0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 0.975, 1.0, 1.025, 1.05,
+                  1.1, 1.15, 1.2, 1.3, 1.4, 1.5, 1.75, 2.0)   # of the spot: the autocallable barriers sit at 50-70%
+WING_SLOPE_MAX = 2.0         # Lee: beyond the quotes the total variance grows at most 2 |ln(K/F)|
+WING_RANGE = (0.1, 4.0)      # forward moneyness over which a straight wing must keep a positive density
 DIVIDEND_YEARS = 10.0        # equity indices: dividends extrapolated at a constant yield to this horizon
 DIVIDEND_KEEP_YEARS = 2.0    # equity indices: projected dividends kept to this horizon, implied by the options beyond
 
@@ -509,6 +522,60 @@ def _extrapolate(mixture: LognormalMixture, t_n: float, t: float) -> LognormalMi
                             mixture.stdevs * scale, 1.0 - survival)
 
 
+def _wing_spec(mixture: LognormalMixture, t: float, k_lo: float, k_hi: float, candidates: int = 25) -> dict:
+    """The wings of one smile beyond its outermost quotes (log forward moneyness ``k_lo``, ``k_hi``).
+
+    On each side the first junction ``k_j``, from the edge of the quotes outward, where a straight total variance
+    ``w(k) = w(k_j) + s (k - k_j)`` keeps a positive density out to ``WING_RANGE``: ``s`` the slope of the mixture at
+    ``k_j`` clipped to a total variance not decreasing away from the money and to Lee's ``WING_SLOPE_MAX`` (a clip that
+    would bend the smile the wrong way is refused), and Gatheral's
+    ``g(k) = (1 - k s / 2w)^2 - s^2 / 4 (1 / w + 1 / 4) >= 0`` on the wing (``w'' = 0``). Between the edge and ``k_j`` the
+    mixture. No junction: the mixture's tail, unreliable.
+
+    Returns:
+        dict: ``{side: (k_j, w_j, s) or None}`` for ``"lo"`` / ``"hi"``, with the edges.
+    """
+    spec = {"k_lo": k_lo, "k_hi": k_hi}
+    w_of = lambda kk: mixture.implied_vols(1.0, np.exp(np.atleast_1d(kk)), t) ** 2 * t
+    for side, edge, far, sign in (("lo", k_lo, np.log(WING_RANGE[0]), -1.0), ("hi", k_hi, np.log(WING_RANGE[1]), 1.0)):
+        spec[side] = None
+        if sign * (far - edge) <= 0:
+            continue
+        h = 1e-3 * max(k_hi - k_lo, 1e-2)
+        for kj in edge + sign * np.linspace(0.0, 0.8 * abs(far - edge), candidates):
+            wj, w_in = w_of([kj, kj - sign * h])
+            if not (np.isfinite(wj) and np.isfinite(w_in)):
+                continue
+            s_in = (wj - w_in) / (sign * h)                      # dw/dk at the junction, from the inside
+            s_out = float(np.clip(s_in, 0.0, WING_SLOPE_MAX) if sign > 0 else np.clip(s_in, -WING_SLOPE_MAX, 0.0))
+            if sign * (s_out - s_in) < -1e-12:                    # a clip against the curvature: concave kink
+                continue
+            kw = np.linspace(kj, far, 200)
+            ww = wj + s_out * (kw - kj)
+            g = (1.0 - kw * s_out / (2.0 * ww)) ** 2 - s_out ** 2 / 4.0 * (1.0 / ww + 0.25)
+            if (ww > 0).all() and (g >= 0.0).all():
+                spec[side] = (float(kj), float(wj), s_out)
+                break
+    return spec
+
+
+def _smile_w(mixture: LognormalMixture, t: float, k: np.ndarray, spec: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Total variance of a smile at log forward moneyness *k* with its wings (:func:`_wing_spec`), and whether each
+    point is reliable (quoted, or the mixture up to a junction and the straight wing beyond it)."""
+    k = np.asarray(k, dtype=float)
+    w = mixture.implied_vols(1.0, np.exp(k), t) ** 2 * t
+    reliable = (k >= spec["k_lo"]) & (k <= spec["k_hi"])
+    for side, beyond in (("lo", k < spec["k_lo"]), ("hi", k > spec["k_hi"])):
+        wing = spec[side]
+        if wing is None or not beyond.any():
+            continue
+        kj, wj, slope = wing
+        straight = beyond & ((k < kj) if side == "lo" else (k > kj))
+        w = np.where(straight, wj + slope * (k - kj), w)
+        reliable = reliable | beyond
+    return w, reliable
+
+
 def _fill_wings(log_m: np.ndarray, vols: np.ndarray) -> np.ndarray:
     """NaN vols (extreme strikes) linear in log-moneyness from the two nearest valid ones on that side."""
     out = vols.copy()
@@ -544,6 +611,8 @@ def build_equity_vol(equity: Equity, quotes: pd.DataFrame, dividend_model: str =
         tuple: :class:`VolatilitySurface` (``tenors`` x ``moneyness`` x spot, ACT/365), repo :class:`RateCurve`
         (zero repo rates at the calibrated expiries from ``min_repo_days``) and the report (one row per expiry: ``expiry``, ``t``,
         ``forward``, ``repo``, ``forward_bid`` / ``forward_ask``, ``quotes``, ``source`` (market / settlement),
+        ``k_lo`` / ``k_hi`` (log forward moneyness of the outermost quotes used: the mixture inside, the wings
+        beyond),
         ``fit_rms`` (vol), ``atm_vol``, ``mixture``, ``quote_vols`` (per out-of-the-money quote: ``strike``,
         ``option_type``, ``iv_bid`` / ``iv_mid`` / ``iv_ask`` on the implied forward, ``settlement``, ``used`` (kept
         by the filters), ``model_vol``); skipped expiries with ``error``).
@@ -603,7 +672,9 @@ def build_equity_vol(equity: Equity, quotes: pd.DataFrame, dividend_model: str =
             except ValueError:
                 pass
         x0 = mixture.params
+        k_used = np.log(k[keep] / forward)                 # log forward moneyness of the quotes used
         rows.append({"expiry": expiry, "t": t, **res, "quotes": int(keep.sum()), "source": source,
+                     "k_lo": float(k_used.min()), "k_hi": float(k_used.max()),
                      "fit_rms": mixture.rms, "atm_vol": float(mixture.implied_vols(forward, [forward], t)[0]),
                      "mixture": mixture, "quote_vols": quote_vols.assign(model_vol=mixture.implied_vols(forward, k, t))})
     report = pd.DataFrame(rows)
@@ -621,14 +692,25 @@ def build_equity_vol(equity: Equity, quotes: pd.DataFrame, dividend_model: str =
                   equity.div_yield, None)
     times = good["t"].to_numpy(float)
     mixtures = list(good["mixture"])
+    specs = [_wing_spec(m, tt, lo, hi) for m, tt, lo, hi in zip(mixtures, times, good["k_lo"], good["k_hi"])]
     sigma_h = _heston_atm(times, good["atm_vol"].to_numpy(float))
     m_grid = np.asarray(moneyness, dtype=float)
     tenors = listed_tenors(times) if tenors is None else list(tenors)
     matrix = np.empty((len(tenors), len(m_grid)))
     for i, t in enumerate(tenors):
         x = spot * m_grid / float(view.forward(t))                       # forward moneyness K / F(t)
+        # every expiry at this forward moneyness, then the calendar step: raised to the earlier expiries where lower,
+        # a reliable point only by earlier reliable ones (an unreliable tail never moves a quote or a reliable wing)
+        pairs = [_smile_w(m, tt, np.log(x), sp) for m, tt, sp in zip(mixtures, times, specs)]
+        w_exp = np.array([w for w, _ in pairs])
+        rel = np.array([r for _, r in pairs])
+        best_rel = np.full(len(x), np.nan)                               # max of the earlier reliable points
+        for j in range(len(times)):
+            if j:
+                w_exp[j] = np.fmax(w_exp[j], np.where(rel[j], best_rel, w_exp[j - 1]))
+            best_rel = np.fmax(best_rel, np.where(rel[j], w_exp[j], np.nan))
         if t <= times[0]:
-            vols = mixtures[0].implied_vols(1.0, x, times[0])
+            vols = np.sqrt(w_exp[0] / times[0])
         elif t >= times[-1]:
             ext = _extrapolate(mixtures[-1], times[-1], t) if t > times[-1] else mixtures[-1]
             target, atm = sigma_h(t), float(ext.implied_vols(1.0, [1.0], t)[0])
@@ -638,10 +720,13 @@ def build_equity_vol(equity: Equity, quotes: pd.DataFrame, dividend_model: str =
                     return float(scaled.implied_vols(1.0, [1.0], t)[0]) - target
                 beta = brentq(gap, 1.0, 5.0)
                 ext = LognormalMixture(ext.weights, ext.means, beta * ext.stdevs, ext.default)
-            vols = ext.implied_vols(1.0, x, t)
+            scale = np.sqrt(t / times[-1])                         # quote edges carried in ln(K/F) / sqrt(t)
+            sp = specs[-1] if t == times[-1] else _wing_spec(ext, t, specs[-1]["k_lo"] * scale,
+                                                             specs[-1]["k_hi"] * scale)
+            w_ext, _ = _smile_w(ext, t, np.log(x), sp)
+            vols = np.sqrt(np.fmax(w_ext, w_exp[-1]) / t)          # not below the last expiry
         else:
-            w = np.array([m.implied_vols(1.0, x, tt) ** 2 * tt for m, tt in zip(mixtures, times)])
-            vols = np.sqrt(PchipInterpolator(times, w, axis=0)(t) / t)
+            vols = np.sqrt(PchipInterpolator(times, w_exp, axis=0)(t) / t)   # PCHIP keeps the monotonicity
         matrix[i] = _fill_wings(np.log(x), vols)
     surface = VolatilitySurface(reference_date=reference, calendar=None,
                                 daycounter=DayCounter(DayCounterConvention.Actual365),

@@ -495,3 +495,22 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       set (`study/notebooks/equity_vol_calibration_data.csv`) recalibrated, notebook and Models and Pricing 1.4
       updated (the AAPL Dec-2027 scenarios change, the smile does not: 80% put 30.0%). The live snapshots keep the old
       surfaces until their vols are recalibrated.
+- [x] Equity vol grid in the wings (Beta 1, item 1, first part): `GRID_MONEYNESS` 30%-200% of the spot, every 5%
+      below 95%, then 97.5%-150%, 175%, 200% (26 strikes, were 17 from 50% to 150%). Beyond the outermost quotes of
+      an expiry the total variance is straight in log-moneyness, with the slope of the mixture at the junction within
+      Lee's bounds and never decreasing away from the money (`_wing_spec`, `_smile_w`); the junction moves outward
+      when the straight wing would make the density negative (Gatheral's g on the wing, out to 10% / 400% of the
+      forward), no junction: the mixture's tail, unreliable. Calendar step before the PCHIP in time: an expiry raised
+      to the earlier ones at the same forward moneyness, a reliable point (quoted or straight wing) only by earlier
+      reliable points; after the last expiry the edges carried in ln(K/F)/sqrt(t), never below the last expiry.
+      Report columns `k_lo` / `k_hi`. Alternatives measured on 2026-11-13 and dropped: straight wings from the edge
+      with a full calendar maximum (6 butterflies beyond the quotes), the mixture's tail when the wing fails with a
+      full maximum (unreliable tails of 3-5 day expiries raised the next expiries' quotes: AAPL max error 28 vol
+      pts), anchor points in the fit (SPX smile within bid / ask 96% -> 89%). Result, snapshot 2026-11-13
+      recalibrated (copy): two-sided quotes within bid / ask on the stored surface AAPL 98.5%, ENI 100%, ISP 98.2% ->
+      100%, MSFT 100%, SPX 79.1% -> 79.5%, SX5E 95.4%; rms error on the surface ENI 0.16 -> 0.07 vol pts, ISP 0.60 ->
+      0.29, others equal or lower; butterfly arbitrage on the grid 5 -> 0; calendar arbitrage 0 on SPX / SX5E / ISP,
+      left only in the unreliable tails of 3-5 day expiries (AAPL, MSFT) and residuals of 5e-4 (ENI 2031-2032). AAPL
+      at one year: 39.2% at 50%, 48.4% at 30% (the mixture's tail bent down below 40%). Tests: no butterfly, no
+      calendar arbitrage over the whole grid, straight wings with Lee slopes (European and American cases). Notebook
+      data set and Models and Pricing 1.4 updated; the live snapshots keep their surfaces until recalibrated.

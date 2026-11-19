@@ -12,7 +12,9 @@ import pandas as pd
 
 import tensorquant as tq
 from markers import slow
-from tensorquant.calibration.equityvol import (GRID_MONEYNESS, GRID_TENORS, LognormalMixture, listed_tenors,
+from scipy.stats import norm
+from tensorquant.calibration.equityvol import (GRID_MONEYNESS, GRID_TENORS, LognormalMixture, _smile_w, _wing_spec,
+                                               listed_tenors,
                                                black_implied_vol, build_equity_vol, calibrate_snapshot_vols, implied_spot,
                                                extrapolate_dividends, implied_forward,
                                                implied_repo_curve, implied_volatility)
@@ -289,6 +291,50 @@ class _SurfaceCase(unittest.TestCase):
 
     def report_smile(self, expiry):
         return self.report[self.report["expiry"] == expiry].iloc[0]["mixture"]
+
+    def test_no_butterfly_arbitrage(self):
+        """Every grid slice (30%-200% of the spot): undiscounted call prices convex in the strike (puts below the
+        forward, the same convexity without the rounding of deep in-the-money calls)."""
+        strikes = np.asarray(self.surface.strike, float)
+        matrix = self.surface.volatility_matrix.numpy()
+        for t, vols in zip(self.surface.maturity, matrix):
+            f = float(self.truth.forward(t))
+            sd = vols * np.sqrt(t)
+            d1 = np.log(f / strikes) / sd + 0.5 * sd
+            call = f * norm.cdf(d1) - strikes * norm.cdf(d1 - sd)
+            prices = np.where(strikes < f, call - (f - strikes), call)
+            conv_c = np.diff(np.diff(call) / np.diff(strikes))
+            conv_p = np.diff(np.diff(prices) / np.diff(strikes))
+            conv = np.where(strikes[2:] < f, conv_p, conv_c)
+            self.assertGreaterEqual(conv.min(), -1e-9, f"T = {t}")
+
+    def test_no_calendar_arbitrage(self):
+        """Total variance non-decreasing in the maturity at fixed forward moneyness, over the whole grid (wings beyond
+        the quotes included: they are straight in total variance and raised to the earlier expiries)."""
+        strikes = np.asarray(self.surface.strike, float)
+        matrix = self.surface.volatility_matrix.numpy()
+        t = np.asarray(self.surface.maturity, float)
+        k_fwd = [np.log(strikes / float(self.truth.forward(tt))) for tt in t]
+        for i in range(len(t) - 1):
+            k = k_fwd[i + 1]
+            inside = (k >= k_fwd[i][0]) & (k <= k_fwd[i][-1])
+            w_before = np.interp(k, k_fwd[i], matrix[i] ** 2 * t[i])
+            w_after = matrix[i + 1] ** 2 * t[i + 1]
+            self.assertGreaterEqual((w_after - w_before)[inside].min(), -1e-4, f"T = {t[i]} -> {t[i + 1]}")
+
+    def test_wings_beyond_the_quotes(self):
+        """Beyond the outermost quotes of an expiry: a straight total variance in log-moneyness (the junction found,
+        slope within Lee's bounds), never decreasing away from the money."""
+        for _, row in self.report[self.report["mixture"].notna()].iterrows():
+            spec = _wing_spec(row["mixture"], row["t"], row["k_lo"], row["k_hi"])
+            for side, sign in (("lo", -1.0), ("hi", 1.0)):
+                self.assertIsNotNone(spec[side], f"{row['expiry']} {side}")
+                kj, wj, slope = spec[side]
+                self.assertTrue(0.0 <= sign * slope <= 2.0)
+                k = kj + sign * np.linspace(0.0, 1.0, 11)
+                w, reliable = _smile_w(row["mixture"], row["t"], k, spec)
+                np.testing.assert_allclose(w, wj + slope * (k - kj), rtol=0, atol=1e-12)
+                self.assertTrue(reliable.all())
 
     def test_total_variance_increases(self):
         """ATM-forward total variance increases with the maturity (no calendar arbitrage at the money)."""

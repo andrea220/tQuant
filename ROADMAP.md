@@ -9,21 +9,19 @@ Current focus: Beta 1, local vol autocallables.
 Goal of the first beta: autocallables priced under local vol on the real snapshots, single underlying and worst-of,
 in their own or another currency, new and live trades, with stable AAD greeks. Everything else waits (After the beta).
 
-1. [ ] **Equity vol grid in the wings.** The local vol reads the stored surface, and the autocallable put and coupon
-   barriers sit at 50-70% of the spot, on the edge of the grid. The grid is 50%-150% of the spot, read bilinear in
-   strike and flat outside (Fit view, Surface vs Model Valuation on 2026-11-13): listed options beyond it are repriced
-   on the edge vol (ENI 42% puts on 2030-2032: 36.8 vs 40.5 market, max 3.7 vol pts; SPX 160-173% calls: 16.1 vs
-   15.1-15.4) and the interpolation between nodes cuts the curvature of the short expiries (SPX: 79% within bid / ask
-   on the surface, 91% on the smile). Options: a wider strike range, denser nodes in the wings, interpolation in
-   total variance along the smile. For the beta: strikes to about 30%-200% of the spot with denser nodes below 70%,
-   checked in the Fit view (Surface vs Model Valuation within bid / ask on the wings) and on the local vol (arbitrage
-   warnings); autocallable prices and vegas before / after on SX5E and a single stock.
-   Smile mixture, what is left after the vol floor (point masses removed, DEVELOPMENT_LOG): the density beyond the
-   quotes is not constrained (AAPL Dec-2027: a 1.9% crash scenario at 0.30 F below the lowest quote at 0.49 F, the
-   smile bending down below 0.4 F; the old fit had 0.5% of default there instead), and settlement-only expiries keep a
-   second mode where their quotes have a kink (SX5E Dec-2032 around 0.52 F). Both matter once the grid reaches 30%:
-   an explicit wing rule beyond the last quote (linear in total variance against log-moneyness, within Lee's bounds)
-   instead of the mixture's own tail.
+1. [ ] **Equity vol grid in the wings: what is left.** Done (DEVELOPMENT_LOG): grid 30%-200% of the spot, straight
+   wings beyond the quotes, calendar step. Left:
+   - interpolation between the nodes: bilinear in strike, it cuts the curvature of the short index expiries (SPX
+     79.5% of the two-sided quotes within bid / ask on the surface against 96% on the smile, 2026-11-13; the wider
+     grid did not change it, the gap is near the money): total variance along the log-moneyness (natural cubic, as
+     the local vol), or more nodes between 90% and 110%;
+   - recalibrate the live snapshots and the calibration sets on the new surfaces (Heston and DD fit every node, now
+     26 strikes); autocallable prices and vegas before / after on SX5E and a single stock; local vol arbitrage
+     warnings on the wider grid;
+   - unreliable tails left as they are: expiries of a few days quoted only near the money keep the mixture's tail
+     (AAPL / MSFT 3-5 days: 150%-390% vol at 35%-70%), the only calendar arbitrage left (up to 0.10 of total
+     variance against the next expiry), far from anything priced; settlement-only expiries keep a second mode where
+     their quotes have a kink (SX5E Dec-2032 around 0.52 F).
 2. [ ] **Autocallable terms as traded.** The Tradepad holds constant barriers: step-down autocall barriers (one per
    observation, already broadcast in `AutocallableOption`, to expose in the form and the schedule), coupon types
    (standard and memory done; fixed coupons), final redemption variants (put knocked in at expiry with a barrier, put
