@@ -109,37 +109,107 @@ builds its own representation from the same nodes, in total variance and forward
 delayed against its options) the spot are built from the quotes of the listed options, one expiry at a time: first the
 forward of the expiry, then its smile, then the surface across the expiries.
 
-\paragraph{The quotes.} For each underlying the options are requested on selected expiries and strikes only:
-\begin{itemize}[nosep]
-  \item expiries: the first two listed (weeklies included), the monthlies up to three months, the quarterly ones up to
-        18 months, then one a year (the nearest to mid-December) up to about six years;
-  \item strikes, around an estimate of the forward $\hat F = (S_0 - \text{dividends to } T)\,e^{rT}$: for each target
-        moneyness $50\%, 60\%, \dots, 97.5\%, 100\%, \dots, 150\%$ of $\hat F$ the nearest listed out-of-the-money
-        option (put below $\hat F$, call above), plus a call and a put on each of the four strikes on either side of
-        $\hat F$ (for the put-call parity); about twenty options an expiry;
-  \item for each option the bid, the ask, the last price and the time of the last bid update; the spot is read in the
-        same request, so that spot and options are of the same moment.
-\end{itemize}
-The \emph{quote date} is the most frequent update date of the two-sided quotes. If it is not today (market closed),
-the spot is the close of that day. A bid / ask older than three days before the quote date is discarded; the option is
-then kept on its last price, treated as a \emph{settlement} price (bid = ask = last), and dropped if it has none. When
-the smile is fitted:
-\begin{itemize}[nosep]
-  \item a two-sided quote is used if bid $> 0$ and bid $\le$ ask $\le 3\times$ bid (a wider one is discarded), at its mid
-        $(\text{bid} + \text{ask})/2$, with weight 1;
-  \item a settlement price (no bid nor ask, positive last) is used at the last price with weight $0.25$: the long
-        expiries of the less liquid options often have only these;
-  \item a one-sided quote (bid or ask only) is discarded.
-\end{itemize}
+\paragraph{The quotes.} For each underlying only a selection of its listed options is requested, twenty to thirty
+per expiry, out of the chain of the options listed with strikes between $40\%$ and $200\%$ of the spot (when an expiry
+is listed both in the standard series and in a weekly one, the standard one).
 
-\paragraph{Forward and repo of an expiry.} European put-call parity gives the forward at a strike,
-$F = K + (C - P)/P(0,T)$, from mid prices; it is computed at the two strikes with a two-sided call and put that
-bracket the forward (settlement prices only when the expiry has no two-sided quote), and $F$ is their average. The
-listed single-stock options are American: each mid price is first turned into a European one, at the Black--Scholes
-vol that reprices it as an American option on the current forward \citep{bjerksund1993}, and the parity forward is
-recomputed until it lies between the two strikes and moves less than a tolerance (secant steps; if the parity jumps
-back and forth between two strike pairs, the mean of the two). The bid / ask prices give a range of forwards. With the
-dividends fixed (declared and forecast cash dividends), the rest of the carry is the repo,
+\emph{Expiries:} the first two listed (weeklies included), the monthlies (third Friday) up to three months, the
+quarterly monthlies (March, June, September, December) up to 18 months, then one a year (the nearest to mid-December)
+up to about six years.
+
+\emph{Strikes.} They are chosen around an estimate of the forward,
+$\hat F = (S_0 - D)\,e^{rT}$, with $D$ the sum of the forecast dividends with ex-date up to $T$ (not discounted) and
+$r$ the overnight fixing of the currency. $\hat F$ is only a guide for the selection: the forward used afterwards is
+implied by the options themselves (below). Moneyness here is $K/\hat F$.
+\begin{itemize}[nosep]
+  \item \emph{Smile options.} For each target moneyness $m$ in 50, 60, 70, 80, 85, 90, 95, 97.5, 100, 102.5, 105,
+        110, 115, 120, 130, 140 and $150\%$, the target strike is $m\hat F$; among the listed out-of-the-money options
+        (puts with $K < \hat F$ for $m < 100\%$, calls with $K \ge \hat F$ for $m \ge 100\%$) the one whose strike is
+        the nearest to it is taken. For example, with $\hat F = 360$ and strikes every 5, the $80\%$ target $288$
+        gives the 290 put. Where the strikes are sparse (wings, long expiries) the listed strike can be some way from
+        the target, two targets can give the same option (taken once), and a target beyond the listed strikes gives
+        the outermost one. These options carry the smile, usually one option type per strike.
+  \item \emph{Parity options.} Around $\hat F$, the four listed strikes below it and the four at or above it (eight
+        strikes, among those listed with both a call and a put), and on each of them both the call and the put:
+        sixteen options, for the put-call parity of the forward (below). Near the forward both options are liquid and
+        their spreads narrow.
+  \item \emph{In all}, per expiry: at most seventeen smile options and the sixteen parity options, an option counted
+        once when it is in both (the smile options from about $95\%$ to $105\%$ of $\hat F$ are parity options too):
+        typically twenty to thirty options an expiry.
+\end{itemize}
+For each option the bid, the ask, the last price and the time of the last bid update are read; the spot is read in
+the same request, so that spot and options are of the same moment.
+
+\emph{Keeping or discarding a quote}, in two stages. At the download:
+\begin{enumerate}[nosep]
+  \item the \emph{quote date} is the most frequent date of the last bid update among the options with a bid and an
+        ask; if it is not today (market not open yet), the spot is the close of that day;
+  \item a bid / ask whose last update is missing or older than three calendar days before the quote date is
+        \emph{stale} and removed: a price that has not moved for days is not a market;
+  \item an option is kept if it still has both a bid and an ask, or a positive last price; otherwise it is dropped.
+\end{enumerate}
+At the calibration each option kept is one of:
+\begin{itemize}[nosep]
+  \item \emph{two-sided}: bid $> 0$ and bid $\le$ ask $\le 3\times$ bid; used at its mid $(\text{bid} + \text{ask})/2$,
+        with weight 1;
+  \item \emph{settlement}: neither a bid nor an ask (removed as stale, or never quoted) and a positive last price;
+        used at the last price (bid = ask = last), with weight $0.25$, as that price may be days old. The long
+        expiries of the less liquid underlyings often have only these;
+  \item \emph{discarded}: a one-sided quote (bid or ask only), a zero bid, a crossed quote (ask $<$ bid), or a quote
+        too wide (ask $> 3\times$ bid: the mid is uncertain by more than half of itself). A quote with a bid or an ask
+        is never replaced by its last price.
+\end{itemize}
+The forward of an expiry uses the two-sided quotes of its parity options (settlement prices only when the expiry has
+no two-sided quote at all); the smile uses the out-of-the-money options, with further checks on their implied vols
+(\emph{Fit of the smile}, below).
+
+\paragraph{Forward and repo of an expiry.} European put-call parity, $C - P = P(0,T)(F - K)$ for a call and a put
+of the same strike and expiry, gives the forward at a strike, $F = K + (C - P)/P(0,T)$, from mid prices. It needs both
+options on the strike, so it uses the parity strikes above, those whose call and put both have a two-sided quote
+(settlement prices only when the expiry has no two-sided quote). Of these, it takes the two adjacent strikes
+$K_1 \le F < K_2$ that bracket the forward: the highest one at or below $F$ and the lowest one above (the nearest to
+the forward, where the parity is the most precise); $F$ is the average of their two parity forwards. As $F$ is not
+known in advance, the pair is chosen around the current estimate (first the forward from the forecast dividends) and
+chosen again after each update of $F$.
+
+\emph{De-Americanization.} The listed single-stock options are American: they can be exercised at any time up to the
+expiry, so each price is the European price plus an early-exercise premium, $V^{\mathrm{Am}} = V^{\mathrm{Eu}} + \pi$,
+$\pi \ge 0$. On American prices the parity would put the premia into the forward, so each mid is first turned into a
+European price. The premium is not quoted: it is computed with a model, Black--Scholes with the
+\citet{bjerksund1993} approximation of the American exercise.
+
+Known from the start are the spot $S_0$ (read with the quotes), strike and expiry, the rate $r = -\ln P(0,T)/T$ of
+the discount curve and the market mids. Unknown are the vol and the forward $F$, which is what is sought and which
+also sets the carry of the model. The vol is not needed in advance: with $F$ fixed, each option gives one equation
+(model price = mid) in one unknown, the vol, an output of the step used only for the premium of that option (the
+smile vols are computed later, on the final forward). The forward is guessed and iterated: the first guess is the
+forward of the forecast dividends with a zero repo. One step, on the current $F$:
+\begin{enumerate}[nosep]
+  \item inputs: $S_0$, $r$ and the continuous carry $q = r - \ln(F/S_0)/T$, so that the model forward is $F$
+        (dividends and repo enter only through $F$, the dividends as a yield; with the dividends as cash amounts
+        instead, the spot net of their present value and the repo as carry);
+  \item the American implied vol $\sigma_A$ of each of the four mids (call and put on the two strikes around $F$):
+        the vol at which the American model price equals the mid;
+  \item the European Black--Scholes price at $\sigma_A$, same inputs;
+  \item the premium $\pi = \text{mid} - V^{\mathrm{Eu}}(\sigma_A)$; the European mid is $\text{mid} - \pi$, and the same
+        premium is taken off the bid and the ask;
+  \item the parity on the European mids gives a new forward at each strike; their mean is the new $F$.
+\end{enumerate}
+The steps are repeated on the new $F$ until it lies between its two strikes and moves less than a tolerance (secant
+steps on top of the plain repetition; if the parity jumps back and forth between two strike pairs, the mean of the
+two). It converges in a few steps because the premia depend little on $F$: a guess wrong by $0.3\%$ moves them by a
+few cents, so each new forward is much closer than the previous one.
+
+The model explains only the premium, the vol that drives it is the market's at that strike: another American model
+would change a premium that is itself a few percent of the price at most by a small fraction of it. The premium
+matters for puts when rates are high (exercising gives the strike today, and the interest on it: the deep
+in-the-money puts), and for calls only to receive a dividend (without carry a call is never exercised early and is
+priced as European; with the dividends as a yield the premium before a large single dividend is approximate). Index
+options are European and need no adjustment. A mid outside the model range (below its price at a $2\%$ vol, e.g.
+below the intrinsic value, or above its price at $300\%$) has no implied vol, and its expiry gets no forward.
+
+The bid / ask prices give a range of forwards: from the call bid and the put ask to the call ask and the put bid.
+With the dividends fixed (declared and forecast cash dividends), the rest of the carry is the repo,
 \[
   q_r(T) = -\frac{1}{T}\,\ln\frac{F(T)\,P(0,T)}{S_0 - \mathrm{PV}_{\mathrm{div}}(T)},
 \]
@@ -162,39 +232,91 @@ repeats on the forward just before its ex-date, $D(t + n) = D(t)\,F(t + n)/F(t)$
 implied from the options as above, flat at $q_0$ beyond the two years. Index dividend futures, when available, give the
 same market dividends directly.
 
-\paragraph{The smile model: a mixture of lognormals with a default mass.} The distribution of $S_T$ at the expiry is
-\citep{brigo2002}
+\paragraph{The smile model: a mixture of lognormals with a default mass.} Each expiry needs the distribution of
+the price $S_T$ at the expiry: it gives the price of every option of the expiry, hence a vol at every strike (the
+smile). A distribution, unlike a curve drawn through the vols, cannot imply negative probabilities, i.e. strike
+arbitrage. The distribution is a mixture of lognormals \citep{brigo2002} with a mass at zero.
+
+\emph{The model: scenarios.} $S_T$ is drawn in two stages: first a scenario, $l = 1, \dots, 4$ with probability
+$p_l$, or default with probability $Q$; then, inside scenario $l$, the price is lognormal around the scenario's own
+forward $F_l$ with the scenario's own vol $\sigma_l$ (the Black--Scholes world with forward $F_l$ and vol
+$\sigma_l$), and in default $S_T = 0$:
 \[
-  S_T = 0 \text{ with probability } Q, \qquad
-  S_T = \xi_l\,F\,e^{\Sigma_l Z - \Sigma_l^2/2} \text{ with probability } p_l\ (l = 1,\dots,4),\qquad Z \sim N(0,1),
+  S_T = \begin{cases}
+    0 & \text{with probability } Q,\\
+    F_l\,e^{\sigma_l\sqrt T Z - \sigma_l^2 T/2} & \text{with probability } p_l\ (l = 1,\dots,4),
+  \end{cases}
+  \qquad Z \sim N(0,1).
 \]
-with $Q + \sum_l p_l = 1$ and $\sum_l p_l \xi_l = 1$ (so $\E[S_T] = F$: the forward is repriced). $\xi_l$ is the mean
-of the $l$-th lognormal relative to the forward and $\Sigma_l = \sigma_l\sqrt{T}$ its total standard deviation. The
-undiscounted prices are sums of Black prices:
+The parameters of an expiry are the probabilities $p_l$, the scenario forwards $F_l = \E[S_T \mid l]$, the scenario
+vols $\sigma_l$ (yearly, as Black vols) and the default probability $Q$, with two constraints: $Q + \sum_l p_l = 1$
+(the probabilities add up to one) and $\sum_l p_l F_l = F$ (the average of $S_T$ over the scenarios is the market
+forward; default adds nothing). In relative terms, $\xi_l = F_l/F$ (so $\sum_l p_l\,\xi_l = 1$): the form in which
+the smile of an expiry is stored and read at another forward (the surface reads it at the forward moneyness $K/F$,
+below).
+
+\emph{The price of an option.} The (undiscounted) price is the expected payoff; over the scenarios, the average of
+the expected payoff in each one, weighted by the probabilities. In scenario $l$ the expected payoff is a Black price
+with forward $F_l$ and vol $\sigma_l$; in default a put pays the whole strike and a call nothing. So each option is
+priced in each scenario as if it were the only one, and the prices are averaged with the probabilities: with
+$\mathrm{Black}(F, K, \sigma, T)$ the undiscounted Black call price,
 \[
-  C(K) = \sum_l p_l\,\mathrm{Black}(\xi_l F, K, \Sigma_l),\qquad
-  P(K) = \sum_l p_l\,\mathrm{Black}_{\mathrm{put}}(\xi_l F, K, \Sigma_l) + Q\,K,
+  C(K) = \sum_l p_l\,\mathrm{Black}(F_l, K, \sigma_l, T),\qquad
+  P(K) = \sum_l p_l\,\mathrm{Black}_{\mathrm{put}}(F_l, K, \sigma_l, T) + Q\,K.
 \]
-and the model vol at $K$ is the Black vol of $C(K)$ or $P(K)$. The model is a density, so the smile has no strike
-arbitrage (call prices decreasing and convex in $K$), and it is fast (four Black prices). The lognormals with lower
-means and larger deviations make the put skew; the mass at zero, a default of the underlying, gives the steep skew of
-the short expiries; with one lognormal and no mass at zero it is Black. It describes the expiry only (no dynamics):
-the expiries are fitted one by one.
+
+\emph{From the price to a vol: the smile.} The model vol at $K$ is the single Black vol that, with the market forward
+$F$, gives the price $C(K)$ or $P(K)$. With one lognormal and no mass at zero the model is Black and this vol is the
+same at every strike; the mixture is not one lognormal, so the vol changes with the strike, and that is the smile.
+The scenarios with lower forwards and higher vols, and the mass at zero, put more probability on low prices than one
+lognormal does: the low-strike puts are dearer, their vols higher (the put skew; the mass at zero gives the steep
+skew of the short expiries). A scenario with a high forward and a low vol puts less probability far above the forward:
+the high-strike calls are cheaper, their vols lower.
+
+\emph{Example} (AAPL, December 2027, $F = 376.6$, $T = 1.09$): the fitted scenarios are down ($p = 18\%$,
+$F_l = 278$, $\sigma_l = 32\%$), central ($63\%$, $394$, $24\%$), up ($17\%$, $424$, $14\%$), far up ($1\%$, $475$,
+about $0$) and default ($Q = 0.5\%$). The put with strike $80\%$ of the forward, $K = 301.3$:
+\begin{center}
+\begin{tabular}{lrrrrr}
+  \toprule
+  scenario & probability & forward & vol & put in the scenario & probability $\times$ put \\
+  \midrule
+  down & 0.184 & 278.0 & 31.6\% & 50.74 & 9.36 \\
+  central & 0.627 & 393.8 & 23.8\% & 6.12 & 3.84 \\
+  up & 0.174 & 424.2 & 13.6\% & 0.14 & 0.02 \\
+  far up & 0.010 & 475.4 & 0.5\% & 0.00 & 0.00 \\
+  default & 0.005 & -- & -- & 301.26 & 1.49 \\
+  \midrule
+  \multicolumn{5}{l}{price} & 14.71 \\
+  \bottomrule
+\end{tabular}
+\end{center}
+The single Black vol that gives $14.71$ with $F = 376.6$ is $30.0\%$; one lognormal at the at-the-money vol of the
+mixture, $26.8\%$, would give $11.33$. Across the strikes the vol goes from $34.7\%$ (put at $60\%$, two thirds of its
+price from the down scenario, a third from default) to $26.8\%$ at the money (mostly the central scenario) and
+$24.1\%$ (call at $140\%$, the central and the low-vol up scenarios).
+
+\emph{Where the parameters come from.} They are not chosen: they are the free parameters of the fit below, set so
+that the model vols match the market vols of the expiry. The constraints hold by construction (positive
+probabilities adding up to one, forwards rescaled to the market forward). The scenarios are not a forecast: they are
+a flexible shape for the distribution, and different sets can give almost the same smile. The model is fast (four
+Black prices per option), describes the expiry only (no dynamics), and the expiries are fitted one by one.
 
 \paragraph{Fit of the smile.} The quotes used are the out-of-the-money ones relative to the implied forward (puts below
-$F$, calls above), each turned into a Black vol $\sigma_i$ on the implied forward (for an American option the vol of
+$F$, calls above), each turned into a Black vol $\sigma^{\mathrm{mkt}}_i$ on the implied forward (for an American option the vol of
 its price on that forward, which is also the Black vol). Vols that cannot be computed, or outside $0.2$--$5$ times the
 median vol of the expiry, are discarded; an expiry with fewer than three quotes left is skipped (the surface
 interpolates through it). The parameters minimise
 \[
-  \sum_i \left(w_i\,\frac{V_{\mathrm{model}}(K_i) - \mathrm{Black}(F, K_i, \sigma_i\sqrt T)}{\mathcal V_i}\right)^2,
+  \sum_i \left(w_i\,\frac{V_{\mathrm{model}}(K_i) - \mathrm{Black}(F, K_i, \sigma^{\mathrm{mkt}}_i, T)}{\mathcal V_i}\right)^2,
 \]
 the out-of-the-money price errors divided by the Black vega $\mathcal V_i$ of the quote (so about the vol errors), with
 the weights $w_i$ above (1 for a two-sided quote, $0.25$ for a settlement price). The fit is on the mid prices; the bid
 and ask are only reported against the fitted smile. Parametrisation and bounds: the weights $Q, p_l$ by a softmax (each
-away from 0 and 1, $Q$ at most about 17\%), the means by $\xi_l \propto e^{m_l}$ with $|m_l| \le 3$ (rescaled so that
-$\sum_l p_l \xi_l = 1$), the deviations $\Sigma_l = e^{s_l}$ between $0.005\sqrt T$ and $3\max(\sqrt T, 0.1)$. The start
-is ordered (from the lowest mean with the largest deviation to the highest mean with the smallest, central weights
+away from 0 and 1, $Q$ at most about 17\%), the forwards by $F_l \propto F e^{m_l}$ with $|m_l| \le 3$ (rescaled so that
+$\sum_l p_l F_l = F$), the vols by $\sigma_l\sqrt T = e^{s_l}$ with $\sigma_l$ between $0.5\%$ and $300\%$ (up to $0.3/\sqrt T$ on
+expiries shorter than about four days). The start is ordered (from the lowest forward with the highest vol to the
+highest forward with the lowest, central weights
 larger, $Q \approx 0.1\%$), which removes the exchange symmetry of the components; when that fit is above 0.2 vol
 points rms, a second one starts from the parameters of the previous expiry and the better is kept. The rms of the
 weighted vol errors measures the fit.
@@ -205,11 +327,11 @@ structure above):
   \item between two expiries, the total variance $\sigma^2 t$ interpolated in time by a monotone cubic (PCHIP) through
         the smiles of all the expiries;
   \item before the first expiry, the vols of the first smile;
-  \item after the last expiry $T_n$, the last mixture carried to $t$: deviations $\Sigma_l\sqrt{t/T_n}$ (flat vols),
-        log-means scaled by $\sqrt{t/T_n}$, survival probability halfway between $1 - Q(T_n)$ and its exponential decay;
+  \item after the last expiry $T_n$, the last mixture carried to $t$: the vols $\sigma_l$ unchanged (flat),
+        $\ln\xi_l = \ln(F_l/F)$ scaled by $\sqrt{t/T_n}$, survival probability halfway between $1 - Q(T_n)$ and its exponential decay;
         when its at-the-money vol is below the Heston-like level
-        $\sigma^2(t) = \theta + (v_0 - \theta)(1 - e^{-\kappa t})/(\kappa t)$, fitted to the at-the-money vols of the
-        expiries \citep{gatheral2006}, all the deviations are scaled up to reach it;
+        $\sigma_H^2(t) = \theta + (v_0 - \theta)(1 - e^{-\kappa t})/(\kappa t)$, fitted to the at-the-money vols of the
+        expiries \citep{gatheral2006}, all the vols $\sigma_l$ are scaled up by the same factor to reach it;
   \item at extreme strikes where a vol cannot be inverted, the vol is linear in log-moneyness from the two nearest
         nodes \citep{lee2004}.
 \end{itemize}
