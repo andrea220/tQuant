@@ -42,6 +42,8 @@ CALIBRATED = {"Heston": "Heston", "Displaced diffusion": "DisplacedDiffusion", "
 GBM_DEBUG = "GBM (debug)"
 SAME_CCY = "Underlying currency"         # payment currency of a product that is not quanto
 PAYMENT_CCY = "Payment currency"         # price currency: the payment one (no conversion)
+NO_TICKER = "None"                       # no second / third underlying (single-underlying autocallable)
+WORST_OF_MODELS = ("Local vol", "GBM (debug)")    # models of a worst-of (one normal per step and underlying)
 
 
 class ModelCache:
@@ -220,7 +222,9 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
                          "models": ["Analytic (swaption cube)"]},
         },
         "Exotics": {
-            "Autocallable": {"fields": [underlying]
+            "Autocallable": {"fields": [underlying,
+                                        _select("ticker_2", "Underlying 2 (worst-of)", [NO_TICKER, *tickers], NO_TICKER),
+                                        _select("ticker_3", "Underlying 3 (worst-of)", [NO_TICKER, *tickers], NO_TICKER)]
                              + _group("Deal parameters", _number("notional", "Notional", 100.0), *payment,
                                       _date("strike_date", "Strike date", strike_default.isoformat()),
                                       _date("maturity", "Maturity", maturity_default))
@@ -310,6 +314,14 @@ def _backward_dates(today: date, maturity: date, months: int) -> list:
         k += 1
 
 
+def _tickers(f: dict) -> list:
+    """Underlyings of the autocallable: the first, then the worst-of ones (distinct)."""
+    tickers = [f["ticker"]] + [f[k] for k in ("ticker_2", "ticker_3") if f.get(k) not in (None, "", NO_TICKER)]
+    if len(set(tickers)) != len(tickers):
+        raise ValueError(f"the same underlying twice: {tickers}")
+    return tickers
+
+
 def _autocallable(mkt, f: dict):
     """Phoenix autocallable: coupons on their own schedule (standard or memory), autocall observations from the first
     observation date to maturity, capital-at-risk put (barrier, strike, participation). Struck at the market spot
@@ -332,16 +344,26 @@ def _autocallable(mkt, f: dict):
     coupons = _backward_dates(strike_date, maturity, _months(f["coupon_frequency"]))
     autocalls = [d for d in _backward_dates(strike_date, maturity, _months(f["autocall_frequency"])) if d >= first]
     step = float(f.get("autocall_step", 0.0) or 0.0)                      # step-down, with its floor only then
+    tickers = _tickers(f)
+    if len(tickers) > 1:                    # worst-of: in the payment currency, the foreign underlyings quanto
+        if _fx_mode(f) == "composite":
+            raise ValueError("worst-of: composite not supported (quanto only)")
+        ccy, payment, underlying = _payment_ccy(f, eq) or eq.currency, None, tickers
+        strike = None if forward_start else [float(f.get("_ref_spot", eq.spot))] + [
+            float(mkt.get_equity(t).spot) for t in tickers[1:]]
+    else:
+        ccy, payment, underlying = eq.currency, _payment_ccy(f, eq), eq.ticker
+        strike = None if forward_start else float(f.get("_ref_spot", eq.spot)) * _composite_fx(mkt, f, eq)
     return tq.AutocallableOption(
-        ccy=eq.currency, notional=float(f["notional"]), start_date=today, end_date=end,
-        strike=None if forward_start else float(f.get("_ref_spot", eq.spot)) * _composite_fx(mkt, f, eq),
+        ccy=ccy, notional=float(f["notional"]), start_date=today, end_date=end,
+        strike=strike,
         strike_date=strike_date,
         coupon_fixing_dates=coupons, coupon_payment_dates=coupons,
         coupon_rates=[float(f["coupon"])], coupon_barriers=[float(f["coupon_barrier"])],
         memory=f["coupon_type"] == "Memory", autocall_fixing_dates=autocalls, autocall_payment_dates=autocalls,
         autocall_barrier=[float(f["autocall_barrier"])], payoff_barrier=float(f["put_barrier"]),
         payoff_participation=float(f["put_participation"]) / 100, put_strike=float(f["put_strike"]),
-        underlying=eq.ticker, autocall_step=step, payment_ccy=_payment_ccy(f, eq), fx_mode=_fx_mode(f),
+        underlying=underlying, autocall_step=step, payment_ccy=payment, fx_mode=_fx_mode(f),
         autocall_floor=float(f["autocall_floor"]) if step > 0 and f.get("autocall_floor") not in (None, "") else None)
 
 
@@ -484,7 +506,8 @@ def _fields(mkt, request: dict) -> tuple:
 def _equity_strike_expiry(mkt, kind: str, f: dict) -> tuple:
     """Strike and expiry the market inputs refer to (the autocallable: its initial fixing and final date)."""
     product = _autocallable(mkt, f) if kind == "Autocallable" else _equity_option(mkt, f, kind)
-    strike = product.strike if product.strike is not None else float(f.get("_ref_spot", mkt.get_equity(f["ticker"]).spot))
+    strike = (product.strike[0] if isinstance(product.strike, list) else product.strike
+              if product.strike is not None else float(f.get("_ref_spot", mkt.get_equity(f["ticker"]).spot)))
     return float(strike), product.end_date              # forward start: the spot (the strike is not known yet)
 
 
@@ -634,8 +657,10 @@ def describe_trade(mkt: tq.MarketEnvironment, request: dict) -> dict:
                          "coupon_amount": float(row["coupon_rate_pct"]) if coupon else None,
                          "autocall_barrier": float(row["autocall_barrier_pct"]) if autocall else None})
     strike = (f"fixed on {product.strike_date.isoformat()} (forward start)" if product.strike is None
-              else float(product.strike))
+              else ", ".join(f"{t} {k:,.2f}" for t, k in zip(product.underlyings, product.strikes))
+              if product.is_worst_of else float(product.strike))
     summary = [["Strike (initial fixing)", strike, 2], ["Strike date", product.strike_date.isoformat(), None],
+               *([["Worst-of", " / ".join(product.underlyings), None]] if product.is_worst_of else []),
                ["Maturity", product.end_date.isoformat(), None],
                ["Notional", float(product.notional), 2],
                ["Payment currency", f"{product.payment_ccy.name} (quanto)" if product.is_quanto
@@ -723,7 +748,20 @@ def _equity_price(mkt, cache, kind, f, model, n_paths, seed) -> dict:
     snap = mkt.evaluation_date.isoformat()
     s0 = float(eq.spot)
     calibration_s = 0.0
-    if kind == "Autocallable":
+    if kind == "Autocallable" and len(_tickers(f)) > 1:      # worst-of: one model per underlying
+        product = _autocallable(mkt, f)
+        qty, instance = 1.0, None
+        if model not in WORST_OF_MODELS:
+            raise ValueError(f"worst-of: {' or '.join(WORST_OF_MODELS)} only (one normal per step and underlying)")
+        if model == GBM_DEBUG:
+            models = tq.GeometricBrownianMotion
+        else:
+            models = {}
+            for t in product.underlyings:
+                models[t], seconds = cache.get(mkt.get_equity(t), model, snap)
+                calibration_s += seconds
+        pricer = tq.AutocallableMCPricer(model=models, n_paths=int(n_paths), seed=int(seed))
+    elif kind == "Autocallable":
         product = _autocallable(mkt, f)
         qty = 1.0
         if model == GBM_DEBUG:                                           # class path, nothing calibrated
@@ -767,8 +805,77 @@ def _quick_headline(state: dict) -> list:
             ["Pricing [s]", state["price_s"], 1]]
 
 
+def _worst_of_greeks(mkt, state: dict) -> dict:
+    """Greeks of a worst-of autocallable: delta and vega per underlying, vega map of all of them (rows by underlying
+    and expiry, strikes in % of each spot), rho of the curves, sensitivity per correlation pair (+0.01), quanto rows
+    of the foreign underlyings."""
+    product, pricer, t0 = state["product"], state["pricer"], state["t0"]
+    equities = [mkt.get_equity(t) for t in product.underlyings]
+    factors = {}
+    for eq in equities:
+        factors.update(eq.risk_factors())
+    factors.update({k: v for k, v in mkt.risk_factors().items()
+                    if k.startswith(f"IR:{product.payment_ccy.name}:") or k.startswith("CORR:") or k.startswith("FX:")})
+    greeks = _to_numpy(pricer.tape.gradient(product.price, factors))
+    pricing_s = time.perf_counter() - t0
+    se = product.standard_error
+    vegas = [_equity_vega_map(eq, greeks, 1.0) for eq in equities]
+    rho = _rho_buckets(mkt, greeks, 1.0)
+    headline = [["Price", float(product.price), 4], ["Price (% notional)", 100 * float(product.price) / state["ref"], 3],
+                ["Std error", float(se), 4]]
+    for eq in equities:
+        key = f"EQ:{eq.currency.name}:{eq.ticker}:SPOT"
+        headline.append([f"Delta {eq.ticker}", float(np.sum(greeks[key][0])), 4])
+    headline += [[f"Vega {eq.ticker} (1 vol pt)", v["total"], 4] for eq, v in zip(equities, vegas)]
+    headline += [["Rho (1 bp)", sum(r["total"] for r in rho), 4],
+                 ["Calibration [s]", state["calibration_s"], 1], ["Pricing [s]", pricing_s, 1]]
+    T = equities[0].year_fraction(product.end_date)
+    info = [["Underlyings", " / ".join(product.underlyings), None],
+            ["Expiry", f"{product.end_date.isoformat()} ({T:.2f}y)", None],
+            ["Payment currency", product.payment_ccy.name, None]]
+    strikes = product.strikes or [None] * len(equities)
+    for eq, k in zip(equities, strikes):
+        info += [[f"{eq.ticker} spot", float(eq.spot), 2],
+                 [f"{eq.ticker} strike", f"S({product.strike_date.isoformat()}), forward start" if k is None else k, 2],
+                 [f"{eq.ticker} vol ATM fwd (%)",
+                  100 * float(eq.vol_surface.volatility(strike=float(eq.forward(T)), tenor=T)), 2]]
+    names = mkt.get_correlation_matrix().names
+    g = np.asarray(greeks.get("CORR:ALL:GLOBAL:SPOT", [np.zeros(())])[0])
+    keys = [f"EQ:{eq.currency.name}:{eq.ticker}" for eq in equities]
+    for a in range(len(keys)):
+        for b in range(a + 1, len(keys)):
+            i, j = names.index(keys[a]), names.index(keys[b])
+            rho_ab = float(mkt.get_correlation([keys[a], keys[b]])[0, 1])
+            info.append([f"Correlation {equities[a].ticker} / {equities[b].ticker}", rho_ab, 3])
+            if g.ndim == 2:
+                info.append([f"Correlation sensitivity {equities[a].ticker} / {equities[b].ticker} (+0.01)",
+                             float(g[i, j] + g[j, i]) / 100, 4])
+    for ticker, (rho_x, sigma_x) in (getattr(product, "quanto", None) or {}).items():
+        info += [[f"{ticker} quanto: correlation with the FX rate", float(rho_x), 3],
+                 [f"{ticker} quanto: FX vol (%)", 100 * float(sigma_x), 2]]
+    fx_vega = sum(float(np.sum(v)) for k, vs in greeks.items() if k.startswith("FX:") and k.endswith(":VOL")
+                  for v in vs if v is not None)
+    if fx_vega:
+        info.append(["FX vega (1 vol pt)", fx_vega / 100, 4])
+    info.append(["Monte Carlo", f"{int(state['n_paths']):,} paths", None])
+    # one heatmap: rows by underlying and expiry, columns the union of the strikes in % of each spot
+    columns = sorted({x for v in vegas for x in v["x"]}, key=lambda x: float(x.rstrip("%")))
+    z, y = [], []
+    for eq, v in zip(equities, vegas):
+        for label, row in zip(v["y"], v["z"]):
+            cells = dict(zip(v["x"], row))
+            z.append([cells.get(c) for c in columns])
+            y.append(f"{eq.ticker} {label}")
+    vega = {"title": "Vega per surface node (1 vol point), by underlying", "z": z, "x": columns,
+            "x_title": "strike / spot", "y": y, "y_title": "underlying, expiry",
+            "total": float(sum(v["total"] for v in vegas))}
+    return {"headline": headline, "info": info, "vega": vega, "rho": rho, "sensitivities": None}
+
+
 def _equity_greeks(mkt, state: dict) -> dict:
     """Second phase: greeks from the tape of the first one (backward pass), maps, info."""
+    if getattr(state["product"], "is_worst_of", False):
+        return _worst_of_greeks(mkt, state)
     kind, f, model, n_paths, seed = state["kind"], state["f"], state["model"], state["n_paths"], state["seed"]
     eq, s0, qty, product, pricer = state["eq"], state["s0"], state["qty"], state["product"], state["pricer"]
     instance, calibration_s, t0 = state["instance"], state["calibration_s"], state["t0"]

@@ -148,6 +148,16 @@ $S_{u_j} \ge B^a_j$. \emph{Forward start}: with a strike date $t_0$ after today,
 barrier and $K_p$ are in \% of it; the payoff depends on $S_t / S_{t_0}$ only, so the price hardly depends on today's spot
 (no delta with a lognormal model and no cash dividends) and is driven by the smile after $t_0$ (the forward smile).
 Monte Carlo on a model of \S\ref{sec:mp-models} (local vol by default), on the fixing dates (and $t_0$) merged with a
-weekly grid. Each indicator is a sigmoid of width $\varepsilon K$ so that delta and vega exist pathwise. With the autocall out
+weekly grid. Each indicator is a sigmoid of width $\varepsilon K$ so that delta and vega exist pathwise.
+
+\emph{Worst-of.} On underlyings $S^1, \dots, S^n$ with initial levels $K_1, \dots, K_n$ every level is in \% of the worst
+performance $P_t = \min_k S^k_t / K_k$: the formula above with $S_t / K$ replaced by $P_t$ (coupon and autocall
+indicators, knock-in and put $\pi (K_p/K - P_T)^+$). The underlyings follow their own models (local vol or GBM, each on
+its market forward) driven by Brownian motions with the correlation matrix of the market, $dW^k\,dW^l = \rho_{kl}\,dt$
+(independent normals times the Cholesky factor of $\rho$); an underlying in another currency than the product's has
+the quanto drift of \S\ref{sec:mp-quanto}. The payoff falls when any underlying falls, so the price increases with the
+correlations (an investor sold a worst-of is long correlation); the derivative of the minimum goes to the worst
+underlying of each path, so the AAD gives a delta and a vega per node for each underlying and a sensitivity to each
+correlation pair. With the autocall out
 of reach and no put, the product is a strip of digitals; with no coupons, a put knocked in at expiry
 (\S\ref{sec:mp-digital}, \S\ref{sec:mp-barrier}).

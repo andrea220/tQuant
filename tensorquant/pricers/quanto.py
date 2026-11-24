@@ -8,6 +8,24 @@ from ..models.brownian import observation_columns
 from ..numericalhandles.dtypes import DTYPE
 
 
+def quanto_drift(market_env, equity, payment_ccy, process, tenor: float) -> tuple:
+    """Quanto drift of one underlying paid in *payment_ccy* (``rho sigma_X``, :meth:`MarketEnvironment.get_quanto`)
+    set on *process*.
+
+    Returns:
+        tuple: ``(rho, sigma_x)``.
+
+    Raises:
+        ValueError: If the model has no quanto drift (local vol and GBM only for now).
+    """
+    rho, sigma_x = market_env.get_quanto(equity.ticker, equity.currency, payment_ccy, tenor)
+    try:
+        process.set_quanto(rho * sigma_x)
+    except NotImplementedError as exc:
+        raise ValueError(f"quanto products: local vol and GBM only ({exc})") from exc
+    return rho, sigma_x
+
+
 def apply_quanto(market_env, product, equity, process, tenor: float):
     """For a quanto *product* (paid in ``product.payment_ccy`` at a fixed rate): the quanto drift on *process*
     (``rho sigma_X``, :meth:`MarketEnvironment.get_quanto` at *tenor*) and the discount curve of the payment currency;
@@ -22,11 +40,7 @@ def apply_quanto(market_env, product, equity, process, tenor: float):
     product.quanto_correlation = product.quanto_fx_vol = None
     if not (product.is_quanto or product.is_composite):
         return equity.discount_curve
-    rho, sigma_x = market_env.get_quanto(equity.ticker, equity.currency, product.payment_ccy, tenor)
-    try:
-        process.set_quanto(rho * sigma_x)
-    except NotImplementedError as exc:
-        raise ValueError(f"quanto products: local vol and GBM only ({exc})") from exc
+    rho, sigma_x = quanto_drift(market_env, equity, product.payment_ccy, process, tenor)
     product.quanto_correlation, product.quanto_fx_vol = rho, sigma_x
     return market_env.get_ir_curve(product.payment_ccy)
 

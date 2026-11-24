@@ -21,6 +21,12 @@ The caller draws the normals
 ones. \nb{monte\_carlo\_gbm.ipynb}
 
 % ─────────────────────────────────────────────────────────────────────────────
+\paragraph{\code{MultiAssetProcess} (\code{multiasset.py}).} $n$ single-asset processes with one normal per step
+(local vol, GBM) and an $[n, n]$ correlation tensor: \code{evolve(t\_grid, dw)} with \code{dw}
+\code{[n\_paths, n\_steps, n]} independent normals, correlated by the Cholesky factor ($z = dw\,L^\top$), column $k$
+to process $k$; paths \code{[n\_paths, n\_steps, n]}, differentiable w.r.t. the correlation. Used by the worst-of
+autocallable.
+
 \subsection{Equity models and processes}\label{sec:arch-equity-models}
 Equity model instances (\code{EquityModel}) separate from the market, bound to an \code{Equity} into a process.
 

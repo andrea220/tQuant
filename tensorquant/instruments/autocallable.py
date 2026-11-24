@@ -20,6 +20,8 @@ class AutocallableOption(Product):
       - ``autocall_barrier = 100`` -> 100% of the strike;
       - ``coupon_barriers[i] = 70`` -> 70% of the strike;
       - ``coupon_rates[i] = 5`` -> a 5% coupon.
+    - Worst-of: with several underlyings (``underlying`` a list, ``strike`` one initial level each) every level is in
+      percent of the **performance of the worst**, ``min_i S_i(t) / K_i``.
     - Step-down autocall: ``autocall_step`` lowers the autocall barrier at each autocall observation and
       ``autocall_floor`` bounds it from below: at the observation ``i`` (from 0)
       ``max(autocall_barrier[i] - i * autocall_step, autocall_floor)`` (``autocall_barrier = 100``, ``autocall_step = 1``,
@@ -33,7 +35,7 @@ class AutocallableOption(Product):
         notional: float,
         start_date: datetime.date,
         end_date: datetime.date,
-        strike: Optional[float],
+        strike,
         # --- COUPON LEG ---
         coupon_fixing_dates: Sequence[datetime.date],
         coupon_payment_dates: Sequence[datetime.date],
@@ -48,7 +50,7 @@ class AutocallableOption(Product):
         payoff_barrier: float,
         payoff_participation: float = 1.0,
         payoff_type: str = "put",
-        underlying: Optional[str] = None,
+        underlying=None,
         put_strike: float = 100.0,
         strike_date: Optional[datetime.date] = None,
         autocall_step: float = 0.0,
@@ -69,6 +71,9 @@ class AutocallableOption(Product):
         Step-down: ``autocall_step`` (% of the strike, >= 0) is subtracted from the autocall barrier at each autocall
         observation after the first, ``autocall_floor`` (% of the strike, optional) is its lowest level; the
         resulting barriers are ``autocall_barrier`` (one per observation).
+
+        Worst-of: ``underlying`` a list of tickers and ``strike`` a list of initial levels (``None`` for a forward
+        start); ``ccy`` is then the currency of the product and each underlying in another currency is quanto.
 
         Quanto: with a ``payment_ccy`` other than ``ccy`` (the underlying's currency) the coupons and the put, in % of
         the notional, are paid in ``payment_ccy`` (a fixed rate): see :class:`AutocallableMCPricer`. Composite
@@ -92,9 +97,17 @@ class AutocallableOption(Product):
             if early:
                 raise ValueError(f"coupon / autocall fixings on or before the strike date {strike_date}: {early[0]}")
         self.notional = notional
-        self.strike = None if strike is None else float(strike)
+        if isinstance(underlying, (list, tuple)):
+            if len(underlying) == 0 or len(set(underlying)) != len(underlying):
+                raise ValueError(f"worst-of: distinct underlyings needed, got {underlying}")
+            if strike is not None and (not isinstance(strike, (list, tuple)) or len(strike) != len(underlying)):
+                raise ValueError("worst-of: one initial level per underlying")
+            if fx_mode == "composite":
+                raise ValueError("worst-of: composite not supported")
+        self.strike = (None if strike is None else [float(k) for k in strike] if isinstance(strike, (list, tuple))
+                       else float(strike))
         self.strike_date = strike_date
-        self.underlying = underlying
+        self.underlying = list(underlying) if isinstance(underlying, (list, tuple)) else underlying
 
         # schedules
         self.coupon_fixing_dates: List[datetime.date] = list(coupon_fixing_dates)
@@ -152,6 +165,23 @@ class AutocallableOption(Product):
         self.redemption_payoff: Optional[Callable[..., float]] = None
         if payoff_type.lower() == "put":
             self.redemption_payoff = self.put_redemption
+
+    @property
+    def underlyings(self) -> list:
+        """The underlyings as a list (one for a single-underlying product)."""
+        return list(self.underlying) if isinstance(self.underlying, list) else [self.underlying]
+
+    @property
+    def is_worst_of(self) -> bool:
+        """Several underlyings: the levels on the worst performance."""
+        return isinstance(self.underlying, list) and len(self.underlying) > 1
+
+    @property
+    def strikes(self):
+        """Initial levels as a list (``None`` for a forward start)."""
+        if self.strike is None:
+            return None
+        return list(self.strike) if isinstance(self.strike, list) else [self.strike]
 
     @property
     def maturity_date(self) -> datetime.date:

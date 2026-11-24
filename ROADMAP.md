@@ -72,13 +72,18 @@ another currency, new and live trades, with stable AAD greeks.
    discretely monitored barriers are wrong there (digital strip: first annual coupon 1.11% vs 2.62% Black-Scholes).
    GBM kept as an option for debugging, not the default (Tradepad "GBM (debug)"); later a GBM on the market
    forward (`S = F(t) X`) with a term-structure vol.
-2. [ ] **Multi-asset Monte Carlo, worst-of under local vol.** Correlated underlyings on the market forwards (local vol
-   per asset, Cholesky of `market_env.get_correlation`, the historical correlation of the snapshot), a multi-asset
-   `evolve`; basket options and the worst-of autocallable (`AutocallableOption` on several underlyings, several
-   underlyings in the Tradepad). Greeks by AAD per underlying (delta, vega per node) and per correlation pair. Tests:
-   one asset = single-asset pricers, perfect correlation / independence limits, basket mean = weighted forwards,
-   correlation gradient vs bumps. Stochastic vol per asset: section 3.
-3. [ ] **Quanto: what is left.** Done (DEVELOPMENT_LOG): `payment_ccy` on the products, quanto drift and payment
+2. [ ] **Local vol delta on the real surfaces (found with the worst-of).** On the 2026-11-13 surfaces the local vol
+   reaches its 200% cap near the money (SX5E 183% at 2Y, y = -0.44; 1-6% of the cells at the cap for SX5E, SPX, ISP,
+   AAPL; `g < 0` on 0.2-1.8% of the data region, ISP `dw/dT` down to -8): the price as a function of the spot is
+   spiky. SX5E 3Y autocallable, 10k paths: delta per 1% 0.35 by a 1% bump, 0.40 by 0.1%, 4.2 by 1e-5, AAD 6.2 (AAD
+   exact: the derivative of a spiky estimator). The surfaces have no butterfly at the grid nodes, but the local vol
+   (spline of the total variance in forward log-moneyness, linear in time) finds arbitrage between them. To do: find
+   where (between strikes or between expiries, wings or core), then fix the surface (calendar / butterfly between the
+   nodes) or the local vol construction; the vanilla and autocallable greeks under local vol on real data are not
+   reliable until then.
+3. [ ] **Basket options** on the multi-asset Monte Carlo (worst-of done: DEVELOPMENT_LOG). Stochastic vol per asset:
+   section 3.
+4. [ ] **Quanto: what is left.** Done (DEVELOPMENT_LOG): `payment_ccy` on the products, quanto drift and payment
    curve for Black-Scholes (vanilla, digital, barrier), GBM and local vol (vanilla and autocallable Monte Carlo),
    historical FX vols in the snapshot, AAD greeks to the FX vols and the correlation, composite, price currency,
    Tradepad. Left:
@@ -86,11 +91,11 @@ another currency, new and live trades, with stable AAD greeks.
      licence), instead of the historical ones; the correlation stays historical.
    - Quanto drift and composite in Heston, displaced diffusion and SLV (they raise now); composite barrier options.
    - Cross pairs (neither the pair nor its inverse stored: e.g. a GBP-paid product on a CHF underlying).
-4. [ ] **Live (seasoned) trades.** Historical fixings (underlying, date, value: the closes of the price history) and
+5. [ ] **Live (seasoned) trades.** Historical fixings (underlying, date, value: the closes of the price history) and
    the trade state (initial fixing, past coupon observations, memory of the unpaid coupons, autocalls already
    triggered) used by the pricers; today every trade is priced as if it started on the pricing date. Needed to reprice
    a real book (and later to compare with Murex: section 7).
-5. [ ] **Validation of local vol and the autocallable.** The `local_vol` and `autocallable` steps of the guided review
+6. [ ] **Validation of local vol and the autocallable.** The `local_vol` and `autocallable` steps of the guided review
    (the full plan: section 3). Local vol Monte Carlo noise is large in the wings and at long maturities (OTM call
    at 170%, 3Y: +-1 vol point with 100k paths): no variance reduction yet. For the beta: antithetic variates and a
    control variate on the forward if the greeks of a 5Y autocallable are not stable at 20k-50k paths.

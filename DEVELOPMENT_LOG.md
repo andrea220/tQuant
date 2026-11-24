@@ -585,3 +585,21 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       form on Y, GBM and local vol Monte Carlo within 3 SE of it, composite autocallable without FX risk (FX vol ~0,
       equal rates) = the plain one on the same draws; price currency = price / EURUSD, AAD delta to the FX spot
       `-price / EURUSD^2`, standard error converted, same currency unchanged.
+- [x] Worst-of autocallable under local vol and GBM (section 2 item 2). `AutocallableOption` on several underlyings
+      (`underlying` a list, `strike` one initial level each or `None` for a forward start; `is_worst_of`,
+      `underlyings`, `strikes`; composite rejected): every level on the worst performance `min_k S_k / K_k`.
+      `MultiAssetProcess` (`models/multiasset.py`): one process per underlying (one normal per step: local vol, GBM),
+      independent normals `[n_paths, n_steps, n]` times the Cholesky factor of `market_env.get_correlation` (AAD to
+      the correlation). `AutocallableMCPricer`: model class or dict ticker -> instance; the payoff written once on the
+      performance (one underlying: `S / K`, same numbers: model pins at 1e-8); an underlying in another currency is
+      quanto (its drift, `product.quanto`), payments on the product's curve; `pricer.performance`. Tradepad:
+      "Underlying 2 / 3 (worst-of)" (local vol or GBM), strikes on each spot, delta and vega per underlying, one vega
+      map with rows by underlying and expiry, correlation and sensitivity per pair, quanto rows. 2026-11-13, 3Y
+      phoenix (coupon 2% at 80%, autocall 100%, put 80%), local vol 10k paths: SX5E 0.33% of the notional, SX5E / SPX
+      -1.44%, SX5E / SPX / ISP -12.14% (ISP, the most volatile, carries the delta: 12.2 per EUR; correlation
+      sensitivities SX5E-ISP +0.86, SX5E-SPX +0.23 per +0.01). Tests (`test_worst_of.py`, 8): flags and validation,
+      hard payoff = numpy replica on the same paths (spot and forward start, memory), marginals = forwards within
+      3 SE and the simulated correlation (GBM and local vol), Heston rejected, price increasing with the correlation
+      and below each single-underlying product, quanto underlying = repo shift on the same draws, AAD delta per
+      underlying and correlation sensitivity vs bumps (3%), local vol on flat smiles = GBM (slow). Found on the way:
+      the local vol delta on the real surfaces is spiky (ROADMAP section 2 item 2).
