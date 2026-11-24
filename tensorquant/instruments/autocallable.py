@@ -20,6 +20,10 @@ class AutocallableOption(Product):
       - ``autocall_barrier = 100`` -> 100% of the strike;
       - ``coupon_barriers[i] = 70`` -> 70% of the strike;
       - ``coupon_rates[i] = 5`` -> a 5% coupon.
+    - Step-down autocall: ``autocall_step`` lowers the autocall barrier at each autocall observation and
+      ``autocall_floor`` bounds it from below: at the observation ``i`` (from 0)
+      ``max(autocall_barrier[i] - i * autocall_step, autocall_floor)`` (``autocall_barrier = 100``, ``autocall_step = 1``,
+      ``autocall_floor = 90`` -> 100, 99, 98, ..., 90, 90).
     - The simulation grid is built by the pricer (fixing dates merged with the model's time steps).
     """
 
@@ -47,6 +51,8 @@ class AutocallableOption(Product):
         underlying: Optional[str] = None,
         put_strike: float = 100.0,
         strike_date: Optional[datetime.date] = None,
+        autocall_step: float = 0.0,
+        autocall_floor: Optional[float] = None,
     ) -> None:
         """
         Initialize an AutocallableOption.
@@ -58,9 +64,14 @@ class AutocallableOption(Product):
         date, so ``strike`` is ``None``; every barrier and the put strike are in % of it, and the coupon and autocall
         fixings must follow it. Otherwise ``strike`` is the initial level, already known.
 
+        Step-down: ``autocall_step`` (% of the strike, >= 0) is subtracted from the autocall barrier at each autocall
+        observation after the first, ``autocall_floor`` (% of the strike, optional) is its lowest level; the
+        resulting barriers are ``autocall_barrier`` (one per observation).
+
         Raises:
             ValueError: If the strike is missing for a trade struck on or before ``start_date``, given for a future
-                strike date, or a fixing is not after the strike date.
+                strike date, or a fixing is not after the strike date; if ``autocall_step`` is negative or
+                ``autocall_floor`` is above the first autocall barrier.
         """
         super().__init__(ccy=ccy, start_date=start_date, end_date=end_date)
 
@@ -119,9 +130,16 @@ class AutocallableOption(Product):
 
         self.coupon_rates: List[float] = _broadcast(coupon_rates, "coupon_rates", n_coupons)
         self.coupon_barriers: List[float] = _broadcast(coupon_barriers, "coupon_barriers", n_coupons)
-        self.autocall_barrier: List[float] = _broadcast(
-            autocall_barrier, "autocall_barrier", n_autocall
-        )
+        barriers = _broadcast(autocall_barrier, "autocall_barrier", n_autocall)
+        if autocall_step < 0:
+            raise ValueError(f"autocall_step must be >= 0, got {autocall_step}")
+        if autocall_floor is not None and barriers and autocall_floor > barriers[0]:
+            raise ValueError(f"autocall_floor {autocall_floor} above the first autocall barrier {barriers[0]}")
+        self.autocall_step = float(autocall_step)
+        self.autocall_floor = None if autocall_floor is None else float(autocall_floor)
+        stepped = [b - i * self.autocall_step for i, b in enumerate(barriers)]          # step-down
+        self.autocall_barrier: List[float] = (stepped if self.autocall_floor is None
+                                              else [max(b, self.autocall_floor) for b in stepped])
 
         # final payoff (derivative only, no capital redemption)
         self.redemption_payoff: Optional[Callable[..., float]] = None

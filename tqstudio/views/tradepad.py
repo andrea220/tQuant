@@ -38,6 +38,8 @@ IBOR = "6M"              # the Ibor index of the rates products (curve IR:<ccy>:
 
 
 CALIBRATED = {"Heston": "Heston", "Displaced diffusion": "DisplacedDiffusion", "Heston SLV": "HestonSLV"}
+# GBM on an autocallable: for debugging only (the Black-Scholes model of one expiry, wrong at the intermediate dates)
+GBM_DEBUG = "GBM (debug)"
 
 
 class ModelCache:
@@ -225,9 +227,11 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
                                       _number("put_participation", "Put participation (%)", 100.0, 5.0))
                              + _group("Early redemption (autocall)",
                                       _number("autocall_barrier", "Autocall barrier (%)", 100.0, 1.0),
+                                      _number("autocall_step", "Step-down per observation (%)", 0.0, 0.5),
+                                      _number("autocall_floor", "Step-down floor (%)", 80.0, 1.0),
                                       _select("autocall_frequency", "Frequency", ["3M", "6M", "1Y"], "6M"),
                                       _select("first_autocall", "First observation", ["3M", "6M", "1Y", "2Y"], "1Y")),
-                             "models": ["Local vol", *CALIBRATED], "create_trade": True},
+                             "models": ["Local vol", *CALIBRATED, GBM_DEBUG], "create_trade": True},
         },
     }
     products["Rates"] = {name: spec for name, spec in products["Rates"].items()      # products with data only
@@ -295,6 +299,7 @@ def _autocallable(mkt, f: dict):
         raise ValueError("the first autocall observation must be before the maturity")
     coupons = _backward_dates(strike_date, maturity, _months(f["coupon_frequency"]))
     autocalls = [d for d in _backward_dates(strike_date, maturity, _months(f["autocall_frequency"])) if d >= first]
+    step = float(f.get("autocall_step", 0.0) or 0.0)                      # step-down, with its floor only then
     return tq.AutocallableOption(
         ccy=eq.currency, notional=float(f["notional"]), start_date=today, end_date=end,
         strike=None if forward_start else float(f.get("_ref_spot", eq.spot)), strike_date=strike_date,
@@ -303,7 +308,8 @@ def _autocallable(mkt, f: dict):
         memory=f["coupon_type"] == "Memory", autocall_fixing_dates=autocalls, autocall_payment_dates=autocalls,
         autocall_barrier=[float(f["autocall_barrier"])], payoff_barrier=float(f["put_barrier"]),
         payoff_participation=float(f["put_participation"]) / 100, put_strike=float(f["put_strike"]),
-        underlying=eq.ticker)
+        underlying=eq.ticker, autocall_step=step,
+        autocall_floor=float(f["autocall_floor"]) if step > 0 and f.get("autocall_floor") not in (None, "") else None)
 
 
 def _ibor(ccy):
@@ -601,6 +607,10 @@ def describe_trade(mkt: tq.MarketEnvironment, request: dict) -> dict:
                ["Notional", float(product.notional), 2], ["Coupon type", "Memory" if product.memory else "Standard", None],
                ["Put", f"barrier {product.payoff_barrier:g}%, strike {product.put_strike:g}%, "
                        f"participation {100 * product.payoff_participation:g}%", None],
+               ["Autocall", f"barrier {product.autocall_barrier[0]:g}%"
+                + (f", step-down {product.autocall_step:g}% per observation"
+                   + (f", floor {product.autocall_floor:g}%" if product.autocall_floor is not None else "")
+                   if product.autocall_step else ""), None],
                ["Coupons / autocall dates", f"{len(product.coupon_fixing_dates)} / {len(product.autocall_fixing_dates)}",
                 None]]
     return {"summary": summary, "schedule": schedule}
@@ -679,8 +689,12 @@ def _equity_price(mkt, cache, kind, f, model, n_paths, seed) -> dict:
     if kind == "Autocallable":
         product = _autocallable(mkt, f)
         qty = 1.0
-        instance, calibration_s = cache.get(eq, model, snap)
-        pricer = tq.AutocallableMCPricer(model=instance, n_paths=int(n_paths), seed=int(seed))
+        if model == GBM_DEBUG:                                           # class path, nothing calibrated
+            instance = None
+            pricer = tq.AutocallableMCPricer(model=tq.GeometricBrownianMotion, n_paths=int(n_paths), seed=int(seed))
+        else:
+            instance, calibration_s = cache.get(eq, model, snap)
+            pricer = tq.AutocallableMCPricer(model=instance, n_paths=int(n_paths), seed=int(seed))
     else:
         product = _equity_option(mkt, f, kind)
         qty = float(f.get("quantity", 1.0))
@@ -724,7 +738,7 @@ def _equity_greeks(mkt, state: dict) -> dict:
               if instance is not None and params else market)
     pricing_s = time.perf_counter() - t0
     spot_key = next(k for k in eq.risk_factors() if k.startswith("EQ:") and k.endswith(":SPOT"))
-    se = getattr(product, "standard_error", None) if instance is not None else None
+    se = getattr(product, "standard_error", None)                 # Monte Carlo only
     vega = _equity_vega_map(eq, greeks, qty)
     rho = _rho_buckets(mkt, greeks, qty)
     price = qty * float(product.price)

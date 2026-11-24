@@ -33,7 +33,7 @@ def flat_market(vol: float = VOL) -> MarketEnvironment:
 
 
 def make_autocallable(memory=False, coupon_barrier=80.0, autocall_barrier=100.0, payoff_barrier=80.0,
-                      put_strike=100.0, participation=1.0):
+                      put_strike=100.0, participation=1.0, autocall_step=0.0, autocall_floor=None):
     cal = tq.TARGET()
     mf = tq.BusinessDayConvention.ModifiedFollowing
     sg = tq.ScheduleGenerator(cal, mf)
@@ -43,8 +43,10 @@ def make_autocallable(memory=False, coupon_barrier=80.0, autocall_barrier=100.0,
     return tq.AutocallableOption(
         ccy=tq.Currency.EUR, notional=1.0, start_date=EVAL_DATE, end_date=end, strike=S0,
         coupon_fixing_dates=cfix, coupon_payment_dates=cfix, coupon_rates=[4.0], coupon_barriers=[coupon_barrier],
-        memory=memory, autocall_fixing_dates=afix, autocall_payment_dates=afix, autocall_barrier=[autocall_barrier],
+        memory=memory, autocall_fixing_dates=afix, autocall_payment_dates=afix,
+        autocall_barrier=autocall_barrier if isinstance(autocall_barrier, list) else [autocall_barrier],
         payoff_barrier=payoff_barrier, payoff_participation=participation, underlying="UND", put_strike=put_strike,
+        autocall_step=autocall_step, autocall_floor=autocall_floor,
     )
 
 
@@ -132,6 +134,36 @@ class TestHardPayoff(ACTestCase):
         prod.underlying = None
         with self.assertRaises(ValueError):
             self.price(prod)
+
+
+class TestStepDown(ACTestCase):
+    """Step-down autocall: the barrier lowered by a step at each autocall observation, down to a floor."""
+
+    def test_barriers(self):
+        prod = make_autocallable(autocall_barrier=100.0, autocall_step=1.0, autocall_floor=96.5)
+        n = len(prod.autocall_fixing_dates)
+        expected = [max(100.0 - i, 96.5) for i in range(n)]
+        self.assertEqual(prod.autocall_barrier, expected)
+        self.assertEqual(prod.autocall_barrier[:5], [100.0, 99.0, 98.0, 97.0, 96.5])
+        self.assertEqual(make_autocallable(autocall_step=2.0).autocall_barrier[-1], 100.0 - 2.0 * (n - 1))   # no floor
+        self.assertEqual(make_autocallable().autocall_barrier, [100.0] * n)                                 # no step
+
+    def test_same_price_as_the_explicit_barriers(self):
+        """Step and floor = the same barriers given one per observation (same paths: identical prices)."""
+        stepped = make_autocallable(autocall_step=1.5, autocall_floor=95.0)
+        explicit = make_autocallable(autocall_barrier=list(stepped.autocall_barrier))
+        self.price(stepped)
+        self.price(explicit)
+        self.assertEqual(float(stepped.price), float(explicit.price))
+        flat = make_autocallable()
+        self.price(flat)
+        self.assertNotEqual(float(stepped.price), float(flat.price))                # the step-down matters
+
+    def test_invalid_step_and_floor(self):
+        with self.assertRaises(ValueError):
+            make_autocallable(autocall_step=-1.0)
+        with self.assertRaises(ValueError):
+            make_autocallable(autocall_barrier=100.0, autocall_step=1.0, autocall_floor=101.0)
 
 
 class TestSmoothing(ACTestCase):

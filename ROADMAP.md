@@ -64,15 +64,14 @@ with a wing free of quotes), repo curves, index dividends implied with the repo 
 Goal: autocallables priced under local vol on the real snapshots, single underlying and worst-of, in their own or
 another currency, new and live trades, with stable AAD greeks.
 
-1. [ ] **Autocallable terms as traded.** The Tradepad holds constant barriers: step-down autocall barriers (one per
-   observation, already broadcast in `AutocallableOption`, to expose in the form and the schedule), coupon types
-   (standard and memory done; fixed coupons), final redemption variants (put knocked in at expiry with a barrier, put
-   without barrier, participation, capital protection level). And `GeometricBrownianMotion.from_equity` on multi-date
+1. [ ] **Autocallable terms as traded.** Step-down autocall done (DEVELOPMENT_LOG). Left: fixed coupons (standard
+   and memory done); final redemption variants (put without barrier, capital protection level), postponed: the
+   standard payoff (put knocked in at expiry, participation) for now. And `GeometricBrownianMotion.from_equity` on multi-date
    products: it is the Black-Scholes model of one expiry (vol at `(K, T)`, spot escrowed of all the dividends up to
    `T`), so the path is the escrowed spot at the intermediate dates and `AutocallableMCPricer(model=GBM)` and
    discretely monitored barriers are wrong there (digital strip: first annual coupon 1.11% vs 2.62% Black-Scholes).
-   For the beta: reject GBM for multi-date products (local vol is the model); later a GBM on the market forward
-   (`S = F(t) X`) with a term-structure vol.
+   GBM kept as an option for debugging, not the default (Tradepad "GBM (debug)"); later a GBM on the market
+   forward (`S = F(t) X`) with a term-structure vol.
 2. [ ] **Multi-asset Monte Carlo, worst-of under local vol.** Correlated underlyings on the market forwards (local vol
    per asset, Cholesky of `market_env.get_correlation`, the historical correlation of the snapshot), a multi-asset
    `evolve`; basket options and the worst-of autocallable (`AutocallableOption` on several underlyings, several

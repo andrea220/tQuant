@@ -108,7 +108,9 @@ sensitivities). Discrete monitoring checks the barrier on the dates, the indicat
 % ─────────────────────────────────────────────────────────────────────────────
 \subsection{Autocallable}\label{sec:mp-autocallable}
 A strike $K$ (the barriers in \% of it); coupon fixings $t_i$ with rates $c_i$, barriers $B^c_i$ and payment dates $p_i$, with or
-without memory; autocall fixings $u_j$ with barriers $B^a_j$; at the last coupon fixing a put knocked in below $B^p$ (observed
+without memory; autocall fixings $u_j$ with barriers $B^a_j$ (a step-down lowers them by a step $\delta$ at each
+observation down to a floor $B^a_{\min}$: $B^a_j = \max(B^a - j\,\delta, B^a_{\min})$, $j = 0, 1, \dots$); at the last
+coupon fixing a put knocked in below $B^p$ (observed
 at that date only), with strike $K_p$ (by default $K$) and participation $\pi$. Valued on the investor's side, coupons minus put, per unit notional; on each
 path, with $\alpha$ = 1 until the first autocall and $m$ the coupons unpaid so far:
 \[

@@ -532,3 +532,12 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       butterfly arbitrage. Download: moneyness targets 30%-200% of the forward (were 50%-150%), chains 25%-250% of the
       spot (were 40%-200%), chain cache version 4. Tests: settlements dropped with a market and used without, a
       narrow expiry guided by the next one (own quotes within 0.2 vol pts, wings within 2 of the guide's shape).
+- [x] Step-down autocall (Beta 1, section 2 item 1): `AutocallableOption(autocall_step=, autocall_floor=)`, the
+      autocall barrier lowered by the step at each autocall observation after the first and bounded by the floor,
+      `max(B - j step, floor)` (stored in `autocall_barrier`, one per observation; negative step or floor above the
+      first barrier rejected). Tradepad: "Step-down per observation (%)" (default 0) and "Step-down floor (%)"
+      (default 80, used only with a step) in the early-redemption group, the barriers in the schedule and the
+      summary; "GBM (debug)" among the autocallable models, not the default (the Black-Scholes model of one expiry,
+      wrong at the intermediate fixings: for debugging), with its Monte Carlo standard error. SX5E 2026-11-13, 3Y,
+      6M observations from 1Y, local vol: -1.78% of the notional flat, -1.72% with a 2% step (barriers 100-92%).
+      Tests: barriers with step and floor, same price as the same barriers given one by one, validation (19 green).

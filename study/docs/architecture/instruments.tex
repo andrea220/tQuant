@@ -144,8 +144,10 @@ redemption):
   \item coupons: \code{coupon\_fixing\_dates}, \code{coupon\_payment\_dates}, \code{coupon\_rates} (\% of the
         notional), \code{coupon\_barriers}, \code{memory} (the unpaid coupons are paid at the next coupon above its
         barrier);
-  \item autocall: \code{autocall\_fixing\_dates}, \code{autocall\_payment\_dates}, \code{autocall\_barrier}: the
-        product ends at the first fixing at or above the barrier;
+  \item autocall: \code{autocall\_fixing\_dates}, \code{autocall\_payment\_dates}, \code{autocall\_barrier} (one or
+        one per observation): the product ends at the first fixing at or above the barrier; step-down:
+        \code{autocall\_step} lowers the barrier at each observation, \code{autocall\_floor} bounds it from below
+        (\code{autocall\_barrier} then holds the barrier of each observation);
   \item final redemption if never called: a put, \code{payoff\_participation} $\times \max(\text{put\_strike} -
         S_T/S_0, 0)$, knocked in when $S_T/S_0$ is below \code{payoff\_barrier} (observed at expiry);
   \item forward start: with a \code{strike\_date} after the start date the initial level is the spot fixed on that
