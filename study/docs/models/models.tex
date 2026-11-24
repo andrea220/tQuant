@@ -194,10 +194,16 @@ exact at the nodes by construction. The steps:
         $w$ is linear from $0$ (flat implied vol), after the last the implied vol is flat. The local vol therefore jumps
         at each quoted maturity.
   \item \emph{The formula on a grid.} $\sigma_{\mathrm{loc}}$ on a grid of time step $1/96$ year (plus the maturities) and 300 points of
-        $y \in [\ln 0.05, \ln 5]$, with $g$ floored at $10^{-3}$ and $\sigma_{\mathrm{loc}}$ capped at 200\%; the simulation reads it by bilinear
+        $y \in [\ln 0.05, \ln 5]$, with $g$ floored at $0.05$ and $\sigma_{\mathrm{loc}}$ capped at 200\%; the simulation reads it by bilinear
         interpolation at $y = \ln(S_t/F(t))$.
-  \item \emph{Arbitrage check.} The cells within the quoted strikes where $g < 10^{-3}$ or $\partial_T w \le 0$ are reported as static
-        arbitrage: there no local vol can reprice the surface.
+  \item \emph{Arbitrage check.} The cells within the quoted strikes where $g < 0$ or $\partial_T w \le 0$ are reported as static
+        arbitrage: there no local vol can reprice the surface; the cells with $g$ below the floor are reported apart.
+        \emph{Why the floor is at $0.05$}: $g$ is the density over the Black density of the same total variance; on a
+        thin band ($g \to 0$) the local vol explodes, the band moves with the forward, so with the spot, and the Monte Carlo
+        price becomes spiky in the spot (on 2026-11-13, SX5E 3Y autocallable with $g$ floored at $10^{-3}$: delta per 1\% of
+        0.35 by a 1\% bump, 4.2 by $10^{-5}$, AAD 6.2). The surface keeps a density margin on its wings
+        (\S\ref{sec:mp-vol-surface}); the floor is the safety net for what is left, at the price of not repricing the
+        surface exactly where it holds.
 \end{enumerate}
 Between the nodes this representation (spline in total variance) is not the bilinear interpolation in vol used by the
 closed-form pricers of \S\ref{sec:mp-vol-surface}: the two agree at the nodes only.

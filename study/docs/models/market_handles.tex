@@ -347,9 +347,18 @@ butterfly arbitrage is absent when \citep{gatheral2006}
 \[
   g(k) = \Big(1 - \frac{k\,w'}{2w}\Big)^2 - \frac{w'^2}{4}\Big(\frac1w + \frac14\Big) + \frac{w''}{2} \ge 0,
 \]
-checked on the straight wing ($w'' = 0$) out to $10\%$ and $400\%$ of the forward. Where it fails, the line starts
-further out, the mixture kept up to that point; if no starting point works, the mixture's own tail is kept (a
-density, free of arbitrage) and marked unreliable, as on expiries of a few days quoted only near the money.
+checked on the straight wing ($w'' = 0$) out to $10\%$ and $400\%$ of the forward. $g$ is the risk-neutral density
+divided by the Black density of the same total variance, so $g \ge 0$ is not enough: a wing with $g$ close to $0$ says
+that the underlying almost never ends there, and the local vol of \S\ref{sec:mp-models}, $\sigma^2_{\mathrm{loc}} =
+\partial_T w / g$, explodes on that band (on 2026-11-13 the straight wing of SX5E at 2Y started at 68\% of the forward
+with $g = 0.02$: local vol 183\% at 64\%, a spiky price in the spot and a meaningless AAD delta). The wing must keep a
+margin, $g \ge 0.25$ ($g = 1$ on a flat smile). The mixture is often steepest at its last quotes, so the starting
+point is searched at the edge of the quotes, then inside them up to $0.2$ in $k$, where the smile is less steep (the
+line replacing the smile there must stay within $0.25$ vol points of it), then beyond the edge, the mixture kept up to
+that point. If no starting point reaches the margin, the one with the largest density among those with $g \ge 0$; if
+none, the mixture's own tail is kept (a density, free of arbitrage) and marked unreliable, as on expiries of a few
+days quoted only near the money. A thin density inside the quotes (a mixture with two separate bodies, e.g. ISP at
+3Y quoted only between 63\% and 90\%) is not touched by the wings: the floor of the local vol covers it.
 
 \paragraph{The surface.} On the output grid, at the forward moneyness $K/F(t)$ (with the forward of the repo term
 structure above):

@@ -471,6 +471,9 @@ GRID_MONEYNESS = (0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.
                   1.1, 1.15, 1.2, 1.3, 1.4, 1.5, 1.75, 2.0)   # of the spot: the autocallable barriers sit at 50-70%
 WING_SLOPE_MAX = 2.0         # Lee: beyond the quotes the total variance grows at most 2 |ln(K/F)|
 WING_RANGE = (0.1, 4.0)      # forward moneyness over which a straight wing must keep a positive density
+WING_G_MIN = 0.25            # density margin of a straight wing: Gatheral's g >= this on it (a flat smile has g = 1)
+WING_INWARD = 0.2            # how far inside the quotes (log moneyness) the junction may move to find that margin
+WING_QUOTE_TOL = 0.0025      # largest vol gap between a wing moved inside the quotes and the smile it replaces
 MIN_QUOTES = 3               # quotes of a calibrated expiry (and two-sided quotes of a good bid / ask expiry)
 NARROW_RANGE = (0.9, 1.1)    # an expiry without quotes outside this forward moneyness borrows its wings' shape
 NARROW_ANCHORS = (0.5, 0.6, 0.7, 0.8, 0.85, 1.15, 1.2, 1.3, 1.5)   # forward moneyness of the borrowed wing points
@@ -614,11 +617,15 @@ def _wing_spec(mixture: LognormalMixture, t: float, k_lo: float, k_hi: float, ca
     """The wings of one smile beyond its outermost quotes (log forward moneyness ``k_lo``, ``k_hi``).
 
     On each side the first junction ``k_j``, from the edge of the quotes outward, where a straight total variance
-    ``w(k) = w(k_j) + s (k - k_j)`` keeps a positive density out to ``WING_RANGE``: ``s`` the slope of the mixture at
+    ``w(k) = w(k_j) + s (k - k_j)`` keeps a density margin out to ``WING_RANGE``: ``s`` the slope of the mixture at
     ``k_j`` clipped to a total variance not decreasing away from the money and to Lee's ``WING_SLOPE_MAX`` (a clip that
     would bend the smile the wrong way is refused), and Gatheral's
-    ``g(k) = (1 - k s / 2w)^2 - s^2 / 4 (1 / w + 1 / 4) >= 0`` on the wing (``w'' = 0``). Between the edge and ``k_j`` the
-    mixture. No junction: the mixture's tail, unreliable.
+    ``g(k) = (1 - k s / 2w)^2 - s^2 / 4 (1 / w + 1 / 4) >= WING_G_MIN`` on the wing (``w'' = 0``; ``g`` is the density
+    over the Black density of the same total variance: near 0 the local vol explodes). Between the edge and ``k_j`` the
+    mixture. Candidates: the edge, then inside the quotes up to ``WING_INWARD`` (the mixture is often steepest at its
+    last quotes: inside, where the smile is less steep, the straight wing must stay within ``WING_QUOTE_TOL`` of the
+    smile up to the edge), then beyond the edge. When none reaches the margin, the candidate with the largest density
+    (``g >= 0``). No junction: the mixture's tail, unreliable.
 
     Returns:
         dict: ``{side: (k_j, w_j, s) or None}`` for ``"lo"`` / ``"hi"``, with the edges.
@@ -630,7 +637,12 @@ def _wing_spec(mixture: LognormalMixture, t: float, k_lo: float, k_hi: float, ca
         if sign * (far - edge) <= 0:
             continue
         h = 1e-3 * max(k_hi - k_lo, 1e-2)
-        for kj in edge + sign * np.linspace(0.0, 0.8 * abs(far - edge), candidates):
+        best, best_g = None, 0.0                                  # fallback: the largest density, g >= 0
+        outward = edge + sign * np.linspace(0.0, 0.8 * abs(far - edge), candidates)
+        inward = edge - sign * np.linspace(0.0, WING_INWARD, candidates)[1:]
+        for kj in (outward[0], *inward, *outward[1:]):       # the edge, then inside the quotes, then beyond
+            if sign * kj < 0.05:                                  # the junction stays out of the money
+                continue
             wj, w_in = w_of([kj, kj - sign * h])
             if not (np.isfinite(wj) and np.isfinite(w_in)):
                 continue
@@ -641,9 +653,19 @@ def _wing_spec(mixture: LognormalMixture, t: float, k_lo: float, k_hi: float, ca
             kw = np.linspace(kj, far, 200)
             ww = wj + s_out * (kw - kj)
             g = (1.0 - kw * s_out / (2.0 * ww)) ** 2 - s_out ** 2 / 4.0 * (1.0 / ww + 0.25)
-            if (ww > 0).all() and (g >= 0.0).all():
-                spec[side] = (float(kj), float(wj), s_out)
+            if not ((ww > 0).all() and g.min() >= 0.0):
+                continue
+            if sign * (kj - edge) < 0:                            # inside the quotes: close to the smile there
+                kq = np.linspace(kj, edge, 20)
+                gap = np.abs(np.sqrt(np.maximum(wj + s_out * (kq - kj), 0.0) / t) - np.sqrt(w_of(kq) / t))
+                if not (np.isfinite(gap).all() and gap.max() <= WING_QUOTE_TOL):
+                    continue
+            if g.min() >= WING_G_MIN:
+                best = (float(kj), float(wj), s_out)
                 break
+            if best is None or g.min() > best_g:
+                best, best_g = (float(kj), float(wj), s_out), float(g.min())
+        spec[side] = best
     return spec
 
 
@@ -655,10 +677,10 @@ def _smile_w(mixture: LognormalMixture, t: float, k: np.ndarray, spec: dict) -> 
     reliable = (k >= spec["k_lo"]) & (k <= spec["k_hi"])
     for side, beyond in (("lo", k < spec["k_lo"]), ("hi", k > spec["k_hi"])):
         wing = spec[side]
-        if wing is None or not beyond.any():
+        if wing is None:
             continue
         kj, wj, slope = wing
-        straight = beyond & ((k < kj) if side == "lo" else (k > kj))
+        straight = (k < kj) if side == "lo" else (k > kj)                # a junction may sit inside the quotes
         w = np.where(straight, wj + slope * (k - kj), w)
         reliable = reliable | beyond
     return w, reliable

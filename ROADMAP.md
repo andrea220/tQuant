@@ -72,15 +72,12 @@ another currency, new and live trades, with stable AAD greeks.
    discretely monitored barriers are wrong there (digital strip: first annual coupon 1.11% vs 2.62% Black-Scholes).
    GBM kept as an option for debugging, not the default (Tradepad "GBM (debug)"); later a GBM on the market
    forward (`S = F(t) X`) with a term-structure vol.
-2. [ ] **Local vol delta on the real surfaces (found with the worst-of).** On the 2026-11-13 surfaces the local vol
-   reaches its 200% cap near the money (SX5E 183% at 2Y, y = -0.44; 1-6% of the cells at the cap for SX5E, SPX, ISP,
-   AAPL; `g < 0` on 0.2-1.8% of the data region, ISP `dw/dT` down to -8): the price as a function of the spot is
-   spiky. SX5E 3Y autocallable, 10k paths: delta per 1% 0.35 by a 1% bump, 0.40 by 0.1%, 4.2 by 1e-5, AAD 6.2 (AAD
-   exact: the derivative of a spiky estimator). The surfaces have no butterfly at the grid nodes, but the local vol
-   (spline of the total variance in forward log-moneyness, linear in time) finds arbitrage between them. To do: find
-   where (between strikes or between expiries, wings or core), then fix the surface (calendar / butterfly between the
-   nodes) or the local vol construction; the vanilla and autocallable greeks under local vol on real data are not
-   reliable until then.
+2. [ ] **Thin densities inside the quotes.** Wing margin and local vol floor done (DEVELOPMENT_LOG). Left: a
+   mixture with two separate bodies gives a thin density inside the quotes, which no wing rule touches (2026-11-13:
+   ISP 3.1Y quoted only at 63-90% of the forward, `g` 0.01; ENI 0.84Y `g` 0.008 at 50%; a synthetic 2% crash body at
+   30% of the forward keeps a spiky local vol delta up to a floor of about 0.2). To do: a density floor in the
+   mixture fit (penalty on `g` below a margin over the quoted range), then measure the quotes within bid / ask.
+   Short expiries: small calendar arbitrage (below 1e-4 in total variance) except ISP 1-2 weeks (-0.07).
 3. [ ] **Basket options** on the multi-asset Monte Carlo (worst-of done: DEVELOPMENT_LOG). Stochastic vol per asset:
    section 3.
 4. [ ] **Quanto: what is left.** Done (DEVELOPMENT_LOG): `payment_ccy` on the products, quanto drift and payment

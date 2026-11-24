@@ -234,6 +234,34 @@ def otm_implied_vol(price: float, F: float, K: float, T: float, DF: float) -> fl
     return brentq(lambda s: black_otm(s) - price, 1e-4, 3.0)
 
 
+class TestLocalVolFloor(unittest.TestCase):
+    def test_thin_density_is_floored(self):
+        """A smile with a thin density band (a straight wing four times steeper than the smile at 70%: the spline
+        turns the kink into g < 0.05): the local vol stays below sqrt(dw/dT / G_FLOOR) (G_FLOOR = 0.05) instead of
+        reaching the 200% cap as with the former floor (1e-3), and the floored cells are reported apart."""
+        from tensorquant.models.localvolatility import G_FLOOR, gatheral_local_vol
+        self.assertEqual(G_FLOOR, 0.05)
+        t_nodes = np.array([1.0, 2.0])
+        strikes = np.exp(np.linspace(np.log(0.3), np.log(2.0), 26))
+        y = np.log(strikes)
+        rows = []
+        for t in t_nodes:                                  # ATM 20%, steep straight wing below 70% of the forward
+            w = 0.04 * t * (1.0 - 0.45 * y + 0.4 * y * y)
+            k0 = np.log(0.7)
+            w0, s0 = 0.04 * t * (1 - 0.45 * k0 + 0.4 * k0 ** 2), 0.04 * t * (-0.45 + 0.8 * k0)
+            w = np.where(y < k0, w0 + 4.0 * s0 * (y - k0), w)
+            rows.append(np.sqrt(w / t))
+        lm = tf.constant(np.tile(y, (2, 1)))
+        y_grid = np.linspace(-1.0, 0.6, 161)
+        sigma, t_grid, diag = gatheral_local_vol(np.array(rows), t_nodes, lm, y_grid)
+        old, _, _ = gatheral_local_vol(np.array(rows), t_nodes, lm, y_grid, g_floor=1e-3)
+        self.assertGreater(diag["floored_fraction"], 0.0)
+        self.assertGreater(float(tf.reduce_max(old)), 1.99)             # the former floor: the 200% cap
+        self.assertLess(float(tf.reduce_max(sigma)), float(tf.reduce_max(old)))
+        w_t_max = float(np.max(np.array(rows) ** 2))                    # w proportional to T: dw/dT = sigma_implied^2
+        self.assertLessEqual(float(tf.reduce_max(sigma)), np.sqrt(w_t_max / G_FLOOR) + 1e-9)
+
+
 class TestNaturalCubicSpline(unittest.TestCase):
     def test_vs_scipy_and_linear_wings(self):
         from scipy.interpolate import CubicSpline

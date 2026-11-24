@@ -412,6 +412,56 @@ class TestSurfaceAmerican(_SurfaceCase):
     exercise = "American"
 
 
+def _line_g(wing, far=np.log(0.1)) -> float:
+    """Smallest Gatheral g on a straight wing ``(k_j, w_j, slope)`` out to *far*."""
+    kj, wj, s = wing
+    k = np.linspace(kj, far, 400)
+    w = wj + s * (k - kj)
+    return float(((1 - k * s / (2 * w)) ** 2 - s ** 2 / 4 * (1 / w + 0.25)).min())
+
+
+class TestWingDensity(unittest.TestCase):
+    """Wings with a density margin: a smile steepest at its last quotes (a small crash component) gives a straight
+    wing from the edge with a thin density (g = 0.21 < 0.25, the local vol explodes there)."""
+
+    T = 2.0
+    MIX = LognormalMixture([0.04, 0.96], [0.4, 1.0], [0.15 * np.sqrt(2.0), 0.14 * np.sqrt(2.0)])
+    K_LO, K_HI = np.log(0.6), np.log(1.3)
+
+    def edge_wing(self):
+        h = 1e-4
+        w0, w1 = self.MIX.implied_vols(1.0, np.exp([self.K_LO, self.K_LO + h]), self.T) ** 2 * self.T
+        return self.K_LO, w0, (w1 - w0) / h
+
+    def test_junction_inside_the_quotes(self):
+        """The edge wing has no margin: the junction moves inside the quotes, where the smile is less steep; the
+        wing keeps g >= WING_G_MIN out to 10% of the forward and stays within WING_QUOTE_TOL of the smile it
+        replaces."""
+        from tensorquant.calibration.equityvol import WING_G_MIN, WING_QUOTE_TOL
+        self.assertLess(_line_g(self.edge_wing()), WING_G_MIN)
+        spec = _wing_spec(self.MIX, self.T, self.K_LO, self.K_HI)
+        kj, wj, slope = spec["lo"]
+        self.assertGreater(kj, self.K_LO)
+        self.assertGreaterEqual(_line_g(spec["lo"]), WING_G_MIN)
+        k = np.linspace(kj, self.K_LO, 25)
+        smile = self.MIX.implied_vols(1.0, np.exp(k), self.T)
+        line = np.sqrt((wj + slope * (k - kj)) / self.T)
+        self.assertLessEqual(np.abs(line - smile).max(), WING_QUOTE_TOL + 1e-12)
+        w, reliable = _smile_w(self.MIX, self.T, k, spec)
+        np.testing.assert_allclose(w, wj + slope * (k - kj), rtol=0, atol=1e-12)
+        self.assertTrue(reliable.all())
+
+    def test_fallback_is_the_largest_density(self):
+        """No candidate reaches the margin: the wing with the largest density, never thinner than the edge wing (the
+        former rule)."""
+        from unittest import mock
+        from tensorquant.calibration import equityvol
+        with mock.patch.object(equityvol, "WING_G_MIN", 10.0):
+            spec = _wing_spec(self.MIX, self.T, self.K_LO, self.K_HI)
+        self.assertIsNotNone(spec["lo"])
+        self.assertGreaterEqual(_line_g(spec["lo"]), _line_g(self.edge_wing()) - 1e-12)
+
+
 class TestImpliedSpot(unittest.TestCase):
     """Spot implied by the options (index with a delayed price): the forward of the first expiry from 3 days, plus
     the dividends to it, discounted: that expiry has zero repo."""

@@ -603,3 +603,25 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       and below each single-underlying product, quanto underlying = repo shift on the same draws, AAD delta per
       underlying and correlation sensitivity vs bumps (3%), local vol on flat smiles = GBM (slow). Found on the way:
       the local vol delta on the real surfaces is spiky (ROADMAP section 2 item 2).
+- [x] Local vol delta on the real surfaces: density margin on the wings, floor on g (section 2 item 2). Found with
+      the worst-of: on 2026-11-13 the SX5E 3Y autocallable had a local vol delta per 1% of 0.35 by a 1% bump, 0.40 by
+      0.1%, 4.2 by 1e-5 and 6.2 by AAD (exact, the derivative of a spiky estimator). Cause: the straight wing beyond
+      the quotes starts with the slope of the mixture at its last quote, often its steepest; on SX5E 2.09Y from 68% of
+      the forward, slope -0.34, Gatheral's g 0.02 (g = density over the Black density of the same total variance): an
+      almost empty band, where the spline of the local vol rings to g -0.13 and sigma_loc^2 = dw/dT / g reaches 183%
+      (the band moves with the forward, so with the spot). The nodes were butterfly-free: the check on the wings only
+      asked g >= 0. (A) `_wing_spec`: the wing must keep `g >= WING_G_MIN` (0.25) out to 10% / 400% of the forward;
+      candidates at the edge, then inside the quotes up to `WING_INWARD` (0.2 in log moneyness, the straight line within
+      `WING_QUOTE_TOL` = 0.25 vol pts of the smile it replaces), then beyond the edge; none reaches the margin: the
+      candidate with the largest density among those with g >= 0 (never thinner than before; a first version without
+      this fallback dropped to the mixture tails and made the deep wings worse). (B) local vol `G_FLOOR` 0.05 instead
+      of 1e-3 (`gatheral_local_vol`, `LocalVolatilityModel`); diagnostics: `arbitrage_fraction` is now g < 0 or
+      dw/dT <= 0, `floored_fraction` the cells below the floor. Live snapshot recalibrated. 2026-11-13, before / after:
+      SX5E node smiles with g < 0.05 after 3M 4 / 0, local vol max at 50-165% of the forward after 3M 113% / 101%,
+      ISP capped cells in the wings 3422 / 650; quotes within bid / ask unchanged on AAPL (97.9%), ENI, MSFT (100%),
+      ISP (97.3%), SPX 78.5% / 77.8%, SX5E 96.0% / 94.2% (rms 0.057 / 0.075 vol pts, max 0.38 both); SX5E 3Y
+      autocallable price -1.712 / -1.702, delta per 1% AAD 0.370, bumps 1% 0.369, 1e-5 0.370. Synthetic surfaces of
+      the tests unchanged (model pins at 1e-8). Tests: `test_equity_vol.py` (junction moved inside the quotes with the
+      margin and within the tolerance, fallback never thinner than the edge wing), `test_vanilla_mc.py` (a steep
+      straight wing: local vol at the 200% cap with the former floor, bounded by sqrt(dw/dT / 0.05) now, floored cells
+      reported). Left: thin densities inside the quotes (ROADMAP section 2 item 2).

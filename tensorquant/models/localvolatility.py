@@ -14,6 +14,9 @@ from ..numericalhandles.dtypes import DTYPE
 # Local vol from total implied variance (Gatheral), forward moneyness
 # ============================================================
 
+G_FLOOR = 0.05      # floor on Gatheral's g (density over the Black one): sigma_loc^2 = dw/dT / g explodes as g -> 0
+
+
 def _time_operators(t_nodes: np.ndarray, t_new: np.ndarray):
     """``w(t) = A @ w_nodes`` and ``dw/dt = B @ w_nodes``: total variance linear in T between node
     maturities at fixed forward moneyness; flat implied vol before the first / after the last node."""
@@ -39,7 +42,7 @@ def gatheral_local_vol(
     y_grid,
     time_step: float = 1.0 / 24.0,
     max_wing_slope: float = 1.9,
-    g_floor: float = 1e-3,
+    g_floor: float = G_FLOOR,
     sigma_cap: float = 2.0,
 ):
     """Local vol on a (t, y) grid from the implied vol nodes, ``y = ln(K / F(T))``.
@@ -63,14 +66,16 @@ def gatheral_local_vol(
         y_grid: ``[nY]`` forward log-moneyness grid of the local vol.
         time_step: Time step of the local vol grid (points before the first node included).
         max_wing_slope: Clip on ``|dw/dy|`` used outside the strike nodes.
-        g_floor: Floor on ``g`` (cells below it have butterfly arbitrage).
+        g_floor: Floor on ``g`` (below 0: butterfly arbitrage; between 0 and the floor: a thin density, the local
+            vol held there).
         sigma_cap: Cap on the local vol.
 
     Returns:
         tuple: ``(sigma [nT', nY] tf.Tensor, t_grid np.ndarray [nT'], diagnostics dict)``;
             diagnostics on the data region (y covered by the strike nodes of every maturity):
-            ``min_g``, ``min_dw_dt``, ``arbitrage_fraction`` (share of cells with ``g < g_floor`` or
-            ``dw/dT <= 0``); ``wing_arbitrage_fraction``: same share in the extrapolated wings.
+            ``min_g``, ``min_dw_dt``, ``arbitrage_fraction`` (share of cells with ``g < 0`` or ``dw/dT <= 0``),
+            ``floored_fraction`` (share with ``g < g_floor``); ``wing_arbitrage_fraction``: arbitrage share in the
+            extrapolated wings.
     """
     from ..numericalhandles.interpolation import natural_cubic_spline
 
@@ -96,7 +101,7 @@ def gatheral_local_vol(
     # wings of two maturities can cross: floored, reported apart as wing_arbitrage_fraction)
     lm = tf.stop_gradient(tf.cast(log_moneyness, DTYPE))
     in_data = tf.logical_and(y >= tf.reduce_max(lm[:, 0]), y <= tf.reduce_min(lm[:, -1]))
-    bad = tf.logical_or(g < g_floor, w_t <= 0.0)
+    bad = tf.logical_or(g < 0.0, w_t <= 0.0)
 
     def share(mask):
         cells = tf.boolean_mask(tf.cast(bad, DTYPE), mask, axis=1)
@@ -107,6 +112,8 @@ def gatheral_local_vol(
         "min_g": float(tf.reduce_min(g_data)),
         "min_dw_dt": float(tf.reduce_min(wt_data)),
         "arbitrage_fraction": share(in_data),
+        "floored_fraction": float(tf.reduce_mean(tf.cast(tf.boolean_mask(g, in_data, axis=1) < g_floor, DTYPE)))
+        if bool(tf.reduce_any(in_data)) else 0.0,
         "wing_arbitrage_fraction": share(tf.logical_not(in_data)),
     }
     return sigma, t_grid, diagnostics
@@ -226,7 +233,7 @@ class LocalVolatilityProcess(StochasticProcess):
         y_range: tuple = (np.log(0.05), np.log(5.0)),
         time_step: float = 1.0 / 96.0,
         max_wing_slope: float = 1.9,
-        g_floor: float = 1e-3,
+        g_floor: float = G_FLOOR,
         martingale_correction: bool = True,
     ) -> "LocalVolatilityProcess":
         """Local vol process of *equity* on the market forward (differentiable w.r.t. the market).
@@ -237,7 +244,7 @@ class LocalVolatilityProcess(StochasticProcess):
         comes from :func:`gatheral_local_vol` on the market vol nodes in forward moneyness
         ``y = ln(K / F(T))``, so gradients reach the vol nodes, spot, repo, dividends and curve.
 
-        If the vol surface has static arbitrage where it has data (``g < g_floor`` or
+        If the vol surface has static arbitrage where it has data (``g < 0`` or
         ``dw/dT <= 0``), no local vol can reprice it: a warning is issued. Diagnostics are on
         ``model.arbitrage`` (see :func:`gatheral_local_vol`).
 
@@ -376,7 +383,7 @@ class LocalVolatilityModel(EquityModel):
     """
 
     SETTINGS = {"n_y": 300, "y_range": [float(np.log(0.05)), float(np.log(5.0))], "time_step": 1.0 / 96.0,
-                "max_wing_slope": 1.9, "g_floor": 1e-3, "martingale_correction": True}
+                "max_wing_slope": 1.9, "g_floor": G_FLOOR, "martingale_correction": True}
 
     def process(self, equity, maturity=None) -> LocalVolatilityProcess:
         s = self.settings
