@@ -1,28 +1,70 @@
 # Roadmap
 
-Open and future developments (moved from `CLAUDE.md`). Completed work: `DEVELOPMENT_LOG.md`.
+Open and future developments, in order of priority. Completed work: `DEVELOPMENT_LOG.md`.
 
-Current focus: Beta 1, local vol autocallables.
+## Order of work
 
-## Beta 1: local vol autocallables (in order)
+1. **Market data: equity vols and dividends** (now). Index dividends from dividend futures, SPX dividends, the
+   first download with the wider strike range, SPX implied spot, single-stock dividends and repo, the rest of the
+   vol surface.
+2. **Autocallable pricing** (Beta 1: local vol autocallables on the real snapshots). Terms as traded, worst-of,
+   quanto, live trades, validation.
+3. **After the beta: equity.** Guided review of the pricers and models, barriers, forward start / cliquets,
+   variance swaps, total return swaps, multi-asset stochastic vol.
+4. **tqstudio portfolio engine.** Model instances, Heston `eps(t)`, SLV table refresh, multi-asset process, the
+   batch pipeline, persistence, trades and portfolios.
+5. **Cross-asset simulation.**
+6. **Future development.** Interest-rate market data, sensitivities, equity model issues, rates models.
+7. **Bridge with Murex.**
 
-Goal of the first beta: autocallables priced under local vol on the real snapshots, single underlying and worst-of,
-in their own or another currency, new and live trades, with stable AAD greeks. Everything else waits (After the beta).
+## 1. Market data: equity vols and dividends (now)
 
-1. [ ] **Equity vol grid in the wings: what is left.** Done (DEVELOPMENT_LOG): grid 30%-200% of the spot, straight
-   wings beyond the quotes, calendar step. Left:
-   - interpolation between the nodes: bilinear in strike, it cuts the curvature of the short index expiries (SPX
-     79.5% of the two-sided quotes within bid / ask on the surface against 96% on the smile, 2026-11-13; the wider
-     grid did not change it, the gap is near the money): total variance along the log-moneyness (natural cubic, as
-     the local vol), or more nodes between 90% and 110%;
-   - recalibrate the live snapshots and the calibration sets on the new surfaces (Heston and DD fit every node, now
-     26 strikes); autocallable prices and vegas before / after on SX5E and a single stock; local vol arbitrage
-     warnings on the wider grid;
-   - calendar arbitrage left (2026-11-13): ISP between the 7- and 14-day expiries at 30%-60% of the forward (up to
-     0.16 of total variance: the far wing of a guided 7-day smile) and AAPL at 175%-200% between 2 and 4 months
-     (0.02-0.03); far from anything priced. Bloomberg damps the default intensity below the quotes on short
-     expiries (its 14.1.1-14.1.2), not done.
-2. [ ] **Autocallable terms as traded.** The Tradepad holds constant barriers: step-down autocall barriers (one per
+Done (`DEVELOPMENT_LOG.md`, section 5): `marketdata/mdbuild` (Bloomberg universe edited from the app, price history,
+snapshots with spots, dividends, listed options, FX, fixings, bootstrapped curves, correlations of weekly returns),
+equity vol surfaces from the listed options (lognormal mixture per expiry with a vol floor, grid 30%-200% of the spot,
+straight wings beyond the quotes, calendar step, settlement prices only without a bid / ask market, guided expiries
+with a wing free of quotes), repo curves, index dividends implied with the repo held.
+
+1. [ ] **Index dividends from dividend futures.** The Bloomberg projections (`BDVD_PROJ_DIV_INDX_PTS`) cover about
+   3 years and the listed options with a bid / ask market about 2 (SX5E on 2026-11-13: quoted to Dec-2028); beyond,
+   the dividends are projected at a constant yield with the repo held (SX5E 3.10%, about 202-210 points a year, where
+   the settlement prices of the 2029-2032 options gave 155-168). Eurex dividend futures (SX5E, yearly to about 10
+   years) give the market dividends of each year: download them, use them for the years they quote (repo implied
+   from the options with those dividends), the constant yield only beyond.
+2. [ ] **SPX implied dividends.** On 2026-11-13 the dividends implied by the listed forwards fell to about 55 points
+   in 2031 (a financing spread growing with the maturity left in the dividends?). Check again with the settlement
+   prices dropped (forwards from the quoted expiries only, constant yield beyond) and against the dividend futures.
+3. [ ] **First download with the wider range** (targets 30%-200% of the forward, chains 25%-250% of the spot, chain
+   cache version 4): how many quotes reach the wings, the wings and long expiries before / after, the Fit view.
+4. [ ] **SPX implied spot.** The anchor expiry has zero repo by construction; a futures-based spot (ES) or a repo
+   level from another source would fix the level of the curve.
+5. [ ] **Single stocks: dividends and long repo.** The Bloomberg projections are used as downloaded and the repo
+   absorbs the rest of the carry: check that the implied repo of the long quoted expiries is plausible (ENI and ISP
+   to 2029, AAPL and MSFT to Jan-2029) and what a projection error does to it.
+6. [ ] **Vol surface, the rest.**
+   - Interpolation between the nodes: bilinear in strike, it cuts the curvature of the short index expiries (SPX
+     79.5% of the two-sided quotes within bid / ask on the surface against 96% on the smile, 2026-11-13; the gap is
+     near the money, on expiries under a month): total variance along the log-moneyness (natural cubic, as the local
+     vol), or more nodes between 90% and 110%.
+   - Calendar arbitrage left: ISP between the 7- and 14-day expiries at 30%-60% of the forward (up to 0.16 of total
+     variance, the far wing of a guided 7-day smile), AAPL at 175%-200% between 2 and 4 months (0.02-0.03); far
+     from anything priced. Bloomberg damps the default intensity below the quotes on short expiries (its
+     14.1.1-14.1.2), not done.
+7. [ ] **Option quotes of different times against one spot.** Each underlying has one quote date (the most frequent bid update date) and one reference spot (read in the same request as the options, or the close of the quote date): every option is converted to a vol against it, whatever the time of its own quote. Bid / ask of an earlier session within `stale_days` (3) enter the fit with full weight; older ones are dropped (settlement prices are used only without a bid / ask market); within the session an option whose bid has not moved for hours counts as live. Error: a stale price read on today's spot and the expiry's implied forward is off by about delta x spot move / vega in vol (small in the wings, up to a few vol points near the money on a 1-2% day); an expiry stale as a whole keeps consistent vols in moneyness (its parity forward is stale too) and puts the gap into the repo curve. On 2026-11-13 it is minor: the only earlier-session quotes in the fit are settlements (ISP 17, SX5E 1, spot moves of -0.5% / -0.3%), and the smile reprices the two-sided quotes within bid / ask (Fit view: SX5E, ENI 100%). Done: the time of the last bid update kept in `eq_option_quotes.csv` (`last_update_time`, from the next download) and shown in the Fit view (Quote Time). To decide on the measured ages: drop or down-weight the quotes older than a threshold when the expiry has fresher ones; a spot per quote (close of its session, strike rescaled in moneyness) only if earlier-session two-sided quotes become frequent; intraday spots per quote time (Bloomberg intraday bars) judged overkill.
+8. [ ] Equity vols: a reference (OTC) surface for the long end and the wings when the internal service has one (the
+   Bloomberg methodology blends it in; now the Heston-like ATM level); Kalman smoothing of the implied forwards
+   across snapshots if intraday snapshots come (one a day now); calendar-arbitrage check of the stored grid
+   (bilinear in vol between the tenors).
+9. [ ] `BlackScholesPricer` / `bjerksund_stensland_calc`: NaN below about 1.5% vol and with a tiny positive carry
+   (overflow), negative put prices at very low vols (immediate-exercise branch of the put symmetry). The option
+   calibration avoids these regions (vols 2%-300%, zero-carry calls priced European); fix the pricer.
+
+## 2. Autocallable pricing (Beta 1)
+
+Goal: autocallables priced under local vol on the real snapshots, single underlying and worst-of, in their own or
+another currency, new and live trades, with stable AAD greeks.
+
+1. [ ] **Autocallable terms as traded.** The Tradepad holds constant barriers: step-down autocall barriers (one per
    observation, already broadcast in `AutocallableOption`, to expose in the form and the schedule), coupon types
    (standard and memory done; fixed coupons), final redemption variants (put knocked in at expiry with a barrier, put
    without barrier, participation, capital protection level). And `GeometricBrownianMotion.from_equity` on multi-date
@@ -31,13 +73,13 @@ in their own or another currency, new and live trades, with stable AAD greeks. E
    discretely monitored barriers are wrong there (digital strip: first annual coupon 1.11% vs 2.62% Black-Scholes).
    For the beta: reject GBM for multi-date products (local vol is the model); later a GBM on the market forward
    (`S = F(t) X`) with a term-structure vol.
-3. [ ] **Multi-asset Monte Carlo, worst-of under local vol.** Correlated underlyings on the market forwards (local vol
+2. [ ] **Multi-asset Monte Carlo, worst-of under local vol.** Correlated underlyings on the market forwards (local vol
    per asset, Cholesky of `market_env.get_correlation`, the historical correlation of the snapshot), a multi-asset
    `evolve`; basket options and the worst-of autocallable (`AutocallableOption` on several underlyings, several
    underlyings in the Tradepad). Greeks by AAD per underlying (delta, vega per node) and per correlation pair. Tests:
    one asset = single-asset pricers, perfect correlation / independence limits, basket mean = weighted forwards,
-   correlation gradient vs bumps. Stochastic vol per asset: After the beta.
-4. [ ] **Quanto correction and a price currency.** Products paid in a currency other than the underlying's (a
+   correlation gradient vs bumps. Stochastic vol per asset: section 3.
+3. [ ] **Quanto correction and a price currency.** Products paid in a currency other than the underlying's (a
    EUR-settled autocallable on SPX, a USD one on SX5E): a `payment_ccy` on the `Product` (default the underlying's
    currency) and a `price_currency` in the pricers.
    - Quanto (paid in another currency at a fixed rate): the underlying's drift adjusted by `-rho(S, X) sigma_S
@@ -53,16 +95,19 @@ in their own or another currency, new and live trades, with stable AAD greeks. E
    - Greeks: FX vol and equity-FX correlation (`CORR:ALL:GLOBAL`, pair gradient) by AAD.
    - Tests: rho = 0 = the domestic price converted; Black-Scholes quanto closed form vs Monte Carlo on a flat smile;
      AAD correlation / FX vol greeks vs bumps; price currency = price times FX spot, delta to the FX spot.
-5. [ ] **Live (seasoned) trades.** Historical fixings (underlying, date, value: the closes of the price history) and
+4. [ ] **Live (seasoned) trades.** Historical fixings (underlying, date, value: the closes of the price history) and
    the trade state (initial fixing, past coupon observations, memory of the unpaid coupons, autocalls already
    triggered) used by the pricers; today every trade is priced as if it started on the pricing date. Needed to reprice
-   a real book (and later to compare with Murex: Bridge with Murex).
-6. [ ] **Validation of local vol and the autocallable.** The `local_vol` and `autocallable` steps of the guided review
-   (the full plan: After the beta). Local vol Monte Carlo noise is large in the wings and at long maturities (OTM call
+   a real book (and later to compare with Murex: section 7).
+5. [ ] **Validation of local vol and the autocallable.** The `local_vol` and `autocallable` steps of the guided review
+   (the full plan: section 3). Local vol Monte Carlo noise is large in the wings and at long maturities (OTM call
    at 170%, 3Y: +-1 vol point with 100k paths): no variance reduction yet. For the beta: antithetic variates and a
    control variate on the forward if the greeks of a 5Y autocallable are not stable at 20k-50k paths.
+   Also: autocallable prices and vegas on the new surfaces
+   (grid 30%-200%) against the old ones, on SX5E and a single stock; local vol arbitrage warnings on the wider grid
+   (SX5E, 1.7% of the local vol grid on 2026-11-19); a new calibration set on the recalibrated snapshot.
 
-## After the beta
+## 3. After the beta: equity
 
 Equity (in order):
 
@@ -72,7 +117,7 @@ Equity (in order):
       in `study/docs/chapters/equity.tex`, 1-3 exercises, and the matching sections of the *Models and Pricing*
       (functional) and *Architecture* (technical) documents (`study/docs/models/`, `study/docs/architecture/`).
       Done (`DEVELOPMENT_LOG.md`): market handles, dividends, equity underlying, `black_scholes`, `monte_carlo_gbm`
-      (and the digital / vanilla notebooks). Left, in order: `local_vol` (Gatheral, SSVI, forward mode: in Beta 1), `displaced_diffusion` (slice fit, skew averaging, implicit-function greeks, skew limit),
+      (and the digital / vanilla notebooks). Left, in order: `local_vol` (Gatheral, SSVI, forward mode: in section 2), `displaced_diffusion` (slice fit, skew averaging, implicit-function greeks, skew limit),
       `heston` (characteristic function, COS, calibration, QE-M), `heston_slv` (leverage, particle method,
       risk convention), `autocallable` (payoff, barrier smoothing, model comparison).
 - [ ] **Barrier options, rest** (`BarrierOption` done, see `DEVELOPMENT_LOG.md`): rebates; Brownian-bridge vol from
@@ -89,13 +134,13 @@ Equity (in order):
       (equity leg from the market forwards / dividends / repo, funding leg as a floating leg on the curves). Tests:
       at-inception fair spread = repo vs funding basis, MtM after a fixing, deltas to spot / dividends / repo /
       pillars vs bumps.
-- [ ] **Multi-asset with stochastic vol** (after the local vol worst-of of Beta 1): the `2n x 2n` correlation of spots and variances has to be completed
+- [ ] **Multi-asset with stochastic vol** (after the local vol worst-of, section 2): the `2n x 2n` correlation of spots and variances has to be completed
       from the asset-asset block and the per-asset spot-vol `rho_i` (Kahl-Günther: `<W_i, Z_j> = rho_ij rho_j`,
       `<Z_i, Z_j> = rho_ij rho_i rho_j`, positive semi-definite by construction but low variance-variance correlation;
       "perfect" completion `<Z_i, Z_j> = 1`, not always PSD; modified perfect with negative eigenvalues floored and
       renormalised). Reference: the IMI internal report `resources/HestonModel.pdf`, sec. 1.3.
 
-## tqstudio: cross-asset risk engine (the app runs; the portfolio engine is not started)
+## 4. tqstudio portfolio engine (the app runs; the portfolio engine is not started)
 
 Goal: reprice multi-asset products and whole portfolios on a joint simulation of the risk factors, with greeks, in a
 tractable way. Design agreed in the review of the equity models (Heston, SLV, the IMI Heston report
@@ -111,7 +156,7 @@ factors, calibration policy, joint simulation, portfolio pricing, aggregation, p
 calibration sets (`calibrate_snapshot_models`, `marketdata/calibrations/<source>/<yyyymmdd>/<hhmm>/`, apart from the
 snapshots by design; Calibration tab). Left for `tqstudio`:
 - the same split for `GaussianShortRateModel` (parameters + curve read at pricing) and a GBM on the market forward
-  (see Beta 1, item 2);
+  (see section 2, item 1);
 - greeks at portfolio level: sum `dV/dp` over the trades of one underlying, one product with the stored Jacobian.
 
 **2. Heston with `eps(t)` and two-speed calibration** (as the IMI model, sec. 1.2 and 4 of the report).
@@ -178,44 +223,13 @@ calibration sets with their recalibration rules. Left: the batch itself (steps 4
 - Tradepad: the form generated from the models' JSON schema (replacing the hand-written field lists), save / load /
   amend trades from the page, portfolio views on the store.
 - Import from Murex: an extract (datamart report / CSV) mapped onto the templates; CSV only as the exchange format.
-- Live (seasoned) trades: see Beta 1, item 5.
+- Live (seasoned) trades: see section 2, item 4.
 
 **Order of work.** 1 (calibration objects, pinned by tests) -> 2 (Heston `eps(t)`) -> 4 on GBM / local vol / Heston
 -> 5-6 minimal `tqstudio` on two underlyings -> 3 (SLV with stored `E`, after the short-dated SLV error is
 understood) -> local correlation.
 
-## Real market data (`marketdata/`, started)
-
-Done (`DEVELOPMENT_LOG.md`, section 5): `marketdata/mdbuild` (self-contained, own `requirements.txt`): universe of
-Bloomberg tickers (`config/universe.yaml`, edited from the app), Desktop API source, 10-year split-adjusted price
-history in Parquet (incremental), snapshots under `marketdata/live/` (git-ignored) with equity spots, declared and
-projected dividends (index points weekly for the indices, extrapolated to 10 years), listed option quotes (with the
-time of the last bid), FX spots, rate fixings, curve quotes bootstrapped right after the download, equity vol
-surfaces and repo curves from the options, implied spot for a delayed index, correlations of daily log returns;
-download started from the app. Left:
-- [ ] Check the bootstrapped curves against the internal service once available.
-- [ ] **Short end of the Ibor projection curves (synthetic deposits).** EUR 6M has no quote before its first pillar (the 6M fixing as a spot FRA 0x6, 2027-05-17 = 0.507Y on 2026-11-13): the first segment [0, 6M] is pure monotone convex interpolation, the instantaneous forward rises from 2.83% to a hump of 3.43-3.55% at 0.5-0.55Y and drops to 3.25% at 0.6Y (ESTR, quoted from 1W, has none). The quoted FRAs (1x7 to 12x18, monthly) are repriced exactly, so the 6M forwards at the FRA start dates are the market's; broken-date 6M fixings and the forward plot depend on the interpolation. Plan: synthetic deposits on the 6M curve at 1W, 1M, 2M, 3M, 4M, 5M with rate = ESTR simple rate on the same period + spread, spread = 6M fixing - ESTR 6M simple rate (about 57bp on 2026-11-13); not the 1M / 3M Euribor fixings (other indices, tenor basis 3M/6M of 10-15bp would put a step at 6M). Marked `synthetic` in `ir_calibration.csv`; their rates as functions of the ESTR curve and the 6M fixing, so that the par sensitivities map their risk to real quotes (ESTR members and the fixing), not to quotes that do not exist. Tests: quoted instruments still repriced to 0, no hump in the instantaneous forward below 1Y, par sensitivities of a short 6M-indexed product only on real quotes and equal to bump-and-rebootstrap.
-- [ ] Par sensitivities in the portfolio views (done in the library and the Tradepad: see `DEVELOPMENT_LOG.md`).
-- [ ] Vol surfaces of caps / swaptions and FX from the internal service (`mdbuild/internal.py`): no BVOL (equity
-      vols and repo: from the listed options, done).
-- [ ] Implied spot (SPX): the anchor expiry has zero repo by construction; a futures-based spot (ES) or a repo
-      level from another source would fix the level of the curve.
-- [ ] Tradepad: the first price after the app starts is 2-3 s slower (TensorFlow warm-up, snapshot loading).
-- [ ] Equity vols: a reference (OTC) surface for the long end and the wings when the internal service has one (the
-      Bloomberg methodology blends it in; now the Heston-like ATM level); Kalman smoothing of the implied forwards
-      across snapshots if intraday snapshots come (one a day now); calendar-arbitrage check of the stored grid
-      (bilinear in vol between the tenors).
-- [ ] `BlackScholesPricer` / `bjerksund_stensland_calc`: NaN below about 1.5% vol and with a tiny positive carry
-      (overflow), negative put prices at very low vols (immediate-exercise branch of the put symmetry). The option
-      calibration avoids these regions (vols 2%-300%, zero-carry calls priced European); fix the pricer.
-- [ ] Correlations: daily closes of different markets are asynchronous (Milan vs New York closes): same-day
-      returns understate the cross-market correlation; weekly returns or lagged terms as an option. Window choice:
-      on the first snapshot (2026-11-12) ENI is negatively correlated with the Italian banks over the last year
-      (-0.3) after ten years at +0.3 / +0.8: a regime the 252-day window takes in full.
-- [ ] **Option quotes of different times against one spot.** Each underlying has one quote date (the most frequent bid update date) and one reference spot (read in the same request as the options, or the close of the quote date): every option is converted to a vol against it, whatever the time of its own quote. Bid / ask of an earlier session within `stale_days` (3) enter the fit with full weight; older ones only as settlement prices (last, weight 0.25); within the session an option whose bid has not moved for hours counts as live. Error: a stale price read on today's spot and the expiry's implied forward is off by about delta x spot move / vega in vol (small in the wings, up to a few vol points near the money on a 1-2% day); an expiry stale as a whole keeps consistent vols in moneyness (its parity forward is stale too) and puts the gap into the repo curve. On 2026-11-13 it is minor: the only earlier-session quotes in the fit are settlements (ISP 17, SX5E 1, spot moves of -0.5% / -0.3%), and the smile reprices the two-sided quotes within bid / ask (Fit view: SX5E, ENI 100%). Done: the time of the last bid update kept in `eq_option_quotes.csv` (`last_update_time`, from the next download) and shown in the Fit view (Quote Time). To decide on the measured ages: drop or down-weight the quotes older than a threshold when the expiry has fresher ones; a spot per quote (close of its session, strike rescaled in moneyness) only if earlier-session two-sided quotes become frequent; intraday spots per quote time (Bloomberg intraday bars) judged overkill.
-- [ ] **Index dividends from dividend futures.** `BDVD_PROJ_DIV_INDX_PTS` projects about 3 years (SX5E on 2026-11-13: to 2029-11, 185-200 index points a year); beyond, the repo implied by the listed options absorbs the missing dividends (SX5E repo -1.05% at 3Y, +0.24% at 6Y) and, past the last listed expiry, the forward grows as if no dividend were paid (7Y 7104, 8Y 7327). Market source for the long end: the index dividend futures (Euro Stoxx 50 DEDZ on Eurex, one a year to about 10 years; S&P 500 dividend futures), giving the market-implied dividend points per year; the weekly pattern within a year from the Bloomberg projections, scaled to the futures. About 10 tickers per index in the download. Until then (done, `DEVELOPMENT_LOG.md`): projections kept to 2 years, dividends implied by the listed forwards with the repo held, constant yield to 10 years. Open: the repo of SPX held flat gives implied dividends falling to about 0.6% of the forward in 2031 (55 points, against about 1% today): the financing spread of long-dated SPX forwards probably grows with the maturity, so a flat repo pushes it into the dividends; the S&P 500 dividend futures (or a term structure of the financing spread) would split the two.
-
-## Cross-asset (not started)
+## 5. Cross-asset (not started)
 
 - [ ] **Cross-asset simulation model**: equities, rates and FX simulated jointly under one measure (the domestic
       risk-neutral one of a base currency), the generalisation of the equity "Multi-asset process" of the tqstudio
@@ -232,7 +246,19 @@ download started from the app. Left:
       - Uses: quanto and composite products in Monte Carlo, hybrids (equity / rates), portfolio exposures (EE, PFE) on
         mixed portfolios (the swap exposure generator extended), the tqstudio portfolio pipeline.
 
-## Future development (not prioritised)
+## 6. Future development (not prioritised)
+
+App:
+
+- [ ] Tradepad: the first price after the app starts is 2-3 s slower (TensorFlow warm-up, snapshot loading).
+
+Interest-rate market data (after the equity and dividend work):
+
+- [ ] Check the bootstrapped curves against the internal service once available.
+- [ ] **Short end of the Ibor projection curves (synthetic deposits).** EUR 6M has no quote before its first pillar (the 6M fixing as a spot FRA 0x6, 2027-05-17 = 0.507Y on 2026-11-13): the first segment [0, 6M] is pure monotone convex interpolation, the instantaneous forward rises from 2.83% to a hump of 3.43-3.55% at 0.5-0.55Y and drops to 3.25% at 0.6Y (ESTR, quoted from 1W, has none). The quoted FRAs (1x7 to 12x18, monthly) are repriced exactly, so the 6M forwards at the FRA start dates are the market's; broken-date 6M fixings and the forward plot depend on the interpolation. Plan: synthetic deposits on the 6M curve at 1W, 1M, 2M, 3M, 4M, 5M with rate = ESTR simple rate on the same period + spread, spread = 6M fixing - ESTR 6M simple rate (about 57bp on 2026-11-13); not the 1M / 3M Euribor fixings (other indices, tenor basis 3M/6M of 10-15bp would put a step at 6M). Marked `synthetic` in `ir_calibration.csv`; their rates as functions of the ESTR curve and the 6M fixing, so that the par sensitivities map their risk to real quotes (ESTR members and the fixing), not to quotes that do not exist. Tests: quoted instruments still repriced to 0, no hump in the instantaneous forward below 1Y, par sensitivities of a short 6M-indexed product only on real quotes and equal to bump-and-rebootstrap.
+- [ ] Par sensitivities in the portfolio views (done in the library and the Tradepad: see `DEVELOPMENT_LOG.md`).
+- [ ] Vol surfaces of caps / swaptions and FX from the internal service (`mdbuild/internal.py`): no BVOL (equity
+      vols and repo: from the listed options, done).
 
 Sensitivities:
 
@@ -288,7 +314,7 @@ Interest rates:
 - [ ] Swaptions: physical settlement only (EUR market swaptions are cash-settled with the IRR annuity); no Bermudans.
       Cap quotes are not part of the snapshot (only caplet vols); a market data file for them if needed.
 
-## Bridge with Murex (to be defined, not started)
+## 7. Bridge with Murex (to be defined, not started)
 
 Link tQuant to Murex to check the front-office system day by day and reprice its portfolios independently. Data
 flow Murex -> tQuant only (extracts, datamart reports); tQuant never writes into Murex. Documented as a placeholder in
