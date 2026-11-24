@@ -13,6 +13,25 @@ COLUMNS = ["date", "ticker", "value"]
 EIGEN_FLOOR = 1e-4          # smallest eigenvalue of a repaired correlation matrix
 
 
+def equity_fixings(history: pd.DataFrame, names: dict, today: date) -> pd.DataFrame:
+    """Historical fixings of the equities (the closes, ``PX_LAST``) before *today* (today's close is not known at
+    the snapshot: the pricers use the spot for a fixing on the evaluation date).
+
+    Args:
+        history: Long price history ``date, ticker, value`` (Bloomberg tickers).
+        names: Bloomberg ticker -> ``(code, ccy)`` of the equities.
+        today: Snapshot date.
+
+    Returns:
+        pd.DataFrame: ``ticker, ccy, date, value`` (``eq_fixings.csv``).
+    """
+    rows = history[history["ticker"].isin(list(names)) & (pd.to_datetime(history["date"]) < pd.Timestamp(today))]
+    rows = rows.dropna(subset=["value"]).sort_values(["ticker", "date"])
+    return pd.DataFrame({"ticker": [names[t][0] for t in rows["ticker"]], "ccy": [names[t][1] for t in rows["ticker"]],
+                         "date": pd.to_datetime(rows["date"]).dt.date.astype(str).to_numpy(),
+                         "value": rows["value"].to_numpy(float)}, columns=["ticker", "ccy", "date", "value"])
+
+
 def read_history(path: Path) -> pd.DataFrame:
     path = Path(path)
     if not path.is_file():

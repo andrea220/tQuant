@@ -326,14 +326,13 @@ def _autocallable(mkt, f: dict):
     """Phoenix autocallable: coupons on their own schedule (standard or memory), autocall observations from the first
     observation date to maturity, capital-at-risk put (barrier, strike, participation). Struck at the market spot
     when the strike date is the pricing date; forward start when it is later (the strike is the spot fixed then,
-    the schedules follow the strike date)."""
+    the schedules follow the strike date); a live trade when it is earlier (the strike and the past observations
+    are the fixings of the snapshot, ``eq_fixings.csv``)."""
     eq = mkt.get_equity(f["ticker"])
     today = mkt.evaluation_date
     strike_date = CAL.adjust(date.fromisoformat(f.get("strike_date") or today.isoformat()), MF)
-    if strike_date < today:
-        raise ValueError("strike date before the pricing date: a live trade needs the historical strike fixing "
-                         "(not supported yet)")
     forward_start = strike_date > today
+    struck_today = strike_date == today                               # earlier: a live trade, struck on its fixing
     maturity = date.fromisoformat(f["maturity"])
     end = CAL.adjust(maturity, MF)
     if end <= strike_date:
@@ -349,13 +348,13 @@ def _autocallable(mkt, f: dict):
         if _fx_mode(f) == "composite":
             raise ValueError("worst-of: composite not supported (quanto only)")
         ccy, payment, underlying = _payment_ccy(f, eq) or eq.currency, None, tickers
-        strike = None if forward_start else [float(f.get("_ref_spot", eq.spot))] + [
+        strike = None if not struck_today else [float(f.get("_ref_spot", eq.spot))] + [
             float(mkt.get_equity(t).spot) for t in tickers[1:]]
     else:
         ccy, payment, underlying = eq.currency, _payment_ccy(f, eq), eq.ticker
-        strike = None if forward_start else float(f.get("_ref_spot", eq.spot)) * _composite_fx(mkt, f, eq)
+        strike = None if not struck_today else float(f.get("_ref_spot", eq.spot)) * _composite_fx(mkt, f, eq)
     return tq.AutocallableOption(
-        ccy=ccy, notional=float(f["notional"]), start_date=today, end_date=end,
+        ccy=ccy, notional=float(f["notional"]), start_date=min(today, strike_date), end_date=end,
         strike=strike,
         strike_date=strike_date,
         coupon_fixing_dates=coupons, coupon_payment_dates=coupons,
@@ -646,6 +645,8 @@ def describe_trade(mkt: tq.MarketEnvironment, request: dict) -> dict:
         return {"summary": [], "schedule": None}
     product = _autocallable(mkt, f)
     table = product.schedule_dataframe()
+    state = tq.AutocallableMCPricer().trade_state(product, mkt)
+    past = {r["date"]: r for r in state["rows"]}
     schedule = []
     for _, row in table.iterrows():
         coupon = row["coupon_rate_pct"] is not None and row["coupon_rate_pct"] == row["coupon_rate_pct"]
@@ -655,13 +656,19 @@ def describe_trade(mkt: tq.MarketEnvironment, request: dict) -> dict:
                          "payment_date": row["payment_date"].isoformat(),
                          "coupon_barrier": float(row["coupon_barrier_pct"]) if coupon else None,
                          "coupon_amount": float(row["coupon_rate_pct"]) if coupon else None,
-                         "autocall_barrier": float(row["autocall_barrier_pct"]) if autocall else None})
-    strike = (f"fixed on {product.strike_date.isoformat()} (forward start)" if product.strike is None
-              else ", ".join(f"{t} {k:,.2f}" for t, k in zip(product.underlyings, product.strikes))
-              if product.is_worst_of else float(product.strike))
+                         "autocall_barrier": float(row["autocall_barrier_pct"]) if autocall else None,
+                         **_past_outcome(past.get(row["fixing_date"]), state["called_on"], row["fixing_date"])})
+    strikes = state["strikes"]
+    strike = (f"fixed on {product.strike_date.isoformat()} (forward start)" if strikes is None
+              else ", ".join(f"{t} {k:,.2f}" for t, k in zip(product.underlyings, strikes))
+              if product.is_worst_of else float(strikes[0]))
     summary = [["Strike (initial fixing)", strike, 2], ["Strike date", product.strike_date.isoformat(), None],
                *([["Worst-of", " / ".join(product.underlyings), None]] if product.is_worst_of else []),
                ["Maturity", product.end_date.isoformat(), None],
+               *([["Status", f"called on {state['called_on'].isoformat()}" if state["called_on"] else
+                   f"live, {len(state['rows'])} observations fixed"
+                   + (f", {state['unpaid_coupons']} coupons in memory" if state["unpaid_coupons"] else ""), None]]
+                 if state["rows"] else []),
                ["Notional", float(product.notional), 2],
                ["Payment currency", f"{product.payment_ccy.name} (quanto)" if product.is_quanto
                 else f"{product.payment_ccy.name} (composite: levels on S X)" if product.is_composite
@@ -676,6 +683,20 @@ def describe_trade(mkt: tq.MarketEnvironment, request: dict) -> dict:
                ["Coupons / autocall dates", f"{len(product.coupon_fixing_dates)} / {len(product.autocall_fixing_dates)}",
                 None]]
     return {"summary": summary, "schedule": schedule}
+
+
+def _past_outcome(row, called_on, fixing_date) -> dict:
+    """Schedule columns of a past observation: the fixing (worst performance, % of the strike) and the outcome."""
+    if row is None:
+        return {"performance": None, "outcome": "after the call" if called_on and fixing_date > called_on else None}
+    parts = []
+    if row["coupon"] == "paid":
+        parts.append(f"coupon {row['coupon_paid']:g}%")
+    elif row["coupon"] == "missed":
+        parts.append("coupon missed")
+    if row["autocall"]:
+        parts.append("called")
+    return {"performance": 100 * row["performance"], "outcome": ", ".join(parts) or "-"}
 
 
 @contextmanager
@@ -833,7 +854,7 @@ def _worst_of_greeks(mkt, state: dict) -> dict:
     info = [["Underlyings", " / ".join(product.underlyings), None],
             ["Expiry", f"{product.end_date.isoformat()} ({T:.2f}y)", None],
             ["Payment currency", product.payment_ccy.name, None]]
-    strikes = product.strikes or [None] * len(equities)
+    strikes = pricer.trade_state(product, mkt)["strikes"] or [None] * len(equities)
     for eq, k in zip(equities, strikes):
         info += [[f"{eq.ticker} spot", float(eq.spot), 2],
                  [f"{eq.ticker} strike", f"S({product.strike_date.isoformat()}), forward start" if k is None else k, 2],
@@ -909,8 +930,11 @@ def _equity_greeks(mkt, state: dict) -> dict:
             ["Discount factor", float(eq.discount_curve.discount(T)), 5], ["PV dividends", float(eq.pv_dividends(T)), 2],
             ["Vol ATM fwd (%)", 100 * float(eq.vol_surface.volatility(strike=float(eq.forward(T)), tenor=T)), 2]]
     if kind == "Autocallable":
+        today = mkt.evaluation_date
         info.insert(1, ["Strike", float(product.strike) if product.strike is not None
-                        else f"S({product.strike_date.isoformat()}), forward start", 2])
+                        else f"S({product.strike_date.isoformat()}), forward start" if product.strike_date > today
+                        else f"{float(mkt.get_eq_fixing(eq.ticker, product.strike_date)):,.2f} "
+                             f"(fixing of {product.strike_date.isoformat()})", 2])
     if kind != "Autocallable":
         info.insert(1, ["Strike", float(product.strike), 2])
         info.append(["Vol at strike (%)", 100 * float(eq.vol_surface.volatility(strike=float(product.strike), tenor=T)), 2])

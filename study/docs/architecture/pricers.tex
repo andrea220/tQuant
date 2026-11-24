@@ -166,5 +166,12 @@ underlying or a dict ticker $\to$ instance; one process per underlying (\code{no
 inside a \code{MultiAssetProcess} with \code{market\_env.get\_correlation} of the \code{EQ:CCY:TICKER} names; draws
 \code{[n\_paths, n\_steps, n]} (seed \code{[seed, 0]}); \code{pricer.paths} \code{[n\_paths, n\_fixings, n]},
 \code{pricer.performance} the worst performance; quanto drifts on \code{product.quanto} (ticker $\to$ (correlation,
-FX vol)). The payoff is written on the performance in both cases (one underlying: $S/K$). \nb{digital\_strip.ipynb},
+FX vol)). The payoff is written on the performance in both cases (one underlying: $S/K$). Live trades: the
+observations and the strike date up to the evaluation date are known levels (\code{\_known\_levels}:
+\code{product.fixings}, then \code{market\_env.get\_eq\_fixing}, the spot for a fixing on the evaluation date not in
+either; a past date without a fixing raises); they enter the same payoff with exact indicators, before the simulated
+dates; payments before the evaluation date are left out; with no future observation nothing is simulated
+(\code{pricer.paths} \code{None}). \code{trade\_state(product, market\_env)}: strikes, per past observation the
+levels, the worst performance, coupon paid / missed (with the memory) and autocall, \code{called\_on},
+\code{unpaid\_coupons} (shown by the Tradepad). Composite products with past fixings are rejected. \nb{digital\_strip.ipynb},
 \nb{down\_and\_in\_put.ipynb}

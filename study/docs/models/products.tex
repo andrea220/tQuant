@@ -150,6 +150,15 @@ barrier and $K_p$ are in \% of it; the payoff depends on $S_t / S_{t_0}$ only, s
 Monte Carlo on a model of \S\ref{sec:mp-models} (local vol by default), on the fixing dates (and $t_0$) merged with a
 weekly grid. Each indicator is a sigmoid of width $\varepsilon K$ so that delta and vega exist pathwise.
 
+\emph{Live trades.} After the trade date some observations are already fixed: their values are the official closes
+of the underlyings on those dates (or the fixings of the trade's confirmation). The value at $t$ is the conditional
+expectation given them: the strike is the close of the strike date, and the past observations enter the formula
+above as numbers instead of simulated values, with exact indicators (they are facts, not smoothed). They set the
+state of the paths: coupons paid or missed (the memory $m$), autocall already triggered ($\alpha = 0$: only what is
+fixed and not yet paid is left). Payments before $t$ are settled and drop out; a coupon fixed but paid after $t$ is
+certain and discounted. A fixing on $t$ itself is the spot (today's close is not known yet). The past fixings do not
+move with the market: the greeks come from the future observations only.
+
 \emph{Worst-of.} On underlyings $S^1, \dots, S^n$ with initial levels $K_1, \dots, K_n$ every level is in \% of the worst
 performance $P_t = \min_k S^k_t / K_k$: the formula above with $S_t / K$ replaced by $P_t$ (coupon and autocall
 indicators, knock-in and put $\pi (K_p/K - P_T)^+$). The underlyings follow their own models (local vol or GBM, each on

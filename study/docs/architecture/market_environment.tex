@@ -208,4 +208,11 @@ read as \code{FX:<quote>:<pair>:VOL}. \code{get\_quanto(ticker, ccy, payment\_cc
 underlying with the value $X$ of one unit of \code{ccy} in \code{payment\_ccy} (the stored pair, or minus its
 correlation for the inverse) and the vol of the pair, as tensors (AAD to the correlation matrix and the FX vols).
 
+\paragraph{Historical fixings.} The closes of the equities before the snapshot date (\code{PX\_LAST} of the price
+history, \code{mdbuild.history.equity\_fixings}; today's close is not known yet) in \code{eq\_fixings.csv}
+(\code{ticker, ccy, date, value}), read as \code{EQ:<ccy>:<ticker>:FIXINGS}, a \code{Fixings} object (date $\to$
+value; not a risk factor, absent from \code{risk\_factors()}); optional in \code{from\_frames} / \code{to\_frames}
+(written only when present). Accessors \code{get\_eq\_fixings(ticker)} (\code{None} without) and
+\code{get\_eq\_fixing(ticker, date)} (raises on a missing date: no fill from other dates).
+
 

@@ -625,3 +625,23 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       margin and within the tolerance, fallback never thinner than the edge wing), `test_vanilla_mc.py` (a steep
       straight wing: local vol at the 200% cap with the former floor, bounded by sqrt(dw/dT / 0.05) now, floored cells
       reported). Left: thin densities inside the quotes (ROADMAP section 2 item 2).
+- [x] Live (seasoned) autocallables (section 2 item 4). Market: `eq_fixings.csv` (`ticker, ccy, date, value`, the
+      closes `PX_LAST` before the snapshot date, `mdbuild.history.equity_fixings`, written by every download; written
+      into the 2026-11-13 snapshot from the price history, 2513-2567 dates a ticker) -> `EQ:<ccy>:<ticker>:FIXINGS`
+      (`Fixings`, not a risk factor), `get_eq_fixings`, `get_eq_fixing` (raises on a missing date), optional in
+      `from_frames` / `to_frames`. Product: `AutocallableOption.fixings` (`{date: value}`, a list per date for a
+      worst-of), winning over the market's. `AutocallableMCPricer` (one underlying and worst-of): the strike date and
+      the observations up to the evaluation date are known levels (a fixing on the evaluation date not in the data is
+      the spot), run through the same payoff with exact indicators before the simulated dates: strike, coupons paid
+      or missed (memory), autocall already triggered; payments before the evaluation date left out; nothing simulated
+      when every observation is fixed. `trade_state` (strikes, per past observation levels, worst performance,
+      coupon, autocall; `called_on`, `unpaid_coupons`). Also fixed: an observation on the evaluation date was dropped
+      (neither simulated nor known); now the spot. Tradepad: a strike date before the pricing date is a live trade
+      (strike from the fixings), schedule with the fixing (% of the strike) and the outcome of the past dates, status
+      in the summary. 2026-11-13: SX5E 3Y memory phoenix struck 2025-11-13 at 5742.79: May 2026 at 102.1% (coupon
+      paid), Nov 2026 at 111.1% (today, the spot): called, price 2.00 = the coupon paid today, no delta; SX5E / SPX
+      worst-of struck 2025-05-13: called on 2025-11-17, price 0. Tests (`test_live_autocallable.py`, 10): numpy
+      replica with past fixings (memory carried into the simulated dates), called in the past (the pending coupon
+      exactly, then 0), seasoned trade = new trade on the remaining dates plus the pending coupon (same draws), trade
+      fixings win and a missing one raises, fixing today = spot, no delta when every date is fixed, trade state,
+      worst-of replica and fixings on the trade, market round trip; `marketdata` test of `equity_fixings`.

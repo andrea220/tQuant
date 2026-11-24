@@ -20,7 +20,13 @@ class AutocallableMCPricer(Pricer):
     ``put = participation * max(K_put - S_T, 0) / K`` if ``S_T <= payoff barrier`` and not called (``K`` the
     strike (initial level), the reference of every barrier; ``K_put = put_strike % * K``, default ``K``).
     Forward start (``product.strike_date`` after the evaluation date): ``K = S(strike_date)`` on each path, the
-    strike date is simulated with the fixings. A strike date already past needs the fixed level in ``strike``.
+    strike date is simulated with the fixings.
+
+    Live trades: the observations (and the strike date) up to the evaluation date use the fixings already known,
+    ``product.fixings`` first, then the market's (``market_env.get_eq_fixing``, the closes); one on the evaluation date
+    that is in neither is the spot. They set the state of the trade on the same payoff code (exact indicators):
+    strike, coupons paid or missed (memory), autocall already triggered; payments before the evaluation date are
+    settled and left out. A past observation without a fixing raises.
 
     The model is a class, built from the market at every pricing call
     (``model.from_equity(market_env.get_equity(product.underlying), maturity, strike)``, greeks through the
@@ -103,39 +109,42 @@ class AutocallableMCPricer(Pricer):
         daycounter = eq.vol_surface.daycounter
         strike_date = getattr(product, "strike_date", None)
         forward_start = strike_date is not None and strike_date > eval_date
-        if product.strike is None and not forward_start:
-            raise ValueError(f"strike date {strike_date} is not after the evaluation date {eval_date}: the strike "
-                             "fixing is needed (strike)")
-        fixings = sorted(d for d in set(product.coupon_fixing_dates) | set(product.autocall_fixing_dates)
-                         | ({strike_date} if forward_start else set()) if d > eval_date)
-        if not fixings:
-            return tf.constant(0.0, dtype=DTYPE)
-        fixing_times = np.array([daycounter.year_fraction(eval_date, d) for d in fixings])
-        uniform = np.arange(self._max_time_step, fixing_times[-1], self._max_time_step)
-        time_grid = np.unique(np.concatenate([uniform, fixing_times]))
-        column = {d: i for i, d in enumerate(fixings)}     # paths are returned at the fixings only
+        known = self._known_levels(product, market_env, [eq], eval_date)
+        if known and product.is_composite:
+            raise ValueError("composite products with past fixings are not supported (the FX fixings are needed)")
+        if product.strike is not None:
+            strike = float(product.strike)
+        elif not forward_start:
+            strike = known[strike_date][0]                       # struck in the past: the fixing of the strike date
+        fixings = self._future_dates(product, eval_date, forward_start)
+        curve = eq.discount_curve
+        perf = {d: v[0] / strike for d, v in known.items() if d in self._observations(product)}
+        self.paths, self.time_grid, self.date_grid = None, np.zeros(0), []
+        n = 1
+        if fixings:
+            fixing_times = np.array([daycounter.year_fraction(eval_date, d) for d in fixings])
+            uniform = np.arange(self._max_time_step, fixing_times[-1], self._max_time_step)
+            time_grid = np.unique(np.concatenate([uniform, fixing_times]))
+            column = {d: i for i, d in enumerate(fixings)}     # paths are returned at the fixings only
 
-        level = float(product.strike) if product.strike is not None else float(eq.spot)
-        if product.is_composite and product.strike is not None:     # the level of S X: back into the underlying's
-            level /= float(market_env.get_fx_spot(eq.currency, product.payment_ccy))
-        model = bind(self._model_for(eq.ticker), eq, product.end_date, level)
-        curve = apply_quanto(market_env, product, eq, model, float(fixing_times[-1]))   # quanto: drift and curve
-        k = model.noise_size()
-        dw = tf.random.stateless_normal([self._n_paths, len(time_grid)] + ([k] if k > 1 else []),
-                                        seed=[self._seed, 0], dtype=DTYPE)
-        paths = model.evolve(tf.constant(time_grid, DTYPE), dw, observation_times=fixing_times)
-        if product.is_composite:                        # the underlying in the payment currency: S X
-            paths = paths * composite_fx_paths(market_env, product, eq, time_grid, dw, fixing_times, self._seed)
-        self.paths, self.time_grid, self.date_grid = paths, fixing_times, fixings
-
-        strike = paths[:, column[strike_date]] if forward_start else float(product.strike)
-        coupon_pv, put_pv = self._payoff(product, paths / (strike[:, None] if forward_start else strike), column,
-                                         fixings, curve)
-        total = coupon_pv - put_pv
-        product.coupon_pv = tf.reduce_mean(coupon_pv)
-        product.put_pv = tf.reduce_mean(put_pv)
-        product.standard_error = product.notional * tf.math.reduce_std(tf.stop_gradient(total)) / self._n_paths ** 0.5
-        return product.notional * tf.reduce_mean(total)
+            level = float(strike) if not forward_start else float(eq.spot)
+            if product.is_composite and product.strike is not None:     # the level of S X: back into the underlying's
+                level /= float(market_env.get_fx_spot(eq.currency, product.payment_ccy))
+            model = bind(self._model_for(eq.ticker), eq, product.end_date, level)
+            curve = apply_quanto(market_env, product, eq, model, float(fixing_times[-1]))   # quanto: drift and curve
+            k = model.noise_size()
+            dw = tf.random.stateless_normal([self._n_paths, len(time_grid)] + ([k] if k > 1 else []),
+                                            seed=[self._seed, 0], dtype=DTYPE)
+            paths = model.evolve(tf.constant(time_grid, DTYPE), dw, observation_times=fixing_times)
+            if product.is_composite:                        # the underlying in the payment currency: S X
+                paths = paths * composite_fx_paths(market_env, product, eq, time_grid, dw, fixing_times, self._seed)
+            self.paths, self.time_grid, self.date_grid = paths, fixing_times, fixings
+            k_path = paths[:, column[strike_date]] if forward_start else strike
+            perf.update({d: paths[:, column[d]] / k_path for d in fixings if d in self._observations(product)})
+            n = self._n_paths
+        elif product.is_quanto:
+            curve = market_env.get_ir_curve(product.payment_ccy)
+        return self._value(product, perf, set(known), curve, eval_date, n)
 
     def _model_for(self, ticker: str):
         """The model of *ticker*: the pricer's one, or its entry when the pricer has one per ticker."""
@@ -158,77 +167,185 @@ class AutocallableMCPricer(Pricer):
         daycounter = equities[0].vol_surface.daycounter
         strike_date = getattr(product, "strike_date", None)
         forward_start = strike_date is not None and strike_date > eval_date
-        if product.strike is None and not forward_start:
-            raise ValueError(f"strike date {strike_date} is not after the evaluation date {eval_date}: the strike "
-                             "fixings are needed (strike)")
-        fixings = sorted(d for d in set(product.coupon_fixing_dates) | set(product.autocall_fixing_dates)
-                         | ({strike_date} if forward_start else set()) if d > eval_date)
-        if not fixings:
-            return tf.constant(0.0, dtype=DTYPE)
-        fixing_times = np.array([daycounter.year_fraction(eval_date, d) for d in fixings])
-        uniform = np.arange(self._max_time_step, fixing_times[-1], self._max_time_step)
-        time_grid = np.unique(np.concatenate([uniform, fixing_times]))
-        column = {d: i for i, d in enumerate(fixings)}
+        known = self._known_levels(product, market_env, equities, eval_date)
+        if product.strike is not None:
+            strikes = [float(k) for k in product.strikes]
+        elif not forward_start:
+            strikes = known[strike_date]                         # struck in the past: the fixings of the strike date
+        observations = self._observations(product)
+        perf = {d: tf.reduce_min(tf.stack([v / k for v, k in zip(values, strikes)]))
+                for d, values in known.items() if d in observations}
+        fixings = self._future_dates(product, eval_date, forward_start)
+        product.quanto = {}
+        self.paths, self.time_grid, self.date_grid, self.performance = None, np.zeros(0), [], None
+        n = 1
+        if fixings:
+            fixing_times = np.array([daycounter.year_fraction(eval_date, d) for d in fixings])
+            uniform = np.arange(self._max_time_step, fixing_times[-1], self._max_time_step)
+            time_grid = np.unique(np.concatenate([uniform, fixing_times]))
+            column = {d: i for i, d in enumerate(fixings)}
 
-        levels = product.strikes or [float(eq.spot) for eq in equities]
-        processes, quanto = [], {}
-        for eq, level in zip(equities, levels):
-            process = bind(self._model_for(eq.ticker), eq, product.end_date, float(level))
-            if eq.currency != payment_ccy:                # quanto: paid in the product's currency
-                quanto[eq.ticker] = quanto_drift(market_env, eq, payment_ccy, process, float(fixing_times[-1]))
-            processes.append(process)
-        names = [f"EQ:{eq.currency.name}:{eq.ticker}" for eq in equities]
-        model = MultiAssetProcess(processes, market_env.get_correlation(names))
-        dw = tf.random.stateless_normal([self._n_paths, len(time_grid), len(tickers)], seed=[self._seed, 0],
-                                        dtype=DTYPE)
-        paths = model.evolve(tf.constant(time_grid, DTYPE), dw, observation_times=fixing_times)    # [P, F, n]
-        self.paths, self.time_grid, self.date_grid = paths, fixing_times, fixings
-        strikes = paths[:, column[strike_date], :] if forward_start else tf.constant(levels, DTYPE)[None, :]
-        performance = tf.reduce_min(paths / strikes[:, None, :], axis=2)                          # worst of
-        self.performance = performance
-        product.quanto = quanto
+            levels = [float(eq.spot) for eq in equities] if forward_start else [float(k) for k in strikes]
+            processes = []
+            for eq, level in zip(equities, levels):
+                process = bind(self._model_for(eq.ticker), eq, product.end_date, level)
+                if eq.currency != payment_ccy:                # quanto: paid in the product's currency
+                    product.quanto[eq.ticker] = quanto_drift(market_env, eq, payment_ccy, process,
+                                                             float(fixing_times[-1]))
+                processes.append(process)
+            names = [f"EQ:{eq.currency.name}:{eq.ticker}" for eq in equities]
+            model = MultiAssetProcess(processes, market_env.get_correlation(names))
+            dw = tf.random.stateless_normal([self._n_paths, len(time_grid), len(tickers)], seed=[self._seed, 0],
+                                            dtype=DTYPE)
+            paths = model.evolve(tf.constant(time_grid, DTYPE), dw, observation_times=fixing_times)    # [P, F, n]
+            self.paths, self.time_grid, self.date_grid = paths, fixing_times, fixings
+            k_paths = (paths[:, column[strike_date], :] if forward_start
+                       else tf.stack([tf.cast(k, DTYPE) for k in strikes])[None, :])
+            performance = tf.reduce_min(paths / k_paths[:, None, :], axis=2)                          # worst of
+            self.performance = performance
+            perf.update({d: performance[:, column[d]] for d in fixings if d in observations})
+            n = self._n_paths
         curve = market_env.get_ir_curve(payment_ccy)
-        coupon_pv, put_pv = self._payoff(product, performance, column, fixings, curve)
+        return self._value(product, perf, set(known), curve, eval_date, n)
+
+    # ------------------------------------------------------------------
+    # Live trades: the fixings already observed
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _observations(product) -> set:
+        return set(product.coupon_fixing_dates) | set(product.autocall_fixing_dates)
+
+    def _future_dates(self, product, eval_date, forward_start: bool) -> list:
+        """Dates to simulate: the observations after the evaluation date (and a future strike date)."""
+        strike_date = getattr(product, "strike_date", None)
+        return sorted(d for d in self._observations(product) | ({strike_date} if forward_start else set())
+                      if d > eval_date)
+
+    def _known_levels(self, product, market_env, equities, eval_date) -> dict:
+        """Levels already fixed: ``{date: [value per underlying]}`` on the observation and strike dates up to the
+        evaluation date. From ``product.fixings`` first, then the market fixings (``get_eq_fixing``); a fixing on the
+        evaluation date not in either is the spot (today's close is not known yet). A past date without a fixing
+        raises."""
+        dates = self._observations(product)
+        strike_date = getattr(product, "strike_date", None)
+        if strike_date is not None:
+            dates.add(strike_date)
+        given = getattr(product, "fixings", None) or {}
+        known = {}
+        for d in sorted(x for x in dates if x <= eval_date):
+            if d in given:
+                values = list(given[d]) if isinstance(given[d], (list, tuple)) else [given[d]]
+                if len(values) != len(equities):
+                    raise ValueError(f"fixing of {d}: {len(values)} values for {len(equities)} underlyings")
+                known[d] = [tf.constant(float(v), DTYPE) for v in values]
+                continue
+            row = []
+            for eq in equities:
+                stored = market_env.get_eq_fixings(eq.ticker, eq.currency)
+                value = None if stored is None else stored.get(d)
+                if value is not None:
+                    row.append(tf.constant(float(value), DTYPE))
+                elif d == eval_date:
+                    row.append(tf.cast(eq.spot, DTYPE))          # today's close: not known yet, the spot
+                else:
+                    row.append(tf.constant(market_env.get_eq_fixing(eq.ticker, d, eq.currency), DTYPE))  # raises
+            known[d] = row
+        return known
+
+    def trade_state(self, product: AutocallableOption, market_env: MarketEnvironment) -> dict:
+        """State of a live trade from the fixings already observed (the same fixings as the price).
+
+        Returns:
+            dict: ``strikes`` (initial levels, ``None`` before a future strike date), ``rows`` (one per past
+            observation: ``date``, ``levels`` per underlying, ``performance`` (the worst), ``coupon`` "paid" /
+            "missed" / ``None``, ``coupon_paid`` (% of the notional, with the memory), ``autocall`` (bool)),
+            ``called_on`` (date or ``None``), ``unpaid_coupons`` (coupons in memory after the last past date).
+        """
+        eval_date = Settings.evaluation_date
+        equities = [market_env.get_equity(t) for t in product.underlyings]
+        known = self._known_levels(product, market_env, equities, eval_date)
+        strike_date = getattr(product, "strike_date", None)
+        if product.strike is not None:
+            strikes = [float(k) for k in product.strikes]
+        elif strike_date is not None and strike_date <= eval_date:
+            strikes = [float(v) for v in known[strike_date]]
+        else:
+            strikes = None
+        coupon_index = {d: i for i, d in enumerate(product.coupon_fixing_dates)}
+        autocall_index = {d: i for i, d in enumerate(product.autocall_fixing_dates)}
+        rows, unpaid, called_on = [], 0, None
+        for d in sorted(x for x in known if x in self._observations(product)):
+            if called_on is not None:
+                break
+            levels = [float(v) for v in known[d]]
+            perf = min(v / k for v, k in zip(levels, strikes))
+            row = {"date": d, "levels": levels, "performance": perf, "coupon": None, "coupon_paid": 0.0,
+                   "autocall": False}
+            if d in coupon_index:
+                i = coupon_index[d]
+                if perf >= product.coupon_barriers[i] / 100.0:
+                    row["coupon"] = "paid"
+                    row["coupon_paid"] = product.coupon_rates[i] * ((1 + unpaid) if product.memory else 1)
+                    unpaid = 0
+                else:
+                    row["coupon"] = "missed"
+                    unpaid += 1
+            if d in autocall_index and perf >= product.autocall_barrier[autocall_index[d]] / 100.0:
+                row["autocall"] = True
+                called_on = d
+            rows.append(row)
+        return {"strikes": strikes, "rows": rows, "called_on": called_on,
+                "unpaid_coupons": unpaid if product.memory else 0}
+
+    def _value(self, product, perf: dict, known: set, curve, eval_date, n: int) -> tf.Tensor:
+        """Price from the performance on every observation date (past ones as numbers, future ones on the paths)."""
+        coupon_pv, put_pv = self._payoff(product, perf, known, curve, eval_date, n)
         total = coupon_pv - put_pv
         product.coupon_pv = tf.reduce_mean(coupon_pv)
         product.put_pv = tf.reduce_mean(put_pv)
-        product.standard_error = product.notional * tf.math.reduce_std(tf.stop_gradient(total)) / self._n_paths ** 0.5
+        product.standard_error = (product.notional * tf.math.reduce_std(tf.stop_gradient(total)) / n ** 0.5
+                                  if n > 1 else tf.constant(0.0, DTYPE))
         return product.notional * tf.reduce_mean(total)
 
     # ------------------------------------------------------------------
     # Payoff
     # ------------------------------------------------------------------
 
-    def _above(self, x: tf.Tensor, level: float) -> tf.Tensor:
-        """``1{x >= level}`` on the performance, smoothed with a sigmoid of width ``eps`` when ``eps > 0``."""
-        if self._eps == 0.0:
+    def _above(self, x: tf.Tensor, level: float, hard: bool = False) -> tf.Tensor:
+        """``1{x >= level}`` on the performance, smoothed with a sigmoid of width ``eps`` when ``eps > 0`` (a past
+        fixing, *hard*: the exact indicator)."""
+        if hard or self._eps == 0.0:
             return tf.cast(x >= level, DTYPE)
         return tf.sigmoid((x - level) / self._eps)
 
-    def _payoff(self, product, paths, column, fixings, curve):
-        """Path-wise discounted coupons and put, per unit notional (``[n_paths]`` each), on the performance *paths*
-        (``S / K``, or the worst of the underlyings), the levels in % of the strike."""
+    def _payoff(self, product, perf: dict, known: set, curve, eval_date, n: int):
+        """Path-wise discounted coupons and put, per unit notional (``[n]`` each), on the performance *perf*
+        (``{date: S / K}``, or the worst of the underlyings; the levels in % of the strike). Observations in *known*
+        are past fixings (exact indicators, no smoothing); payments before the evaluation date are already settled
+        (they only move the state: memory, autocall)."""
         coupon_index = {d: i for i, d in enumerate(product.coupon_fixing_dates)}
         autocall_index = {d: i for i, d in enumerate(product.autocall_fixing_dates)}
         last_coupon = product.coupon_fixing_dates[-1]
 
-        n_paths = tf.shape(paths)[0]
-        alive = tf.ones([n_paths], DTYPE)
-        unpaid = tf.zeros([n_paths], DTYPE)
-        coupon_pv = tf.zeros([n_paths], DTYPE)
-        put_pv = tf.zeros([n_paths], DTYPE)
+        alive = tf.ones([n], DTYPE)
+        unpaid = tf.zeros([n], DTYPE)
+        coupon_pv = tf.zeros([n], DTYPE)
+        put_pv = tf.zeros([n], DTYPE)
 
-        for d in fixings:
-            s = paths[:, column[d]]
+        for d in sorted(perf):
+            s = perf[d] * tf.ones([n], DTYPE)
+            hard = d in known
             if d in coupon_index:
                 i = coupon_index[d]
-                above = self._above(s, product.coupon_barriers[i] / 100.0)
+                above = self._above(s, product.coupon_barriers[i] / 100.0, hard)
                 rate = product.coupon_rates[i] / 100.0
                 amount = rate * (1.0 + unpaid) if product.memory else rate * tf.ones_like(s)
-                df_pay = tf.cast(curve.discount(product.coupon_payment_dates[i]), DTYPE)
+                pay = product.coupon_payment_dates[i]
+                df_pay = tf.cast(curve.discount(pay), DTYPE) if pay >= eval_date else tf.constant(0.0, DTYPE)
                 coupon_pv = coupon_pv + alive * above * amount * df_pay
                 if d == last_coupon and product.redemption_payoff is not None:
-                    below = 1.0 - self._above(s, product.payoff_barrier / 100.0)
+                    below = 1.0 - self._above(s, product.payoff_barrier / 100.0, hard)
                     k_put = getattr(product, "put_strike", 100.0) / 100.0
                     put = product.payoff_participation * tf.maximum(k_put - s, 0.0)
                     put_pv = put_pv + alive * below * put * df_pay
@@ -236,5 +353,5 @@ class AutocallableMCPricer(Pricer):
                 unpaid = alive * (1.0 - above) * (unpaid + 1.0) + (1.0 - alive) * unpaid
             if d in autocall_index:
                 j = autocall_index[d]
-                alive = alive * (1.0 - self._above(s, product.autocall_barrier[j] / 100.0))
+                alive = alive * (1.0 - self._above(s, product.autocall_barrier[j] / 100.0, hard))
         return coupon_pv, put_pv

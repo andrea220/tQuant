@@ -72,15 +72,9 @@ another currency, new and live trades, with stable AAD greeks.
    discretely monitored barriers are wrong there (digital strip: first annual coupon 1.11% vs 2.62% Black-Scholes).
    GBM kept as an option for debugging, not the default (Tradepad "GBM (debug)"); later a GBM on the market
    forward (`S = F(t) X`) with a term-structure vol.
-2. [ ] **Thin densities inside the quotes.** Wing margin and local vol floor done (DEVELOPMENT_LOG). Left: a
-   mixture with two separate bodies gives a thin density inside the quotes, which no wing rule touches (2026-11-13:
-   ISP 3.1Y quoted only at 63-90% of the forward, `g` 0.01; ENI 0.84Y `g` 0.008 at 50%; a synthetic 2% crash body at
-   30% of the forward keeps a spiky local vol delta up to a floor of about 0.2). To do: a density floor in the
-   mixture fit (penalty on `g` below a margin over the quoted range), then measure the quotes within bid / ask.
-   Short expiries: small calendar arbitrage (below 1e-4 in total variance) except ISP 1-2 weeks (-0.07).
-3. [ ] **Basket options** on the multi-asset Monte Carlo (worst-of done: DEVELOPMENT_LOG). Stochastic vol per asset:
+2. [ ] **Basket options** on the multi-asset Monte Carlo (worst-of done: DEVELOPMENT_LOG). Stochastic vol per asset:
    section 3.
-4. [ ] **Quanto: what is left.** Done (DEVELOPMENT_LOG): `payment_ccy` on the products, quanto drift and payment
+3. [ ] **Quanto: what is left.** Done (DEVELOPMENT_LOG): `payment_ccy` on the products, quanto drift and payment
    curve for Black-Scholes (vanilla, digital, barrier), GBM and local vol (vanilla and autocallable Monte Carlo),
    historical FX vols in the snapshot, AAD greeks to the FX vols and the correlation, composite, price currency,
    Tradepad. Left:
@@ -88,11 +82,11 @@ another currency, new and live trades, with stable AAD greeks.
      licence), instead of the historical ones; the correlation stays historical.
    - Quanto drift and composite in Heston, displaced diffusion and SLV (they raise now); composite barrier options.
    - Cross pairs (neither the pair nor its inverse stored: e.g. a GBP-paid product on a CHF underlying).
-5. [ ] **Live (seasoned) trades.** Historical fixings (underlying, date, value: the closes of the price history) and
-   the trade state (initial fixing, past coupon observations, memory of the unpaid coupons, autocalls already
-   triggered) used by the pricers; today every trade is priced as if it started on the pricing date. Needed to reprice
-   a real book (and later to compare with Murex: section 7).
-6. [ ] **Validation of local vol and the autocallable.** The `local_vol` and `autocallable` steps of the guided review
+4. [ ] **Live trades: what is left.** Autocallables done (DEVELOPMENT_LOG: market fixings, trade state, Tradepad).
+   Left: discretely monitored barrier options with past observations (knocked in / out already); composite products
+   with past fixings (the FX fixings); the trade's confirmation as the source of the fixings when the contract fixes
+   on something else than the close (average, auction price): today `fixings` on the trade.
+5. [ ] **Validation of local vol and the autocallable.** The `local_vol` and `autocallable` steps of the guided review
    (the full plan: section 3). Local vol Monte Carlo noise is large in the wings and at long maturities (OTM call
    at 170%, 3Y: +-1 vol point with 100k paths): no variance reduction yet. For the beta: antithetic variates and a
    control variate on the forward if the greeks of a 5Y autocallable are not stable at 20k-50k paths.
@@ -240,6 +234,16 @@ understood) -> local correlation.
         mixed portfolios (the swap exposure generator extended), the tqstudio portfolio pipeline.
 
 ## 6. Future development (not prioritised)
+
+Equity market data:
+
+- [ ] **Equity vols: thin densities inside the quotes** (not a priority: the local vol floor covers them). Wing margin
+  and local vol floor done (DEVELOPMENT_LOG). Left: a mixture with two separate bodies gives a thin density inside the
+  quotes, which no wing rule touches (2026-11-13:
+  ISP 3.1Y quoted only at 63-90% of the forward, `g` 0.01; ENI 0.84Y `g` 0.008 at 50%; a synthetic 2% crash body at
+  30% of the forward keeps a spiky local vol delta up to a floor of about 0.2). To do: a density floor in the
+  mixture fit (penalty on `g` below a margin over the quoted range), then measure the quotes within bid / ask.
+  Short expiries: small calendar arbitrage (below 1e-4 in total variance) except ISP 1-2 weeks (-0.07).
 
 App:
 

@@ -14,6 +14,7 @@ from .utils import Currency, market_map as default_market_map
 from .ircurve import RateCurve
 from .volatilitysurface import VolatilitySurface
 from .dividendcurve import DividendCurve
+from .fixings import Fixings
 from .equity import Equity
 from .correlation import CorrelationMatrix
 from .swaptionvolcube import SwaptionVolCube
@@ -48,12 +49,14 @@ class MarketDataType(Enum):
         DIVYIELD (str): Continuous dividend yield (scalar) for an equity ticker.
         DIV (str): Discrete dividend schedule (DividendCurve) for an equity
             ticker.
+        FIXINGS (str): Historical fixings (:class:`Fixings`, the closes) of an equity ticker: not a risk factor.
     """
     SPOT = "SPOT"
     VOL = "VOL"
     REPO = "REPO"
     DIVYIELD = "DIVYIELD"
     DIV = "DIV"
+    FIXINGS = "FIXINGS"
     SWVOL = "SWVOL"
 
 
@@ -75,7 +78,7 @@ class MarketMapValidator:
     """
 
     KEY_PATTERN = re.compile(r"^(IR|EQ|FX|CORR):([A-Z]{3}):([A-Z0-9_]+)$")
-    VALUE_PATTERN = re.compile(r"^(IR|EQ|FX|CORR):([A-Z]{3}):([A-Z0-9_]+):(SPOT|VOL|SWVOL|REPO|DIVYIELD|DIV)$")
+    VALUE_PATTERN = re.compile(r"^(IR|EQ|FX|CORR):([A-Z]{3}):([A-Z0-9_]+):(SPOT|VOL|SWVOL|REPO|DIVYIELD|DIV|FIXINGS)$")
 
     @classmethod
     def validate_key(cls, key: str) -> tuple[str, str, str]:
@@ -260,6 +263,9 @@ class MarketMapValidator:
                             f"Market key '{key}' expects a DividendCurve, "
                             f"got {type(value).__name__}"
                         )
+                elif data_type == MarketDataType.FIXINGS.value:
+                    if not isinstance(value, Fixings):
+                        raise TypeError(f"Market key '{key}' expects Fixings, got {type(value).__name__}")
             elif risk_factor == RiskFactor.FX.value:
                 if data_type == MarketDataType.VOL.value:
                     if not isinstance(value, VolatilitySurface):
@@ -312,7 +318,7 @@ class MarketMapValidator:
 
         # EQ, FX and CORR keys are open-ended (any ticker/pair is valid); they have
         # already been format-validated by validate_market so no whitelist check is needed.
-        eq_pattern = re.compile(r"^(EQ|FX|CORR):[A-Z]{3}:[A-Z0-9_]+:(SPOT|VOL|REPO|DIVYIELD|DIV)$")
+        eq_pattern = re.compile(r"^(EQ|FX|CORR):[A-Z]{3}:[A-Z0-9_]+:(SPOT|VOL|REPO|DIVYIELD|DIV|FIXINGS)$")
 
         orphans = [
             key for key in market
@@ -531,7 +537,7 @@ class MarketEnvironment:
         if not folder.is_dir():
             raise FileNotFoundError(f"Snapshot folder '{folder}' does not exist")
         # ir_quotes.csv is input only (instrument quotes bootstrapped into curves; to_frames writes the curves)
-        extra = ("ir_quotes.csv", "ir_curves_jacobian.csv", "ir_calibration.csv", "eq_repo.csv")
+        extra = ("ir_quotes.csv", "ir_curves_jacobian.csv", "ir_calibration.csv", "eq_repo.csv", "eq_fixings.csv")
         frames = {name: pd.read_csv(folder / name) for name in cls.MARKET_DATA_FILES + extra
                   if (folder / name).is_file()}
         if not frames:
@@ -565,6 +571,8 @@ class MarketEnvironment:
           absent) -> ``EQ:<ccy>:<ticker>:SPOT|REPO|DIVYIELD``.
         - ``eq_repo.csv``: ``ticker, ccy, pillar, rate`` (zero repo rates, continuously compounded, ACT/365, linear)
           -> ``EQ:<ccy>:<ticker>:REPO`` as a :class:`RateCurve` (replaces a scalar ``repo`` of ``eq_spot.csv``).
+        - ``eq_fixings.csv``: ``ticker, ccy, date, value`` (historical fixings, the closes) ->
+          ``EQ:<ccy>:<ticker>:FIXINGS`` (:class:`Fixings`, not a risk factor; read by the pricers of live trades).
         - ``eq_vol.csv``: ``ticker, ccy, expiry, strike, vol``, a full expiry x
           strike grid per ticker -> ``EQ:<ccy>:<ticker>:VOL`` (Actual365 tenors).
         - ``eq_dividends.csv``: ``ticker, ccy, ex_date, pay_date, amount`` ->
@@ -707,6 +715,12 @@ class MarketEnvironment:
                     )
                 )
 
+        fixings = read("eq_fixings.csv")
+        if fixings is not None:
+            for (ticker, ccy), grp in fixings.groupby(["ticker", "ccy"], sort=False):
+                market[f"{RiskFactor.EQ.value}:{ccy}:{ticker}:{MarketDataType.FIXINGS.value}"] = Fixings(
+                    to_dates(grp["date"]), grp["value"].to_numpy(float))
+
         correlations = read("correlations.csv")
         if correlations is not None:
             market[cls.CORRELATION_KEY] = CorrelationMatrix.from_pairs(
@@ -752,7 +766,7 @@ class MarketEnvironment:
             TypeError: If a market object cannot be written (e.g. a flat vol without a grid).
         """
         eval_date = getattr(self, "evaluation_date", None) or Settings.evaluation_date
-        tables = {name: [] for name in self.MARKET_DATA_FILES + ("eq_repo.csv",)}   # repo curves only if any
+        tables = {name: [] for name in self.MARKET_DATA_FILES + ("eq_repo.csv", "eq_fixings.csv")}   # only if any
         spots: dict = {}
 
         def surface_rows(surf, keys: dict) -> list:
@@ -796,6 +810,9 @@ class MarketEnvironment:
                 for ex, pay, amount in zip(value.ex_dates, pays, value.amounts):
                     tables["eq_dividends.csv"].append(
                         {"ticker": ticker, "ccy": ccy, "ex_date": ex, "pay_date": pay, "amount": amount})
+            elif rf == RiskFactor.EQ.value and data_type == MarketDataType.FIXINGS.value:
+                tables["eq_fixings.csv"] += [{"ticker": ticker, "ccy": ccy, "date": d, "value": v}
+                                             for d, v in zip(value.dates, value.values)]
             elif rf == RiskFactor.EQ.value and data_type == MarketDataType.REPO.value and isinstance(value, RateCurve):
                 spots.setdefault((ticker, ccy), {"ticker": ticker, "ccy": ccy, "spot": None, "repo": None,
                                                  "div_yield": None})
@@ -1259,6 +1276,24 @@ class MarketEnvironment:
     # ------------------------------------------------------------------
     # Discrete dividend schedules
     # ------------------------------------------------------------------
+
+    def get_eq_fixings(self, ticker: str, ccy: Optional[Currency] = None) -> Optional[Fixings]:
+        """The historical fixings of *ticker* (key ``EQ:<CCY>:<TICKER>:FIXINGS``), ``None`` when there are none."""
+        ccy = ccy or self.get_currency(ticker)
+        return self._market.get(f"{RiskFactor.EQ.value}:{ccy.name}:{ticker}:{MarketDataType.FIXINGS.value}")
+
+    def get_eq_fixing(self, ticker: str, fixing_date: date, ccy: Optional[Currency] = None) -> float:
+        """The fixing (close) of *ticker* on *fixing_date*.
+
+        Raises:
+            ValueError: If the market has no fixing of *ticker* on that date (no fill from other dates).
+        """
+        fixings = self.get_eq_fixings(ticker, ccy)
+        value = None if fixings is None else fixings.get(fixing_date)
+        if value is None:
+            raise ValueError(f"no fixing of {ticker} on {fixing_date} in the market (eq_fixings.csv): give it on the "
+                             "trade (fixings)")
+        return value
 
     def get_eq_dividends(
         self, ticker: str, ccy: Optional[Currency] = None

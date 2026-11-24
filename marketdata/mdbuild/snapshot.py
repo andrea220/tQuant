@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from .history import correlations, historical_fx_vols, rolling_correlations, update_history
+from .history import (correlations, equity_fixings, historical_fx_vols, rolling_correlations,
+                      update_history)
 from .options import equity_option_quotes
 from .universe import Curve, Instrument
 
@@ -165,6 +166,7 @@ def build_tables(source, universe: list[Instrument], fields: dict, today: date, 
             float(correlation.get("percentile", 90.0)), float(correlation.get("fx_percentile", 50.0)))
     else:
         tables["correlations.csv"] = correlations(history, names, int(correlation))
+    tables["eq_fixings.csv"] = equity_fixings(history, {i.bbg: (i.code, currency[i.bbg]) for i in equities}, today)
     fx_vol = fx_vol or {}                                   # historical FX vols: the quanto drift
     tables["fx_vol.csv"] = historical_fx_vols(
         history, {i.bbg: (i.fx_base, i.fx_quote, float(ref.loc[i.bbg, fields["price"]])) for i in universe

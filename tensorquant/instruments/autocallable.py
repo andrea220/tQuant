@@ -57,6 +57,7 @@ class AutocallableOption(Product):
         autocall_floor: Optional[float] = None,
         payment_ccy: Optional[Currency] = None,
         fx_mode: str = "quanto",
+        fixings: Optional[dict] = None,
     ) -> None:
         """
         Initialize an AutocallableOption.
@@ -71,6 +72,9 @@ class AutocallableOption(Product):
         Step-down: ``autocall_step`` (% of the strike, >= 0) is subtracted from the autocall barrier at each autocall
         observation after the first, ``autocall_floor`` (% of the strike, optional) is its lowest level; the
         resulting barriers are ``autocall_barrier`` (one per observation).
+
+        Live trades: ``fixings`` (``{date: value}``, a list of values in the order of the underlyings for a worst-of)
+        gives fixings already observed; the pricer takes the others from the market (the closes).
 
         Worst-of: ``underlying`` a list of tickers and ``strike`` a list of initial levels (``None`` for a forward
         start); ``ccy`` is then the currency of the product and each underlying in another currency is quanto.
@@ -107,6 +111,7 @@ class AutocallableOption(Product):
         self.strike = (None if strike is None else [float(k) for k in strike] if isinstance(strike, (list, tuple))
                        else float(strike))
         self.strike_date = strike_date
+        self.fixings = dict(fixings) if fixings else {}
         self.underlying = list(underlying) if isinstance(underlying, (list, tuple)) else underlying
 
         # schedules

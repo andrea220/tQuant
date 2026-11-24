@@ -12,7 +12,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mdbuild.history import (correlations, historical_fx_vols, nearest_correlation, read_history,  # noqa: E402
+from mdbuild.history import (correlations, equity_fixings, historical_fx_vols, nearest_correlation, read_history,  # noqa: E402
                             rolling_correlations,
                              update_history)
 from mdbuild.snapshot import build_tables, curve_quotes, run             # noqa: E402
@@ -166,6 +166,20 @@ class TestHistory(unittest.TestCase):
         self.assertEqual(out["expiry"].min(), (pd.Timestamp(TODAY) + pd.DateOffset(months=1)).date().isoformat())
         self.assertAlmostEqual(out.attrs["vols"]["EURUSD"], expected, places=12)
 
+    def test_equity_fixings(self):
+        """The closes of the equities before today (today's close is not known at the snapshot), by code and
+        currency; FX and other tickers left out."""
+        src = FakeSource()
+        hist = src.history(TICKERS[:3], "PX_LAST", date(2016, 1, 1), TODAY)
+        equity = TICKERS[0]
+        out = equity_fixings(hist, {equity: ("CODE", "EUR")}, TODAY)
+        own = hist[(hist.ticker == equity) & (pd.to_datetime(hist.date) < pd.Timestamp(TODAY))].sort_values("date")
+        self.assertEqual(list(out.columns), ["ticker", "ccy", "date", "value"])
+        self.assertEqual(set(out["ticker"]), {"CODE"})
+        self.assertEqual(len(out), len(own))
+        np.testing.assert_allclose(out["value"], own["value"].to_numpy(float), rtol=0)
+        self.assertLess(out["date"].max(), TODAY.isoformat())
+
     def test_regime_and_short_history(self):
         """Two regimes (correlation 0.2 then 0.8): the 90th percentile reads the high one; a ticker with a short
         history does not shorten the windows of the other pair."""
@@ -273,7 +287,8 @@ class TestSnapshot(unittest.TestCase):
                          [Curve("EUR", "ESTR", "YCSW0514 Index")])
             self.assertEqual(folder, Path(tmp) / "live" / "20261112" / "1730")
             self.assertEqual(sorted(p.name for p in folder.iterdir()),
-                             ["correlations.csv", "eq_dividends.csv", "eq_spot.csv", "fx_spot.csv", "fx_vol.csv", "ir_fixings.csv",
+                             ["correlations.csv", "eq_dividends.csv", "eq_fixings.csv", "eq_spot.csv", "fx_spot.csv", "fx_vol.csv",
+                              "ir_fixings.csv",
                               "ir_quotes.csv", "snapshot_info.json"])
             self.assertTrue((Path(tmp) / "history" / "prices.parquet").is_file())
 

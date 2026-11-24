@@ -157,6 +157,9 @@ redemption):
         S_T/S_0, 0)$, knocked in when $S_T/S_0$ is below \code{payoff\_barrier} (observed at expiry);
   \item forward start: with a \code{strike\_date} after the start date the initial level is the spot fixed on that
         date (\code{strike} \code{None}), and every fixing must follow it;
+  \item live trades: a strike date and observations before the evaluation date are fixed from the market fixings
+        (\code{get\_eq\_fixing}), or from \code{fixings} on the trade (\code{\{date: value\}}, a list per date in the
+        order of the underlyings for a worst-of), which win over the market's;
   \item worst-of: \code{underlying} a list of tickers and \code{strike} a list of initial levels (\code{None} for a
         forward start); the levels on the worst performance $\min_k S^k / K_k$; \code{ccy} the product's currency
         (an underlying in another currency is quanto); \code{is\_worst\_of}, \code{underlyings}, \code{strikes};

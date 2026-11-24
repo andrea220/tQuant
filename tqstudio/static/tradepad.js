@@ -75,10 +75,13 @@ async function createTrade() {
     $("trade-summary").innerHTML = data.summary.map(([l, v, d]) =>
       `<div><span class="muted">${l}</span><b>${fmtValue(v, d)}</b></div>`).join("");
     const rows = data.schedule || [];
+    const live = rows.some((r) => r.performance != null || r.outcome);   // a live trade: past fixings and outcomes
     $("trade-schedule").innerHTML = rows.length ? `<table><thead><tr><th>Fixing Date</th><th>Autocall Date</th>
-      <th>Payment Date</th><th>Coupon Barrier</th><th>Coupon Amount</th><th>Autocall Barrier</th></tr></thead><tbody>${
+      <th>Payment Date</th><th>Coupon Barrier</th><th>Coupon Amount</th><th>Autocall Barrier</th>${
+      live ? "<th>Fixing (% strike)</th><th>Outcome</th>" : ""}</tr></thead><tbody>${
       rows.map((r) => `<tr><td>${r.fixing_date}</td><td>${r.autocall_date || ""}</td><td>${r.payment_date}</td>
-        <td>${pct(r.coupon_barrier)}</td><td>${pct(r.coupon_amount)}</td><td>${pct(r.autocall_barrier)}</td></tr>`).join("")
+        <td>${pct(r.coupon_barrier)}</td><td>${pct(r.coupon_amount)}</td><td>${pct(r.autocall_barrier)}</td>${
+        live ? `<td>${r.performance == null ? "" : pct(r.performance)}</td><td>${r.outcome || ""}</td>` : ""}</tr>`).join("")
     }</tbody></table>` : "";
     $("trade-panel").classList.remove("hidden");
     state.tradeReady = true;
