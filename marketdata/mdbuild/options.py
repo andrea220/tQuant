@@ -73,7 +73,7 @@ def is_weekly_root(candidate: str, root: str) -> bool:
         or candidate == root + "W"
 
 
-CHAIN_CACHE_VERSION = 3          # 3: CHAIN_TICKERS of the selected expiries (2: OPT_CHAIN, main and weekly roots)
+CHAIN_CACHE_VERSION = 4          # 4: strikes 25%-250% (3: CHAIN_TICKERS of the selected expiries, 40%-200%)
 
 
 def chain_overrides(underlying: str, expiry: str, option_type: str, strike_range: str) -> dict:

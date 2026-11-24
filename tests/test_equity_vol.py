@@ -13,7 +13,8 @@ import pandas as pd
 import tensorquant as tq
 from markers import slow
 from scipy.stats import norm
-from tensorquant.calibration.equityvol import (GRID_MONEYNESS, GRID_TENORS, LognormalMixture, _smile_w, _wing_spec,
+from tensorquant.calibration.equityvol import (GRID_MONEYNESS, GRID_TENORS, LognormalMixture, _carry_smile, _smile_w,
+                                               _wing_spec,
                                                listed_tenors,
                                                black_implied_vol, build_equity_vol, calibrate_snapshot_vols, implied_spot,
                                                extrapolate_dividends, implied_forward,
@@ -370,15 +371,40 @@ class TestSurfaceEuropean(_SurfaceCase):
         self.assertEqual(list(repo.dates), EXPIRIES[1:])
         self.assertEqual(len(report), len(EXPIRIES))                                         # its smile is kept
 
-    def test_settlement_only_quotes(self):
-        """Quotes without bid / ask (settlement ``last``) are used, with a lower weight."""
+    def test_settlement_prices_dropped_with_a_market(self):
+        """With a bid / ask market (Bloomberg's rule: 3 good expiries or 10% of them) an expiry with settlement
+        prices only (``last``, no bid / ask) is dropped: forwards, repo and smiles from the quoted expiries."""
         frame = self.quotes.assign(last=0.5 * (self.quotes["bid"] + self.quotes["ask"]))
-        last = frame["expiry"] == EXPIRIES[-1]
-        frame.loc[last, ["bid", "ask"]] = np.nan
+        frame.loc[frame["expiry"] == EXPIRIES[-1], ["bid", "ask"]] = np.nan
         surf, repo, report = build_equity_vol(self.guess, frame)
-        row = report[report["expiry"] == EXPIRIES[-1]].iloc[0]
-        self.assertEqual(row["source"], "settlement")
-        np.testing.assert_allclose(float(repo.variables[-1]), REPO_TRUE[-1], atol=1e-8)
+        self.assertNotIn(EXPIRIES[-1], set(report["expiry"]))
+        self.assertEqual(len(repo.variables), len(EXPIRIES) - 1)
+        np.testing.assert_allclose([float(v) for v in repo.variables], REPO_TRUE[:-1], rtol=0, atol=1e-8)
+
+    def test_narrow_expiry_borrows_the_smile(self):
+        """An expiry quoted only within 90%-110% of the forward: its own quotes fitted as usual, its wings guided by the
+        next expiry's smile carried to its maturity and scaled to its at-the-money vol (not a free mixture tail)."""
+        f0 = float(self.truth.forward(EXPIRIES[0]))
+        first = self.quotes["expiry"] == EXPIRIES[0]
+        near = (self.quotes["strike"] > 0.92 * f0) & (self.quotes["strike"] < 1.08 * f0)
+        surf, repo, report = build_equity_vol(self.guess, self.quotes[~first | near])
+        row = report[report["expiry"] == EXPIRIES[0]].iloc[0]
+        lend = report[report["expiry"] == EXPIRIES[1]].iloc[0]
+        self.assertEqual(row["smile_from"], EXPIRIES[1])
+        self.assertIsNone(lend["smile_from"])
+        self.assertLess(row["fit_rms"], 0.002)                         # its own quotes within 0.2 vol pts
+        t, m = row["t"], row["mixture"]
+        guide = _carry_smile(lend["mixture"], lend["t"], t)
+        x = np.array([0.6, 0.7, 1.3])                                   # wings: within 2 vol pts of the guide's shape
+        shift = float(m.implied_vols(1.0, [1.0], t)[0] - guide.implied_vols(1.0, [1.0], t)[0])
+        np.testing.assert_allclose(m.implied_vols(1.0, x, t), guide.implied_vols(1.0, x, t) + shift, rtol=0, atol=0.02)
+
+    def test_settlement_prices_without_a_market(self):
+        """Without any bid / ask the settlement prices are used (the forwards and repo recovered from them)."""
+        frame = self.quotes.assign(last=0.5 * (self.quotes["bid"] + self.quotes["ask"]), bid=np.nan, ask=np.nan)
+        surf, repo, report = build_equity_vol(self.guess, frame)
+        self.assertTrue((report["source"] == "settlement").all())
+        np.testing.assert_allclose([float(v) for v in repo.variables], REPO_TRUE, rtol=0, atol=1e-8)
 
 
 @slow

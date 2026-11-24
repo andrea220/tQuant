@@ -110,7 +110,7 @@ delayed against its options) the spot are built from the quotes of the listed op
 forward of the expiry, then its smile, then the surface across the expiries.
 
 \paragraph{The quotes.} For each underlying only a selection of its listed options is requested, twenty to thirty
-per expiry, out of the chain of the options listed with strikes between $40\%$ and $200\%$ of the spot (when an expiry
+per expiry, out of the chain of the options listed with strikes between $25\%$ and $250\%$ of the spot (when an expiry
 is listed both in the standard series and in a weekly one, the standard one).
 
 \emph{Expiries:} the first two listed (weeklies included), the monthlies (third Friday) up to three months, the
@@ -122,8 +122,8 @@ $\hat F = (S_0 - D)\,e^{rT}$, with $D$ the sum of the forecast dividends with ex
 $r$ the overnight fixing of the currency. $\hat F$ is only a guide for the selection: the forward used afterwards is
 implied by the options themselves (below). Moneyness here is $K/\hat F$.
 \begin{itemize}[nosep]
-  \item \emph{Smile options.} For each target moneyness $m$ in 50, 60, 70, 80, 85, 90, 95, 97.5, 100, 102.5, 105,
-        110, 115, 120, 130, 140 and $150\%$, the target strike is $m\hat F$; among the listed out-of-the-money options
+  \item \emph{Smile options.} For each target moneyness $m$ in 30, 40, 50, 60, 70, 80, 85, 90, 95, 97.5, 100, 102.5,
+        105, 110, 115, 120, 130, 140, 150, 175 and $200\%$ (the surface grid reaches $30\%$ and $200\%$ of the spot), the target strike is $m\hat F$; among the listed out-of-the-money options
         (puts with $K < \hat F$ for $m < 100\%$, calls with $K \ge \hat F$ for $m \ge 100\%$) the one whose strike is
         the nearest to it is taken. For example, with $\hat F = 360$ and strikes every 5, the $80\%$ target $288$
         gives the 290 put. Where the strikes are sparse (wings, long expiries) the listed strike can be some way from
@@ -133,7 +133,7 @@ implied by the options themselves (below). Moneyness here is $K/\hat F$.
         strikes, among those listed with both a call and a put), and on each of them both the call and the put:
         sixteen options, for the put-call parity of the forward (below). Near the forward both options are liquid and
         their spreads narrow.
-  \item \emph{In all}, per expiry: at most seventeen smile options and the sixteen parity options, an option counted
+  \item \emph{In all}, per expiry: at most twenty-one smile options and the sixteen parity options, an option counted
         once when it is in both (the smile options from about $95\%$ to $105\%$ of $\hat F$ are parity options too):
         typically twenty to thirty options an expiry.
 \end{itemize}
@@ -152,21 +152,24 @@ At the calibration each option kept is one of:
 \begin{itemize}[nosep]
   \item \emph{two-sided}: bid $> 0$ and bid $\le$ ask $\le 3\times$ bid; used at its mid $(\text{bid} + \text{ask})/2$,
         with weight 1;
-  \item \emph{settlement}: neither a bid nor an ask (removed as stale, or never quoted) and a positive last price;
-        used at the last price (bid = ask = last), with weight $0.25$, as that price may be days old. The long
-        expiries of the less liquid underlyings often have only these;
+  \item \emph{settlement}: neither a bid nor an ask (removed as stale, or never quoted) and a positive last price,
+        an exchange mark rather than a market, possibly stale against the spot of the quotes. As in Bloomberg's
+        construction, settlement prices are used only for an underlying without a bid / ask market (then at the last
+        price, bid = ask = last, with weight $0.25$): an expiry has a good market with at least three two-sided quotes
+        and $10\%$ of its quotes, and with at least three such expiries (or $10\%$ of them) the settlement prices are
+        dropped. Forwards, repo, smiles and the index dividends then come from the quoted expiries only; beyond the
+        last one the repo is flat and the index dividends are projected (below);
   \item \emph{discarded}: a one-sided quote (bid or ask only), a zero bid, a crossed quote (ask $<$ bid), or a quote
         too wide (ask $> 3\times$ bid: the mid is uncertain by more than half of itself). A quote with a bid or an ask
         is never replaced by its last price.
 \end{itemize}
-The forward of an expiry uses the two-sided quotes of its parity options (settlement prices only when the expiry has
-no two-sided quote at all); the smile uses the out-of-the-money options, with further checks on their implied vols
+The forward of an expiry uses the two-sided quotes of its parity options; the smile uses the out-of-the-money options, with further checks on their implied vols
 (\emph{Fit of the smile}, below).
 
 \paragraph{Forward and repo of an expiry.} European put-call parity, $C - P = P(0,T)(F - K)$ for a call and a put
 of the same strike and expiry, gives the forward at a strike, $F = K + (C - P)/P(0,T)$, from mid prices. It needs both
-options on the strike, so it uses the parity strikes above, those whose call and put both have a two-sided quote
-(settlement prices only when the expiry has no two-sided quote). Of these, it takes the two adjacent strikes
+options on the strike, so it uses the parity strikes above, those whose call and put both have a two-sided quote.
+Of these, it takes the two adjacent strikes
 $K_1 \le F < K_2$ that bracket the forward: the highest one at or below $F$ and the lowest one above (the nearest to
 the forward, where the parity is the most precise); $F$ is the average of their two parity forwards. As $F$ is not
 known in advance, the pair is chosen around the current estimate (first the forward from the forecast dividends) and
@@ -221,12 +224,13 @@ repo by construction.
 two unknowns, the dividends and the repo. As in market practice for indices, the dividends are taken from the market
 and the repo is kept a smooth financing / borrow level, not the residual of the carry. The forecasts are kept to two
 years, where they are reliable; the repo is held at the level implied at the last listed expiry within them, $q_0$;
-beyond, each listed expiry gives the present value of the dividends to it,
+beyond, each quoted expiry (two-sided quotes: settlement prices are dropped, above) gives the present value of the
+dividends to it,
 \[
   \mathrm{PV}_{\mathrm{div}}(T) = S_0 - F(T)\,P(0,T)\,e^{q_0 T},
 \]
 and the increase between two expiries is spread over the dividend dates of the period with the weekly pattern of the
-forecasts (their last year repeated: the May peak of the European index). Past the last listed expiry the dividends are
+forecasts (their last year repeated: the May peak of the European index). Past the last quoted expiry the dividends are
 extrapolated to ten years at a constant yield: the last year repeated, each dividend keeping the yield of the one it
 repeats on the forward just before its ex-date, $D(t + n) = D(t)\,F(t + n)/F(t)$, with the repo held. The repo is then
 implied from the options as above, flat at $q_0$ beyond the two years. Index dividend futures, when available, give the
@@ -311,7 +315,7 @@ interpolates through it). The parameters minimise
   \sum_i \left(w_i\,\frac{V_{\mathrm{model}}(K_i) - \mathrm{Black}(F, K_i, \sigma^{\mathrm{mkt}}_i, T)}{\mathcal V_i}\right)^2,
 \]
 the out-of-the-money price errors divided by the Black vega $\mathcal V_i$ of the quote (so about the vol errors), with
-the weights $w_i$ above (1 for a two-sided quote, $0.25$ for a settlement price). The fit is on the mid prices; the bid
+the weights $w_i$ above (1 for a two-sided quote; $0.25$ for a settlement price, only without a bid / ask market). The fit is on the mid prices; the bid
 and ask are only reported against the fitted smile. Parametrisation and bounds: the weights $Q, p_l$ by a softmax (each
 away from 0 and 1, $Q$ at most about 17\%), the forwards by $F_l \propto F e^{m_l}$ with $|m_l| \le 3$ (rescaled so that
 $\sum_l p_l F_l = F$), the vols by $\sigma_l\sqrt T = e^{s_l}$ with $\sigma_l$ between a quarter of the at-the-money
@@ -325,6 +329,14 @@ highest forward with the lowest, central weights
 larger, $Q \approx 0.1\%$), which removes the exchange symmetry of the components; when that fit is above 0.2 vol
 points rms, a second one starts from the parameters of the previous expiry and the better is kept. The rms of the
 weighted vol errors measures the fit.
+
+\paragraph{Expiries with a wing free of quotes.} A very short expiry quoted only near the money (no quote outside
+$90\%$--$110\%$ of the forward), or a long one quoted on one side of the forward only (puts only), has nothing that
+shapes a wing. Following Bloomberg's short-term extrapolation, the smile of the next complete expiry $T'$ (the
+previous one for the last expiries) is carried to its maturity $T$: probabilities and scenario vols $\sigma_l$ kept,
+$\ln\xi_l$ scaled by $\sqrt{T/T'}$; for a short expiry its vols are scaled by a common factor to the expiry's own
+at-the-money vol. That smile guides the fit of the expiry: a few points of it beyond the quotes, with weight $0.1$, and
+the start of the least squares; the expiry's own quotes are fitted as usual.
 
 \paragraph{The smile beyond the quotes.} Between the lowest and the highest quote of an expiry the smile is the
 mixture; beyond them no quote constrains the mixture's tail, which can bend down or carry a bump. There the total

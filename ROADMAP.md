@@ -18,10 +18,10 @@ in their own or another currency, new and live trades, with stable AAD greeks. E
    - recalibrate the live snapshots and the calibration sets on the new surfaces (Heston and DD fit every node, now
      26 strikes); autocallable prices and vegas before / after on SX5E and a single stock; local vol arbitrage
      warnings on the wider grid;
-   - unreliable tails left as they are: expiries of a few days quoted only near the money keep the mixture's tail
-     (AAPL / MSFT 3-5 days: 150%-390% vol at 35%-70%), the only calendar arbitrage left (up to 0.10 of total
-     variance against the next expiry), far from anything priced; settlement-only expiries keep a second mode where
-     their quotes have a kink (SX5E Dec-2032 around 0.52 F).
+   - calendar arbitrage left (2026-11-13): ISP between the 7- and 14-day expiries at 30%-60% of the forward (up to
+     0.16 of total variance: the far wing of a guided 7-day smile) and AAPL at 175%-200% between 2 and 4 months
+     (0.02-0.03); far from anything priced. Bloomberg damps the default intensity below the quotes on short
+     expiries (its 14.1.1-14.1.2), not done.
 2. [ ] **Autocallable terms as traded.** The Tradepad holds constant barriers: step-down autocall barriers (one per
    observation, already broadcast in `AutocallableOption`, to expose in the form and the schedule), coupon types
    (standard and memory done; fixed coupons), final redemption variants (put knocked in at expiry with a barrier, put

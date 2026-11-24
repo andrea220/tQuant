@@ -514,3 +514,21 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       at one year: 39.2% at 50%, 48.4% at 30% (the mixture's tail bent down below 40%). Tests: no butterfly, no
       calendar arbitrage over the whole grid, straight wings with Lee slopes (European and American cases). Notebook
       data set and Models and Pricing 1.4 updated; the live snapshots keep their surfaces until recalibrated.
+- [x] Settlement prices and expiries with a wing free of quotes (Beta 1, item 1). Settlement prices (`last`, no bid /
+      ask) only for an underlying without a bid / ask market, Bloomberg's rule (an expiry has a good market with 3
+      two-sided quotes and 10% of its quotes; 3 such expiries or 10% of them: settlements dropped): forwards, repo,
+      smiles and index dividends from the quoted expiries only, the repo flat beyond the last one, index dividends
+      projected at a constant yield with the repo held (SX5E 2026-11-13: quoted to Dec-2028, then 3.10%, about
+      202-210 points a year, against 155-168 implied by the 2029-2032 settlement prices; ENI's Dec-2028 settlement
+      gave a repo of +0.21% between -0.9% and -0.7%). Expiries with a wing free of quotes, quoted only within 90%-110%
+      of the forward (a few days) or out of the money on one side only (ISP Dec-2029: 5 puts), fitted again with the
+      smile of the next complete expiry (the previous one for the last expiries) carried to their maturity
+      (Bloomberg's short-term extrapolation: scenario vols kept, ln xi scaled by sqrt(t/T); for the narrow ones scaled
+      to their at-the-money vol) as anchors beyond their quotes (weight 0.1) and start; report column `smile_from`.
+      Replacing the smile outright (Bloomberg's choice for expiries with 1-2 options) cost 1-4 vol pts on the 5-13
+      quotes of those expiries; dropping one-sided expiries lost ISP's 2029 puts (5 vol pts). Snapshot 2026-11-13
+      recalibrated (copy): quotes within bid / ask on the stored surface AAPL 98.5%, ENI / ISP / MSFT 100%, SPX 79.5%,
+      SX5E 95.4%; max grid vol MSFT 436% -> 174%, ENI 155% -> 90%; calendar arbitrage 0 on ENI, MSFT, SPX, SX5E; no
+      butterfly arbitrage. Download: moneyness targets 30%-200% of the forward (were 50%-150%), chains 25%-250% of the
+      spot (were 40%-200%), chain cache version 4. Tests: settlements dropped with a market and used without, a
+      narrow expiry guided by the next one (own quotes within 0.2 vol pts, wings within 2 of the guide's shape).

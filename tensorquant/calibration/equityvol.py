@@ -31,7 +31,7 @@ Stage 2 (smile of an expiry):
   density (up to 12% of probability on real snapshots) for a gain of hundredths of a vol point.
 
 Stage 3 (surface, :func:`build_equity_vol`): quotes filtered (two-sided, ask <= 3 bid; settlement prices ``last``
-used where there is no bid / ask, with a lower weight), forward and repo of every expiry, Black vols of the
+only for an underlying without a bid / ask market, Bloomberg's rule), forward and repo of every expiry, Black vols of the
 out-of-the-money quotes (the American implied vol on the implied forward is the Black vol), outliers dropped
 (outside 0.2-5 x the median of the expiry), a mixture fitted per expiry (standard start; above 0.2 vol points also a warm start from the previous
 expiry, the better fit kept). On the
@@ -42,6 +42,11 @@ tail, so the total variance ``w = sigma^2 t`` continues linear in ``k = ln(K/F)`
 junction, within Lee's bounds and never decreasing away from the money). The straight wing drops the curvature of the
 smile: where that would make the density negative (Gatheral's ``g(k) < 0``) the junction moves outward, the mixture
 kept up to it; if no junction works the mixture's tail is kept (a density, free of arbitrage) and marked unreliable.
+An expiry quoted only near the money (none outside 90%-110% of the forward: a few days) or on one side of the forward
+only (a long expiry with puts only) has nothing that shapes a wing: the smile of the next complete expiry (the
+previous one for the last expiries), carried to its maturity (Bloomberg's short-term extrapolation:
+the vols of the lognormals kept, the log relative forwards scaled by ``sqrt(t / T)``) and scaled to its at-the-money
+vol, guides them (points beyond its quotes, low weight, and the start of the fit), its own quotes fitted as usual.
 Then:
 
 - between the expiries: monotone (PCHIP) interpolation of the total variance in time, after the calendar step: at the
@@ -466,6 +471,10 @@ GRID_MONEYNESS = (0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.
                   1.1, 1.15, 1.2, 1.3, 1.4, 1.5, 1.75, 2.0)   # of the spot: the autocallable barriers sit at 50-70%
 WING_SLOPE_MAX = 2.0         # Lee: beyond the quotes the total variance grows at most 2 |ln(K/F)|
 WING_RANGE = (0.1, 4.0)      # forward moneyness over which a straight wing must keep a positive density
+MIN_QUOTES = 3               # quotes of a calibrated expiry (and two-sided quotes of a good bid / ask expiry)
+NARROW_RANGE = (0.9, 1.1)    # an expiry without quotes outside this forward moneyness borrows its wings' shape
+NARROW_ANCHORS = (0.5, 0.6, 0.7, 0.8, 0.85, 1.15, 1.2, 1.3, 1.5)   # forward moneyness of the borrowed wing points
+NARROW_ANCHOR_WEIGHT = 0.1   # their fit weight (a two-sided quote weighs 1)
 DIVIDEND_YEARS = 10.0        # equity indices: dividends extrapolated at a constant yield to this horizon
 DIVIDEND_KEEP_YEARS = 2.0    # equity indices: projected dividends kept to this horizon, implied by the options beyond
 
@@ -478,18 +487,27 @@ def listed_tenors(times, max_years: float = 6.0) -> list:
 
 
 def _prepare_quotes(quotes: pd.DataFrame) -> pd.DataFrame:
-    """Normalised quotes: ``option_type`` C / P, ``settlement`` flag (no two-sided quote, ``last`` used as bid and
-    ask), filters of the bid / ask (positive, ask <= 3 bid)."""
+    """Normalised quotes: ``option_type`` C / P, ``settlement`` flag, filters of the bid / ask (positive, ask <= 3 bid).
+
+    Settlement prices (``last`` used as bid and ask, no two-sided quote) only for an underlying without a bid / ask
+    market (Bloomberg's rule): an expiry has a good bid / ask market with at least ``MIN_QUOTES`` two-sided quotes and
+    10% of its quotes; with at least 3 such expiries (or 10% of the expiries) the settlement prices are dropped
+    (forwards, repo, dividends and smiles from the quoted expiries only), otherwise only they are used. A settlement
+    price is not a market: an exchange mark that may be stale against the spot of the quotes."""
     q = quotes.copy()
     q["option_type"] = q["option_type"].astype(str).str.upper().str[0]
     q["expiry"] = pd.to_datetime(q["expiry"]).dt.date
     for column in ("bid", "ask"):
         q[column] = pd.to_numeric(q[column], errors="coerce")
     two_sided = (q["bid"] > 0) & (q["ask"] >= q["bid"]) & (q["ask"] <= 3.0 * q["bid"])
+    per_expiry = two_sided.groupby(q["expiry"]).agg(["sum", "mean"])
+    good = (per_expiry["sum"] >= MIN_QUOTES) & (per_expiry["mean"] >= 0.10)
     q["settlement"] = False
-    if "last" in q:
+    if good.sum() >= 3 or (len(good) and good.mean() >= 0.10):
+        return q[two_sided].reset_index(drop=True)
+    if "last" in q:                                       # no bid / ask market: the settlement prices only
         last = pd.to_numeric(q["last"], errors="coerce")
-        settle = ~two_sided & q["bid"].isna() & q["ask"].isna() & (last > 0)
+        settle = q["bid"].isna() & q["ask"].isna() & (last > 0)
         q.loc[settle, ["bid", "ask"]] = np.column_stack([last[settle], last[settle]])
         q.loc[settle, "settlement"] = True
         two_sided = two_sided | settle
@@ -520,6 +538,76 @@ def _extrapolate(mixture: LognormalMixture, t_n: float, t: float) -> LognormalMi
     scale = np.sqrt(t / t_n)
     return LognormalMixture(mixture.weights * survival / survival_n, np.exp(np.log(mixture.means) * scale),
                             mixture.stdevs * scale, 1.0 - survival)
+
+
+def _carry_smile(mixture: LognormalMixture, t_from: float, t: float) -> LognormalMixture:
+    """The smile of *t_from* carried to *t* (Bloomberg's short-term extrapolation): the vols of the lognormals and the
+    default probability kept, the log relative forwards ``ln xi_l`` scaled by ``sqrt(t / t_from)``."""
+    scale = np.sqrt(t / t_from)
+    return LognormalMixture(mixture.weights, np.exp(np.log(mixture.means) * scale), mixture.stdevs * scale,
+                            mixture.default)
+
+
+def _borrow_narrow_smiles(good: pd.DataFrame, n: int = 4) -> pd.DataFrame:
+    """Expiries whose quotes leave a wing free: quoted only near the money (none outside ``NARROW_RANGE`` of the
+    forward, e.g. a few days) or out of the money on one side of the forward only (a long expiry with puts only). The
+    smile of the next complete expiry (the previous one for the last expiries), carried to the maturity
+    (:func:`_carry_smile`; for a narrow expiry scaled to its at-the-money vol), guides them: the mixture is fitted again
+    to the expiry's own quotes (weight 1) plus that smile at ``NARROW_ANCHORS`` beyond the quotes (weight
+    ``NARROW_ANCHOR_WEIGHT``), starting from it. ``smile_from`` is the expiry lent, ``fit_rms`` on the own quotes."""
+    good = good.copy()
+    good["smile_from"] = None
+    lo, hi = np.log(NARROW_RANGE[0]), np.log(NARROW_RANGE[1])
+    k_lo, k_hi = good["k_lo"].to_numpy(float), good["k_hi"].to_numpy(float)
+    narrow = (k_lo >= lo - 1e-12) & (k_hi <= hi + 1e-12)
+    one_sided = (k_hi < 0.0) | (k_lo > 0.0)               # out-of-the-money quotes on one side of the forward only
+    guided = narrow | one_sided
+    rows = list(good.index)
+    for i, idx in enumerate(rows):
+        if not guided[i]:
+            continue
+        donor = next((rows[j] for j in range(i + 1, len(rows)) if not guided[j]), None)
+        if donor is None:                                  # the last expiries: the previous complete one, carried
+            donor = next((rows[j] for j in range(i - 1, -1, -1) if not guided[j]), None)
+        if donor is None:
+            continue
+        row, lend = good.loc[idx], good.loc[donor]
+        t, forward = float(row["t"]), float(row["forward"])
+        guide = _carry_smile(lend["mixture"], float(lend["t"]), t)
+        if narrow[i]:                                      # quoted at the money: the guide at its at-the-money vol
+            def gap(beta, m=guide):
+                scaled = LognormalMixture(m.weights, m.means, beta * m.stdevs, m.default)
+                return float(scaled.implied_vols(1.0, [1.0], t)[0]) - float(row["atm_vol"])
+
+            try:
+                beta = brentq(gap, 0.2, 5.0)
+            except ValueError:
+                continue
+            guide = LognormalMixture(guide.weights, guide.means, beta * guide.stdevs, guide.default)
+        qv = row["quote_vols"]
+        used = qv["used"].to_numpy(bool)
+        k, v = qv["strike"].to_numpy(float)[used], qv["iv_mid"].to_numpy(float)[used]
+        w = np.where(qv["settlement"].to_numpy(bool)[used], 0.25, 1.0)
+        x = np.array([m for m in NARROW_ANCHORS if np.log(m) < row["k_lo"] or np.log(m) > row["k_hi"]])
+        kv = guide.implied_vols(1.0, x, t)
+        ok = np.isfinite(kv)
+        start = np.concatenate([np.log(np.maximum([guide.default, *guide.weights], 1e-12)), np.log(guide.means),
+                                np.log(guide.stdevs)])
+        try:
+            mixture = LognormalMixture.fit(forward, t, np.concatenate([k, forward * x[ok]]),
+                                           np.concatenate([v, kv[ok]]), n=n,
+                                           weights=np.concatenate([w, np.full(ok.sum(), NARROW_ANCHOR_WEIGHT)]),
+                                           x0=start)
+        except ValueError:
+            continue
+        model = mixture.implied_vols(forward, qv["strike"].to_numpy(float), t)
+        mixture.rms = float(np.sqrt(np.mean((w * (model[used] - v)) ** 2)))
+        good.at[idx, "atm_vol"] = float(mixture.implied_vols(1.0, [1.0], t)[0])
+        good.at[idx, "mixture"] = mixture
+        good.at[idx, "fit_rms"] = mixture.rms
+        good.at[idx, "smile_from"] = lend["expiry"]
+        good.at[idx, "quote_vols"] = qv.assign(model_vol=model)
+    return good
 
 
 def _wing_spec(mixture: LognormalMixture, t: float, k_lo: float, k_hi: float, candidates: int = 25) -> dict:
@@ -590,7 +678,7 @@ def _fill_wings(log_m: np.ndarray, vols: np.ndarray) -> np.ndarray:
 
 
 def build_equity_vol(equity: Equity, quotes: pd.DataFrame, dividend_model: str = "continuous", n: int = 4,
-                     settlement_weight: float = 0.25, min_quotes: int = 3, min_repo_days: int = 30, tenors=None,
+                     settlement_weight: float = 0.25, min_quotes: int = MIN_QUOTES, min_repo_days: int = 30, tenors=None,
                      moneyness=GRID_MONEYNESS) -> tuple[VolatilitySurface, RateCurve, pd.DataFrame]:
     """Implied vol surface and repo term structure of *equity* from its listed option quotes.
 
@@ -612,7 +700,7 @@ def build_equity_vol(equity: Equity, quotes: pd.DataFrame, dividend_model: str =
         (zero repo rates at the calibrated expiries from ``min_repo_days``) and the report (one row per expiry: ``expiry``, ``t``,
         ``forward``, ``repo``, ``forward_bid`` / ``forward_ask``, ``quotes``, ``source`` (market / settlement),
         ``k_lo`` / ``k_hi`` (log forward moneyness of the outermost quotes used: the mixture inside, the wings
-        beyond),
+        beyond), ``smile_from`` (an expiry with a wing free of quotes: the expiry whose smile guides it),
         ``fit_rms`` (vol), ``atm_vol``, ``mixture``, ``quote_vols`` (per out-of-the-money quote: ``strike``,
         ``option_type``, ``iv_bid`` / ``iv_mid`` / ``iv_ask`` on the implied forward, ``settlement``, ``used`` (kept
         by the filters), ``model_vol``); skipped expiries with ``error``).
@@ -690,6 +778,11 @@ def build_equity_vol(equity: Equity, quotes: pd.DataFrame, dividend_model: str =
     # surface on the grid, at the forward moneyness of the new forwards (repo curve)
     view = Equity(equity.ticker, equity.currency, equity.spot, equity.discount_curve, repo, equity.dividends,
                   equity.div_yield, None)
+    good = _borrow_narrow_smiles(good)
+    report["smile_from"] = None
+    for idx in good.index:                                # the report shows the smiles used
+        for column in ("mixture", "fit_rms", "atm_vol", "smile_from", "quote_vols"):
+            report.at[idx, column] = good.at[idx, column]
     times = good["t"].to_numpy(float)
     mixtures = list(good["mixture"])
     specs = [_wing_spec(m, tt, lo, hi) for m, tt, lo, hi in zip(mixtures, times, good["k_lo"], good["k_hi"])]
