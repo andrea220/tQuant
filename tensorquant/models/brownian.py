@@ -91,6 +91,10 @@ class GeometricBrownianMotion(StochasticProcess):
         sigma = equity.vol_surface.volatility(strike=float(strike), tenor=tenor)
         return cls(mu=r - carry, sigma=sigma, x0=x0)
 
+    def set_quanto(self, adjustment) -> None:
+        """Quanto drift: ``mu`` lowered by ``adjustment * sigma`` (``adjustment = rho sigma_X``)."""
+        self._mu = self._mu - tf.cast(adjustment, DTYPE) * self._sigma
+
     def drift(self, dt):
         return (self._mu - (self._sigma**2) / 2) * dt
 

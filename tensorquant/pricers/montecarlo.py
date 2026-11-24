@@ -7,6 +7,7 @@ from ..markethandles.marketenvironment import MarketEnvironment
 from ..models.localvolatility import LocalVolatilityModel
 from ..models.equitymodel import bind, check_model
 from ..numericalhandles.dtypes import DTYPE
+from .quanto import apply_quanto, composite_fx_paths
 from ..timehandles.utils import Settings
 
 
@@ -110,16 +111,21 @@ class AutocallableMCPricer(Pricer):
         time_grid = np.unique(np.concatenate([uniform, fixing_times]))
         column = {d: i for i, d in enumerate(fixings)}     # paths are returned at the fixings only
 
-        model = bind(self._model, eq, product.end_date,
-                     float(product.strike) if product.strike is not None else float(eq.spot))
+        level = float(product.strike) if product.strike is not None else float(eq.spot)
+        if product.is_composite and product.strike is not None:     # the level of S X: back into the underlying's
+            level /= float(market_env.get_fx_spot(eq.currency, product.payment_ccy))
+        model = bind(self._model, eq, product.end_date, level)
+        curve = apply_quanto(market_env, product, eq, model, float(fixing_times[-1]))   # quanto: drift and curve
         k = model.noise_size()
         dw = tf.random.stateless_normal([self._n_paths, len(time_grid)] + ([k] if k > 1 else []),
                                         seed=[self._seed, 0], dtype=DTYPE)
         paths = model.evolve(tf.constant(time_grid, DTYPE), dw, observation_times=fixing_times)
+        if product.is_composite:                        # the underlying in the payment currency: S X
+            paths = paths * composite_fx_paths(market_env, product, eq, time_grid, dw, fixing_times, self._seed)
         self.paths, self.time_grid, self.date_grid = paths, fixing_times, fixings
 
         strike = paths[:, column[strike_date]] if forward_start else float(product.strike)
-        coupon_pv, put_pv = self._payoff(product, paths, column, fixings, eq.discount_curve, strike)
+        coupon_pv, put_pv = self._payoff(product, paths, column, fixings, curve, strike)
         total = coupon_pv - put_pv
         product.coupon_pv = tf.reduce_mean(coupon_pv)
         product.put_pv = tf.reduce_mean(put_pv)

@@ -41,6 +41,15 @@ class StochasticProcess(ABC):
         ``[n_paths, n_steps, noise_size]``)."""
         return 1
 
+    def set_quanto(self, adjustment) -> None:
+        """Quanto drift: ``d ln S`` lowered by ``adjustment * sigma_S dt`` (``adjustment = rho sigma_X``, the
+        correlation with the FX rate times its vol), the dynamics under the payment-currency measure.
+
+        Raises:
+            NotImplementedError: The process does not support it.
+        """
+        raise NotImplementedError(f"{type(self).__name__} has no quanto drift")
+
     @property
     def factors(self) -> int:
         """Alias of :meth:`size`."""

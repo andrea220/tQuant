@@ -201,7 +201,11 @@ FX pairs are \code{Curncy} tickers of the universe (\code{EURUSD}, \code{GBPUSD}
 \code{USDJPY}): \code{PX\_LAST} gives the spot, 1 base = $x$ quote, stored in \code{fx\_spot.csv} (\code{base, quote,
 spot}) and in the market as \code{FX:<quote>:<pair>:SPOT}; the daily \code{PX\_LAST} history (10 years) enters the
 correlations. Forwards come from covered interest parity on the default curves of the two currencies
-(\code{get\_fx\_forward}): a pair whose currency has no curve in the snapshot (CHF, JPY) has the spot only. FX vols are
-not downloaded (synthetic snapshots only: \code{fx\_vol.csv}).
+(\code{get\_fx\_forward}): a pair whose currency has no curve in the snapshot (CHF, JPY) has the spot only. FX vols:
+historical for now (\code{mdbuild.history.historical\_fx\_vols}, the \code{fx\_vol} block of the settings: 52 weekly
+log returns, annualised) as a flat surface in \code{fx\_vol.csv} (expiries 1M--10Y, strikes 50\%--200\% of the spot),
+read as \code{FX:<quote>:<pair>:VOL}. \code{get\_quanto(ticker, ccy, payment\_ccy, tenor)}: the correlation of the
+underlying with the value $X$ of one unit of \code{ccy} in \code{payment\_ccy} (the stored pair, or minus its
+correlation for the inverse) and the vol of the pair, as tensors (AAD to the correlation matrix and the FX vols).
 
 

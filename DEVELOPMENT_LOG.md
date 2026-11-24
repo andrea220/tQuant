@@ -541,3 +541,47 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       wrong at the intermediate fixings: for debugging), with its Monte Carlo standard error. SX5E 2026-11-13, 3Y,
       6M observations from 1Y, local vol: -1.78% of the notional flat, -1.72% with a 2% step (barriers 100-92%).
       Tests: barriers with step and floor, same price as the same barriers given one by one, validation (19 green).
+- [x] Quanto (section 2 item 3, first part). `Product.payment_ccy` (default `ccy`, the underlying's currency) and
+      `is_quanto`, taken by `VanillaOption` and `AutocallableOption`: paid in the payment currency at a fixed rate.
+      `MarketEnvironment.get_quanto(ticker, ccy, payment_ccy, tenor)`: correlation of the underlying with X (one unit
+      of `ccy` in `payment_ccy`: the stored pair, or minus its correlation for the inverse) and the vol of the pair
+      at its spot, tensors. `BlackScholesPricer`: payment-currency discount rate, carry
+      `q + (r_pay - r) + rho sigma sigma_X` (European vanilla, digital, barrier; American rejected). Monte Carlo
+      (`pricers/quanto.py`, `apply_quanto`): `StochasticProcess.set_quanto(rho sigma_X)` (GBM: `mu - rho sigma_X
+      sigma`; local vol: `-rho sigma_X sigma_loc(t, S)` on `ln X` each step, the paths no longer rescaled to the
+      forward; the other processes raise), payments discounted on the payment curve (`VanillaMCPricer`,
+      `AutocallableMCPricer`). Market data: historical FX vols (`mdbuild.history.historical_fx_vols`, `fx_vol` block of
+      the settings: 52 weekly log returns, annualised) as flat surfaces in `fx_vol.csv` (1M-10Y x 50%-200% of the
+      spot), built by every download and written into the 2026-11-13 snapshot from the price history: EURUSD 5.8%,
+      GBPUSD 5.9%, EURGBP 3.2%, EURCHF 3.8%, USDJPY 8.1%. Tradepad: "Payment currency (quanto)" on the vanilla and the
+      autocallable, the info rows (correlation with the FX rate, FX vol, FX vega per vol point, correlation
+      sensitivity per +0.01), the payment curve in the rho. 2026-11-13: SPX 90% put 1Y (Black-Scholes) 233.69 paid
+      in USD, 230.90 in EUR (rho(S, X) = -0.31: quanto forward 7858 against 7826; FX vega -1.14, correlation -0.21
+      per +0.01); SX5E 90% put 214.52 in USD against 213.78 in EUR (rho +0.23: forward 6412 against 6429); SPX
+      autocallable (local vol) -0.70% of the notional in USD, -0.56% in EUR. Tests (`test_quanto.py`, 10): quanto
+      inputs (direct / inverse pair, missing pair), Black-Scholes closed form `DF_d Black(F e^{-rho sigma sigma_X T})`,
+      own currency = plain price, zero correlation = plain forward discounted in the payment currency, AAD
+      correlation and FX vol greeks vs bumps, American rejected, GBM and local vol vs the closed form within 3 SE on a
+      flat smile, Heston rejected, GBM autocallable quanto = plain one with the repo shifted by
+      `rho sigma sigma_X` (same draws, equal rates), local vol autocallable price ordered by the correlation;
+      marketdata 26 (historical FX vols = direct weekly std, grid). Models and Pricing (quanto subsection),
+      Architecture (FX data, products, pricers).
+- [x] Composite and price currency (section 2 item 3). `Product.fx_mode` `"quanto"` (default) or `"composite"`
+      (`is_composite`), taken by `VanillaOption` and `AutocallableOption`: the payoff on `Y = S X` (X one unit of the
+      underlying's currency in the payment one), strikes and levels in the payment currency. Black-Scholes on Y:
+      spot `S X0`, forward `F_S F_X(T)`, vol `sqrt(sigma_S^2 + sigma_X^2 + 2 rho sigma_S sigma_X)` (`sigma_S` at
+      `K / F_X`), discounted in the payment currency (vanilla, digital, barrier; American rejected). Monte Carlo
+      (`composite_fx_paths`): S with the quanto drift, `X_t = F_X(t) exp(-sigma_X^2 t / 2 + sigma_X W_X)`,
+      `W_X = rho W_S + sqrt(1 - rho^2) W_Z` on the underlying's normals and an independent stream, paths `S X`
+      (vanilla, digital, autocallable; composite barriers rejected; local vol and GBM). `Pricer.price(...,
+      price_currency=)`: the price converted from the payment currency at the FX spot inside the tape (FX delta by
+      AAD), the standard error too, `product.price_currency`. Tradepad: "FX treatment" (Quanto / Composite) and "Price
+      currency" on the vanilla and the autocallable (composite strikes in % of the spot in the payment currency; the
+      % of the price on a reference in the price currency; FX spots among the greeks: "FX delta"). 2026-11-13, SPX 90%
+      put 1Y paid in EUR: quanto 230.90, composite 207.53 EUR (Black-Scholes), FX delta (per 1 of EURUSD) 1415
+      Black-Scholes, 1401 GBM, 834 local vol (40k paths: the skew lowers the probability below the strike); the same
+      put priced in EUR 211.50 = 233.69 / 1.1049. A forward-start composite autocallable has no FX delta (its strike
+      is S X at the strike date). Tests (`test_quanto.py`, 15): composite flags and validation, Black-Scholes closed
+      form on Y, GBM and local vol Monte Carlo within 3 SE of it, composite autocallable without FX risk (FX vol ~0,
+      equal rates) = the plain one on the same draws; price currency = price / EURUSD, AAD delta to the FX spot
+      `-price / EURUSD^2`, standard error converted, same currency unchanged.

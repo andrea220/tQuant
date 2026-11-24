@@ -138,7 +138,7 @@ def _rows_at(sigma_ty, lv_t, t_start):
 
 
 @tf.function(reduce_retracing=True)
-def _simulate_forward_ratio_rows(sig_rows, lv_y, t_grid, dw):
+def _simulate_forward_ratio_rows(sig_rows, lv_y, t_grid, dw, quanto):
     """Log-Euler loop on ``ln X`` with one local vol row per step (rows read from a TensorArray).
 
     The rows are not captured tensors gathered inside the loop: a ``gather`` on a captured tensor
@@ -160,17 +160,19 @@ def _simulate_forward_ratio_rows(sig_rows, lv_y, t_grid, dw):
         y0, y1 = tf.gather(lv_y, j), tf.gather(lv_y, j + 1)
         wy = (yc - y0) / (y1 - y0)
         sig = tf.gather(row, j) * (1.0 - wy) + tf.gather(row, j + 1) * wy
-        log_x = log_x - 0.5 * tf.square(sig) * dt + sig * tf.sqrt(dt) * normals.read(k)
+        log_x = log_x - (0.5 * sig + quanto) * sig * dt + sig * tf.sqrt(dt) * normals.read(k)
         paths = paths.write(k, tf.exp(log_x))
     return tf.transpose(paths.stack(), perm=[1, 0])
 
 
-def _simulate_forward_ratio(sigma_ty, lv_t, lv_y, t_grid, dw):
-    """Paths of ``X_t = S_t / F(t)`` ``[n_paths, n_steps]``: ``d ln X = -sigma^2/2 dt + sigma dW``,
-    ``sigma = sigma_loc(t, ln X)`` bilinear in (t, y) (log-Euler, exact martingale step by step)."""
+def _simulate_forward_ratio(sigma_ty, lv_t, lv_y, t_grid, dw, quanto=None):
+    """Paths of ``X_t = S_t / F(t)`` ``[n_paths, n_steps]``: ``d ln X = -(sigma^2/2 + q sigma) dt + sigma dW``,
+    ``sigma = sigma_loc(t, ln X)`` bilinear in (t, y) (log-Euler, exact martingale step by step when the quanto
+    adjustment ``q = rho sigma_X`` is 0)."""
     t_grid = tf.cast(t_grid, DTYPE)
     t_start = tf.concat([tf.zeros([1], DTYPE), t_grid[:-1]], axis=0)
-    return _simulate_forward_ratio_rows(_rows_at(sigma_ty, lv_t, t_start), lv_y, t_grid, dw)
+    quanto = tf.zeros([], DTYPE) if quanto is None else tf.cast(quanto, DTYPE)
+    return _simulate_forward_ratio_rows(_rows_at(sigma_ty, lv_t, t_start), lv_y, t_grid, dw, quanto)
 
 
 # ============================================================
@@ -205,7 +207,14 @@ class LocalVolatilityProcess(StochasticProcess):
         self._lv_y = tf.constant(np.asarray(lv_y, dtype=float), DTYPE)
         self._S0 = tf.cast(equity.spot, DTYPE)
         self._martingale_correction = martingale_correction
+        self._quanto = None
         self.arbitrage = arbitrage or {}
+
+    def set_quanto(self, adjustment) -> None:
+        """Quanto drift ``-adjustment * sigma_loc(t, S) dt`` on ``ln S`` (``adjustment = rho sigma_X``, the local vol of
+        the path). The paths are no longer rescaled to the market forward (the quanto forward is not known in closed
+        form under local vol)."""
+        self._quanto = tf.cast(adjustment, DTYPE)
 
     @classmethod
     def from_equity(
@@ -338,12 +347,12 @@ class LocalVolatilityProcess(StochasticProcess):
         """
         dw = tf.cast(tf.convert_to_tensor(dw), DTYPE)
         t_grid = tf.cast(tf.convert_to_tensor(t_grid), DTYPE)
-        x = _simulate_forward_ratio(self._sigma_ty, self._lv_t, self._lv_y, t_grid, dw)
+        x = _simulate_forward_ratio(self._sigma_ty, self._lv_t, self._lv_y, t_grid, dw, self._quanto)
         times = t_grid.numpy()
         if observation_times is not None:          # forwards (and the correction) only where observed
             cols = observation_columns(times, observation_times)
             x, times = tf.gather(x, cols, axis=1), times[cols]
-        if self._martingale_correction:
+        if self._martingale_correction and self._quanto is None:
             x = x / tf.reduce_mean(x, axis=0, keepdims=True)
         forwards = tf.stack([self._forward(t) for t in times])
         return x * forwards[None, :]

@@ -124,6 +124,46 @@ def rolling_correlations(history: pd.DataFrame, names: dict[str, str], frequency
     return out
 
 
+FX_VOL_TENORS = (1, 3, 6, 12, 24, 36, 60, 84, 120)          # months: the expiries of the flat FX vol surfaces
+FX_VOL_MONEYNESS = (0.5, 0.75, 1.0, 1.25, 1.5, 2.0)           # of the spot: the strikes
+
+
+def historical_fx_vols(history: pd.DataFrame, pairs: dict[str, tuple], today, frequency: str = "W-FRI",
+                       periods: int = 52) -> pd.DataFrame:
+    """Historical vol of each FX pair, as a flat surface (``fx_vol.csv``): the standard deviation of the log returns
+    of the closes at *frequency* over the last *periods* returns, annualised (52 weekly returns a year). For the
+    quanto drift until implied FX vols are downloaded.
+
+    Args:
+        history: Long table ``date, ticker, value``.
+        pairs: Bloomberg ticker -> ``(base, quote, spot)`` of each FX pair.
+        today: Snapshot date (the expiries of the grid from it).
+        frequency: Pandas period of the returns (``"W-FRI"``: weekly, Friday).
+        periods: Returns used (52: one year of weeks).
+
+    Returns:
+        pd.DataFrame: ``base, quote, expiry, strike, vol`` on ``FX_VOL_TENORS`` x ``FX_VOL_MONEYNESS`` of the spot;
+        ``attrs``: the settings and the vol per pair.
+    """
+    per_year = {"W": 52.0, "D": 252.0, "B": 252.0, "M": 12.0}[frequency[0]]
+    rows, vols = [], {}
+    for bbg, (base, quote, spot) in pairs.items():
+        closes = history[history["ticker"] == bbg].set_index("date")["value"].sort_index()
+        closes = closes[closes.index <= pd.Timestamp(today)].resample(frequency).last().dropna()
+        returns = np.log(closes).diff().dropna().iloc[-periods:]
+        if len(returns) < 2:
+            continue
+        vol = float(returns.std(ddof=1) * np.sqrt(per_year))
+        vols[f"{base}{quote}"] = vol
+        for months in FX_VOL_TENORS:
+            expiry = (pd.Timestamp(today) + pd.DateOffset(months=months)).date().isoformat()
+            rows += [{"base": base, "quote": quote, "expiry": expiry, "strike": float(spot) * m, "vol": vol}
+                     for m in FX_VOL_MONEYNESS]
+    out = pd.DataFrame(rows, columns=["base", "quote", "expiry", "strike", "vol"])
+    out.attrs.update(method="historical", frequency=frequency, periods=int(periods), vols=vols)
+    return out
+
+
 def correlations(history: pd.DataFrame, names: dict[str, str], window: int) -> pd.DataFrame:
     """Correlation of daily log returns over the last *window* dates common to all the tickers of *names*.
 

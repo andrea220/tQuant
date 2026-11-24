@@ -41,7 +41,7 @@ class Pricer(ABC):
         """
         return
 
-    def price(self, product: Product, market_env: MarketEnvironment, autodiff: bool = False):
+    def price(self, product: Product, market_env: MarketEnvironment, autodiff: bool = False, price_currency=None):
         """Calculates the price of a financial product, with optional automatic differentiation.
 
         Args:
@@ -49,15 +49,32 @@ class Pricer(ABC):
             market_env (MarketEnvironment): The market environment providing
                 access to market data (curves, spots, volatilities).
             autodiff (bool, optional): Whether to compute gradients using TensorFlow's autodiff. Defaults to False.
+            price_currency (Currency, optional): Currency of the price: the price in the product's payment currency
+                converted at the FX spot (``get_fx_spot``, a risk factor of the price: delta to the FX spot by AAD),
+                ``product.standard_error`` too. Default: the payment currency.
 
         """
         # the market curves pinned (monotone convex coefficients once, inside the tape: gradients unchanged)
         if autodiff:
             with GradientTape() as tape:
                 with market_env.pinned():
-                    npv = self.calculate_price(product, market_env)
+                    npv = self._in_currency(self.calculate_price(product, market_env), product, market_env,
+                                            price_currency)
             product.price = npv
             self._tape = tape
         else:
             with market_env.pinned():
-                product.price = self.calculate_price(product, market_env)
+                product.price = self._in_currency(self.calculate_price(product, market_env), product, market_env,
+                                                  price_currency)
+
+    @staticmethod
+    def _in_currency(npv, product, market_env, price_currency):
+        """*npv* (in the payment currency of *product*) converted into *price_currency* at the FX spot."""
+        payment = getattr(product, "payment_ccy", None) or product.ccy
+        product.price_currency = payment if price_currency is None else price_currency
+        if price_currency is None or price_currency == payment:
+            return npv
+        fx = market_env.get_fx_spot(payment, price_currency)
+        if getattr(product, "standard_error", None) is not None:
+            product.standard_error = product.standard_error * fx
+        return npv * fx

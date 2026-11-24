@@ -10,6 +10,7 @@ from ..markethandles.utils import ExerciseType, PayoffType
 from ..models.brownian import GeometricBrownianMotion
 from ..models.equitymodel import bind, check_model
 from ..numericalhandles.dtypes import DTYPE
+from .quanto import apply_quanto, composite_fx_paths
 from ..timehandles.utils import Settings
 
 
@@ -102,10 +103,14 @@ class VanillaMCPricer(Pricer):
         eq = market_env.get_equity(product.underlying, ccy=product.ccy)
         if eq.vol_surface is None:
             raise ValueError(f"No volatility surface for underlying '{product.underlying}'")
-        model = bind(self._model, eq, product.end_date, float(product.strike))
+        strike = float(product.strike)                  # in the underlying's currency (a composite's is in the payment one)
+        if product.is_composite:
+            strike /= float(market_env.get_fx_forward(eq.currency, product.payment_ccy, product.end_date))
+        model = bind(self._model, eq, product.end_date, strike)
 
         daycounter = eq.vol_surface.daycounter
         T = daycounter.year_fraction(Settings.evaluation_date, product.end_date)
+        curve = apply_quanto(market_env, product, eq, model, T)          # quanto: drift and payment curve
         times = np.linspace(0.0, T, self._n_steps + 1)[1:]
         monitoring = None
         if isinstance(product, BarrierOption) and not product.continuous:
@@ -118,7 +123,12 @@ class VanillaMCPricer(Pricer):
         dw = tf.random.stateless_normal([self._n_paths, len(times)] + ([k] if k > 1 else []),
                                         seed=[self._seed, 0], dtype=DTYPE)
         survival = None
-        if not isinstance(product, BarrierOption):
+        if product.is_composite:                        # the underlying in the payment currency: S_T X_T
+            if isinstance(product, BarrierOption):
+                raise ValueError("composite barrier options are not supported")
+            s_t = (model.evolve(t_grid, dw, observation_times=[T])
+                   * composite_fx_paths(market_env, product, eq, times, dw, [T], self._seed))[:, 0]
+        elif not isinstance(product, BarrierOption):
             s_t = model.evolve(t_grid, dw, observation_times=[T])[:, 0]
         elif monitoring is None:
             paths = model.evolve(t_grid, dw)
@@ -133,7 +143,7 @@ class VanillaMCPricer(Pricer):
 
         k = tf.cast(product.strike, DTYPE)
         phi = tf.constant(float(product.option_type.value), dtype=DTYPE)
-        discount_factor = tf.cast(eq.discount_curve.discount(product.end_date), DTYPE)
+        discount_factor = tf.cast(curve.discount(product.end_date), DTYPE)
         if isinstance(product, DigitalOption):
             if self._digital_smoothing > 0.0:
                 in_the_money = tf.sigmoid(phi * (s_t - k) / (self._digital_smoothing * k))

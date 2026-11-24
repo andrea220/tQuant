@@ -78,22 +78,14 @@ another currency, new and live trades, with stable AAD greeks.
    underlyings in the Tradepad). Greeks by AAD per underlying (delta, vega per node) and per correlation pair. Tests:
    one asset = single-asset pricers, perfect correlation / independence limits, basket mean = weighted forwards,
    correlation gradient vs bumps. Stochastic vol per asset: section 3.
-3. [ ] **Quanto correction and a price currency.** Products paid in a currency other than the underlying's (a
-   EUR-settled autocallable on SPX, a USD one on SX5E): a `payment_ccy` on the `Product` (default the underlying's
-   currency) and a `price_currency` in the pricers.
-   - Quanto (paid in another currency at a fixed rate): the underlying's drift adjusted by `-rho(S, X) sigma_S
-     sigma_X` (X = FX rate quote per payment currency), discounting on the payment-currency curve. Closed form for the
-     Black-Scholes pricer (`F_quanto = F exp(-rho sigma_S sigma_X T)`, vol of the FX at the forward and of the equity
-     at the strike); in the Monte Carlo models the drift term of the forward ratio (local vol first).
-   - Composite / conversion (converted at the future FX rate) as a separate flag, priced on the FX forward.
-   - `price_currency` on every pricer: price and greeks converted at the FX spot (`get_fx_spot`), the FX spot a risk
-     factor of the price.
-   - FX vol for the beta: the historical vol of the pair from the price history (window as the correlations), the
-     equity-FX correlation from the history too; check whether Bloomberg gives FX implied vols on the Desktop API
-     within the licence (ATM / risk-reversal tickers by tenor, or BVOL fields) and use them when available.
-   - Greeks: FX vol and equity-FX correlation (`CORR:ALL:GLOBAL`, pair gradient) by AAD.
-   - Tests: rho = 0 = the domestic price converted; Black-Scholes quanto closed form vs Monte Carlo on a flat smile;
-     AAD correlation / FX vol greeks vs bumps; price currency = price times FX spot, delta to the FX spot.
+3. [ ] **Quanto: what is left.** Done (DEVELOPMENT_LOG): `payment_ccy` on the products, quanto drift and payment
+   curve for Black-Scholes (vanilla, digital, barrier), GBM and local vol (vanilla and autocallable Monte Carlo),
+   historical FX vols in the snapshot, AAD greeks to the FX vols and the correlation, composite, price currency,
+   Tradepad. Left:
+   - FX implied vols from Bloomberg when the terminal is open (ATM / risk reversal by tenor, or BVOL, within the
+     licence), instead of the historical ones; the correlation stays historical.
+   - Quanto drift and composite in Heston, displaced diffusion and SLV (they raise now); composite barrier options.
+   - Cross pairs (neither the pair nor its inverse stored: e.g. a GBP-paid product on a CHF underlying).
 4. [ ] **Live (seasoned) trades.** Historical fixings (underlying, date, value: the closes of the price history) and
    the trade state (initial fixing, past coupon observations, memory of the unpaid coupons, autocalls already
    triggered) used by the pricers; today every trade is priced as if it started on the pricing date. Needed to reprice

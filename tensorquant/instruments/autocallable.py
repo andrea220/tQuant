@@ -53,6 +53,8 @@ class AutocallableOption(Product):
         strike_date: Optional[datetime.date] = None,
         autocall_step: float = 0.0,
         autocall_floor: Optional[float] = None,
+        payment_ccy: Optional[Currency] = None,
+        fx_mode: str = "quanto",
     ) -> None:
         """
         Initialize an AutocallableOption.
@@ -68,12 +70,17 @@ class AutocallableOption(Product):
         observation after the first, ``autocall_floor`` (% of the strike, optional) is its lowest level; the
         resulting barriers are ``autocall_barrier`` (one per observation).
 
+        Quanto: with a ``payment_ccy`` other than ``ccy`` (the underlying's currency) the coupons and the put, in % of
+        the notional, are paid in ``payment_ccy`` (a fixed rate): see :class:`AutocallableMCPricer`. Composite
+        (``fx_mode="composite"``): the underlying is ``S X`` (``X`` the value of one unit of ``ccy`` in
+        ``payment_ccy``), the strike its initial level and every barrier in % of it.
+
         Raises:
             ValueError: If the strike is missing for a trade struck on or before ``start_date``, given for a future
                 strike date, or a fixing is not after the strike date; if ``autocall_step`` is negative or
                 ``autocall_floor`` is above the first autocall barrier.
         """
-        super().__init__(ccy=ccy, start_date=start_date, end_date=end_date)
+        super().__init__(ccy=ccy, start_date=start_date, end_date=end_date, payment_ccy=payment_ccy, fx_mode=fx_mode)
 
         forward_start = strike_date is not None and strike_date > start_date
         if forward_start and strike is not None:

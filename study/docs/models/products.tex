@@ -106,6 +106,32 @@ $\sigma_H$ the surface vol at $(H, T)$: exact for a lognormal model with that vo
 sensitivities). Discrete monitoring checks the barrier on the dates, the indicator smoothed as for the digitals.
 
 % ─────────────────────────────────────────────────────────────────────────────
+\subsection{Quanto payment}\label{sec:mp-quanto}
+A quanto product pays its payoff, computed in the underlying's currency $f$, in another currency $d$ at a fixed rate
+(one unit of payoff = one unit of $d$): a EUR-paid option on SPX, a USD-paid autocallable on SX5E. With $X$ the value of
+one unit of $f$ in $d$, the underlying's dynamics under the measure of $d$ has an extra drift
+\[
+  \frac{dS}{S} = \big(r_f - q - \rho_{S,X}\,\sigma_S\,\sigma_X\big)\,dt + \sigma_S\,dW,
+\]
+and the payments are discounted on the curve of $d$. $\rho_{S,X}$ is the correlation of the underlying with $X$ (the
+stored pair, or minus its correlation when the stored pair is the inverse, e.g.\ EURUSD for a USD underlying paid in
+EUR) and $\sigma_X$ the vol of $X$; both come from the market data (correlation matrix, FX vol). Black--Scholes: the
+forward becomes $F\,e^{-\rho\,\sigma_S\,\sigma_X T}$, with $\sigma_S$ the vol at the strike and the discount factor of
+$d$ (vanilla, digital, barrier). Local vol: the drift uses the local vol of the path,
+$-\rho\,\sigma_{\mathrm{loc}}(t, S_t)\,\sigma_X\,dt$, so the quanto forward has no closed form and the paths are not
+rescaled to it. The FX vol is, for now, the historical vol of the pair (52 weekly returns, annualised) and the
+correlation the median of its 13-week rolling correlations with the underlying; the greeks reach both by AAD.
+
+\emph{Composite.} The payoff on the underlying converted into $d$, $Y = S\,X$, with strikes and levels in $d$ (a
+EUR-paid put on SPX struck in EUR). $Y$ is the price in $d$ of a traded asset, so its forward is $F_S\,F_X(T)$ (with
+$F_X$ the forward of $X$ by covered interest parity) and, with lognormal $S$ and $X$, its vol is
+$\sigma_Y^2 = \sigma_S^2 + \sigma_X^2 + 2\rho\,\sigma_S\sigma_X$: Black--Scholes on $Y$, discounted in $d$, $\sigma_S$ at
+the strike in the underlying's currency $K / F_X(T)$. Monte Carlo: $S$ with the quanto drift above (its dynamics
+under the measure of $d$) and $X_t = F_X(t)\,e^{-\sigma_X^2 t/2 + \sigma_X W^X_t}$ on the same draws,
+$W^X = \rho\,W^S + \sqrt{1-\rho^2}\,Z$; the payoff on $S_t X_t$. A payoff in the underlying's currency converted at
+the future FX rate needs no model: its value is the price in that currency converted at the FX spot (the price
+currency of the pricers).
+
 \subsection{Autocallable}\label{sec:mp-autocallable}
 A strike $K$ (the barriers in \% of it); coupon fixings $t_i$ with rates $c_i$, barriers $B^c_i$ and payment dates $p_i$, with or
 without memory; autocall fixings $u_j$ with barriers $B^a_j$ (a step-down lowers them by a step $\delta$ at each

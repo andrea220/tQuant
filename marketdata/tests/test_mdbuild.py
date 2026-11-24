@@ -12,7 +12,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mdbuild.history import (correlations, nearest_correlation, read_history, rolling_correlations,  # noqa: E402
+from mdbuild.history import (correlations, historical_fx_vols, nearest_correlation, read_history,  # noqa: E402
+                            rolling_correlations,
                              update_history)
 from mdbuild.snapshot import build_tables, curve_quotes, run             # noqa: E402
 from mdbuild.universe import Curve, load_curves, load_universe, parse    # noqa: E402
@@ -149,6 +150,22 @@ class TestHistory(unittest.TestCase):
         self.assertEqual(out.attrs["max_repair"], 0.0)
         self.assertEqual((out.attrs["window"], out.attrs["percentile"], out.attrs["fx_percentile"]), (13, 90.0, 50.0))
 
+    def test_historical_fx_vols(self):
+        """Flat surface per pair: the vol of the last 52 weekly log returns (Friday closes) up to today, annualised
+        (sqrt(52)); expiries 1M-10Y from today, strikes 50%-200% of the spot."""
+        src = FakeSource()
+        hist = src.history(TICKERS[:3], "PX_LAST", date(2016, 1, 1), TODAY)
+        out = historical_fx_vols(hist, {"EURUSD Curncy": ("EUR", "USD", 1.1)}, TODAY)
+        closes = hist[hist.ticker == "EURUSD Curncy"].set_index("date")["value"].resample("W-FRI").last().dropna()
+        rets = np.log(closes).diff().dropna().iloc[-52:]
+        expected = float(rets.std(ddof=1) * np.sqrt(52))
+        self.assertEqual(list(out.columns), ["base", "quote", "expiry", "strike", "vol"])
+        np.testing.assert_allclose(out["vol"], expected, rtol=1e-12)
+        self.assertEqual(out["expiry"].nunique(), 9)
+        self.assertEqual(sorted(out["strike"].unique().round(6)), sorted(round(1.1 * m, 6) for m in (0.5, 0.75, 1.0, 1.25, 1.5, 2.0)))
+        self.assertEqual(out["expiry"].min(), (pd.Timestamp(TODAY) + pd.DateOffset(months=1)).date().isoformat())
+        self.assertAlmostEqual(out.attrs["vols"]["EURUSD"], expected, places=12)
+
     def test_regime_and_short_history(self):
         """Two regimes (correlation 0.2 then 0.8): the 90th percentile reads the high one; a ticker with a short
         history does not shorten the windows of the other pair."""
@@ -256,7 +273,7 @@ class TestSnapshot(unittest.TestCase):
                          [Curve("EUR", "ESTR", "YCSW0514 Index")])
             self.assertEqual(folder, Path(tmp) / "live" / "20261112" / "1730")
             self.assertEqual(sorted(p.name for p in folder.iterdir()),
-                             ["correlations.csv", "eq_dividends.csv", "eq_spot.csv", "fx_spot.csv", "ir_fixings.csv",
+                             ["correlations.csv", "eq_dividends.csv", "eq_spot.csv", "fx_spot.csv", "fx_vol.csv", "ir_fixings.csv",
                               "ir_quotes.csv", "snapshot_info.json"])
             self.assertTrue((Path(tmp) / "history" / "prices.parquet").is_file())
 

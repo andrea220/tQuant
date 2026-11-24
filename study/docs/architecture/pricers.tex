@@ -140,6 +140,20 @@ monitoring by the Brownian-bridge survival probability on each step (vol of the 
 needed), discrete monitoring on the monitoring dates added to the grid. After pricing: \code{standard\_error},
 \code{discount\_factor}, \code{time\_to\_maturity}.
 
+\paragraph{Quanto (\code{quanto.py}, \code{black.py}).} \code{BlackScholesPricer}: for a quanto product the
+discount rate is the payment currency's and the carry \code{q + (r\_pay - r) + rho sigma sigma\_X} (European vanilla,
+digital, barrier; American rejected). Monte Carlo: \code{apply\_quanto} sets the drift on the process
+(\code{StochasticProcess.set\_quanto(rho * sigma\_X)}: \code{GeometricBrownianMotion} lowers \code{mu} by it times
+\code{sigma}, \code{LocalVolatilityProcess} by it times the local vol of the path and stops rescaling the paths to the
+forward; the other processes raise) and returns the payment curve for the discounting; diagnostics
+\code{product.quanto\_correlation}, \code{product.quanto\_fx\_vol}. Composite: \code{BlackScholesPricer} on $Y = S X$
+(spot $S X_0$, forward $F_S F_X$, vol $\sqrt{\sigma_S^2 + \sigma_X^2 + 2\rho\sigma_S\sigma_X}$, payment discount);
+Monte Carlo: the quanto drift and \code{composite\_fx\_paths} ($X$ lognormal on its forward, correlated with the
+underlying's normals, an independent stream \code{[seed, 1]}), the paths multiplied by it (composite barrier options
+rejected). \code{Pricer.price(..., price\_currency=)}: the price (and \code{product.standard\_error}) converted from
+the payment currency at \code{get\_fx\_spot} inside the tape (delta to the FX spot by AAD);
+\code{product.price\_currency}.
+
 \paragraph{\code{AutocallableMCPricer} (\code{montecarlo.py}).} \code{AutocallableOption}, investor's side:
 $N\,\E\big[\sum_i \text{coupon}_i\,P(0,\text{pay}_i) - \text{put}\,P(0,T)\big]$. Arguments: \code{model} (default
 \code{LocalVolatilityModel}; \code{GeometricBrownianMotion} accepted for debugging only: the Black--Scholes model of

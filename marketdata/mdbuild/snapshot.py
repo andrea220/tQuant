@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .history import correlations, rolling_correlations, update_history
+from .history import correlations, historical_fx_vols, rolling_correlations, update_history
 from .options import equity_option_quotes
 from .universe import Curve, Instrument
 
@@ -80,7 +80,7 @@ def curve_quotes(source, curves: list[Curve], field: str) -> pd.DataFrame:
 
 def build_tables(source, universe: list[Instrument], fields: dict, today: date, history: pd.DataFrame,
                  correlation, curves: list[Curve] = (), options: dict = None,
-                 cache_dir: Path = None) -> dict[str, pd.DataFrame]:
+                 cache_dir: Path = None, fx_vol: dict = None) -> dict[str, pd.DataFrame]:
     """Snapshot tables of *universe* on *today* (``{file name: frame}``); with *options* (the ``options`` block of
     the settings) also ``eq_option_quotes.csv`` (chains cached in *cache_dir*). *correlation*: the ``correlation``
     block of the settings (``frequency``, ``window``, ``percentile``: :func:`rolling_correlations`), or a number of
@@ -165,6 +165,10 @@ def build_tables(source, universe: list[Instrument], fields: dict, today: date, 
             float(correlation.get("percentile", 90.0)), float(correlation.get("fx_percentile", 50.0)))
     else:
         tables["correlations.csv"] = correlations(history, names, int(correlation))
+    fx_vol = fx_vol or {}                                   # historical FX vols: the quanto drift
+    tables["fx_vol.csv"] = historical_fx_vols(
+        history, {i.bbg: (i.fx_base, i.fx_quote, float(ref.loc[i.bbg, fields["price"]])) for i in universe
+                  if i.kind == "fx"}, today, fx_vol.get("frequency", "W-FRI"), int(fx_vol.get("periods", 52)))
     return tables
 
 
@@ -186,14 +190,16 @@ def run(source, universe: list[Instrument], settings: dict, base: Path, now: dat
     history = update_history(Path(base) / out["history"] / "prices.parquet", source, priced, fields["price"],
                              settings["history"]["years"], now.date())
     tables = build_tables(source, universe, fields, now.date(), history, settings["correlation"],
-                          curves, settings.get("options"), Path(base) / out.get("cache", "cache") / "option_chains")
+                          curves, settings.get("options"), Path(base) / out.get("cache", "cache") / "option_chains",
+                          fx_vol=settings.get("fx_vol"))
     info = {"created": now.isoformat(timespec="seconds"), "source": type(source).__name__,
             "universe": [i.bbg for i in universe], "fields": fields,
             "history": {"rows": int(len(history)), "first": str(history["date"].min().date()) if len(history) else None},
             "rows": {name: int(len(frame)) for name, frame in tables.items()},
             "curves": {f"{c.ccy} {c.name}": c.bbg for c in curves},
             "correlation": dict(tables["correlations.csv"].attrs),
-            "missing": "ir_vol, fx_vol: from the internal service (not yet); curves: quotes only (ir_quotes.csv), "
+            "fx_vol": dict(tables["fx_vol.csv"].attrs),
+            "missing": "ir_vol: from the internal service (not yet); fx_vol: historical, flat (implied FX vols not yet); curves: quotes only (ir_quotes.csv), "
                        "bootstrapped by tQuant; eq_vol / eq_repo: from the option quotes (eq_option_quotes.csv), "
                        "built by tQuant"}
     return write_snapshot(Path(base) / out["snapshots"], tables, info, now)

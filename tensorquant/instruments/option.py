@@ -18,8 +18,10 @@ class Option(Product, ABC):
         strike: float | list[float],
         exercise_type: ExerciseType,
         underlying: str = "DEFAULT",
+        payment_ccy: Currency = None,
+        fx_mode: str = "quanto",
     ):
-        super().__init__(ccy, start_date, end_date)
+        super().__init__(ccy, start_date, end_date, payment_ccy, fx_mode)
         self._option_type = option_type
         self._strike = as_variable(strike)   # float64 (product input, not a market risk factor)
         self._underlying = underlying
@@ -73,6 +75,8 @@ class VanillaOption(Option):
         strike,
         underlying: str = "DEFAULT",
         exercise_type: ExerciseType = ExerciseType.European,
+        payment_ccy: Currency = None,
+        fx_mode: str = "quanto",
     ):
         super().__init__(
             ccy,
@@ -82,6 +86,8 @@ class VanillaOption(Option):
             strike,
             exercise_type,
             underlying,
+            payment_ccy,
+            fx_mode,
         )
         self._delta = None
         self._gamma = None

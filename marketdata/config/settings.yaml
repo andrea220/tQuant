@@ -43,6 +43,10 @@ correlation:                # per pair: the percentile of its rolling-window cor
   percentile: 90            # between equities: a stressed, high correlation (worst-of)
   fx_percentile: 50         # pairs with an FX rate: the median (a central estimate with its sign, for the quanto)
 
+fx_vol:                     # historical FX vols, flat surfaces (fx_vol.csv), for the quanto drift
+  frequency: W-FRI          # weekly log returns (last close of each week, Friday)
+  periods: 52               # the last 52 weeks (one year), annualised
+
 output:
   snapshots: live           # marketdata/live/<yyyymmdd>/<hhmm>/ (git-ignored: licensed data)
   history: history          # marketdata/history/ (git-ignored)

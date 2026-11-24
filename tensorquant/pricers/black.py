@@ -441,6 +441,37 @@ class BlackScholesPricer(Pricer):
             s_net = s
             q = repo
 
+        # quanto (paid in product.payment_ccy at a fixed rate): under the payment-currency measure the drift is
+        # r - q - rho sigma sigma_X; with the payment rate r_p as the discount rate the carry becomes
+        # q + (r_p - r) + rho sigma sigma_X (exact for Black-Scholes, digitals and barriers)
+        product.quanto_correlation = product.quanto_fx_vol = None
+        if product.is_quanto:
+            if product.exercise_type == ExerciseType.American:
+                raise ValueError("quanto American options are not supported")
+            rho, sigma_x = market_env.get_quanto(eq.ticker, eq.currency, product.payment_ccy, tenor)
+            discount_factor = tf.cast(market_env.get_ir_curve(product.payment_ccy).discount(product.end_date), DTYPE)
+            r_pay = -tf.math.log(discount_factor) / tenor
+            q = q + (r_pay - r) + rho * sigma * sigma_x
+            r = r_pay
+            product.quanto_correlation, product.quanto_fx_vol = rho, sigma_x
+        elif product.is_composite:
+            # composite: the underlying in the payment currency, Y = S X (X: one unit of the underlying's currency
+            # in the payment one), forward F_S F_X(T), vol sigma_Y^2 = sigma_S^2 + sigma_X^2 + 2 rho sigma_S sigma_X,
+            # discounted in the payment currency; sigma_S at the strike in the underlying's currency K / F_X(T)
+            if product.exercise_type == ExerciseType.American:
+                raise ValueError("composite American options are not supported")
+            rho, sigma_x = market_env.get_quanto(eq.ticker, eq.currency, product.payment_ccy, tenor)
+            fx_spot = tf.cast(market_env.get_fx_spot(eq.currency, product.payment_ccy), DTYPE)
+            fx_forward = tf.cast(market_env.get_fx_forward(eq.currency, product.payment_ccy, product.end_date), DTYPE)
+            sigma_s = eq.vol_surface.volatility(strike=float(product.strike) / float(fx_forward), tenor=tenor)
+            forward = s_net * tf.exp((r - q) * tenor) * fx_forward
+            discount_factor = tf.cast(market_env.get_ir_curve(product.payment_ccy).discount(product.end_date), DTYPE)
+            r = -tf.math.log(discount_factor) / tenor
+            s_net = s_net * fx_spot
+            q = r - tf.math.log(forward / s_net) / tenor
+            sigma = tf.sqrt(sigma_s * sigma_s + sigma_x * sigma_x + 2.0 * rho * sigma_s * sigma_x)
+            product.quanto_correlation, product.quanto_fx_vol = rho, sigma_x
+
         # --- diagnostics on the product (tensors; spot is the market variable) ---
         product.spot = s
         product.spot_net = s_net

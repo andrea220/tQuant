@@ -40,6 +40,8 @@ IBOR = "6M"              # the Ibor index of the rates products (curve IR:<ccy>:
 CALIBRATED = {"Heston": "Heston", "Displaced diffusion": "DisplacedDiffusion", "Heston SLV": "HestonSLV"}
 # GBM on an autocallable: for debugging only (the Black-Scholes model of one expiry, wrong at the intermediate dates)
 GBM_DEBUG = "GBM (debug)"
+SAME_CCY = "Underlying currency"         # payment currency of a product that is not quanto
+PAYMENT_CCY = "Payment currency"         # price currency: the payment one (no conversion)
 
 
 class ModelCache:
@@ -166,6 +168,10 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
     option = [underlying, _select("option_type", "Type", ["Put", "Call"]), _number("strike_pct", "Strike (% spot)", 100.0, 0.5),
               _date("expiry", "Expiry", one_year), _number("quantity", "Quantity", 1.0)]
     equity_models = ["Black-Scholes", "Local vol", *CALIBRATED]
+    ccys = _rate_currencies(mkt, "ois")
+    payment = [_select("payment_ccy", "Payment currency", [SAME_CCY, *ccys], SAME_CCY),
+               _select("fx_mode", "FX treatment", ["Quanto", "Composite"], "Quanto"),
+               _select("price_ccy", "Price currency", [PAYMENT_CCY, *ccys], PAYMENT_CCY)]
 
     def rates_common(needs):
         return [_select("ccy", "Currency", _rate_currencies(mkt, needs)), _number("notional", "Notional", 1e6, 1e5),
@@ -176,8 +182,8 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
 
     products = {
         "Equity": {
-            "Vanilla": {"fields": option[:2] + [_select("exercise", "Exercise", ["European", "American"])] + option[2:],
-                        "models": equity_models},
+            "Vanilla": {"fields": option[:2] + [_select("exercise", "Exercise", ["European", "American"])] + option[2:]
+                        + payment, "models": equity_models},
             "Digital": {"fields": option + [_select("payoff", "Payoff", ["Cash", "Asset"]),
                                             _number("cash_amount", "Cash amount", 100.0)], "models": equity_models},
             "Barrier": {"fields": option + [_select("barrier_type", "Barrier type", [b.value for b in tq.BarrierType]),
@@ -215,7 +221,7 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
         },
         "Exotics": {
             "Autocallable": {"fields": [underlying]
-                             + _group("Deal parameters", _number("notional", "Notional", 100.0),
+                             + _group("Deal parameters", _number("notional", "Notional", 100.0), *payment,
                                       _date("strike_date", "Strike date", strike_default.isoformat()),
                                       _date("maturity", "Maturity", maturity_default))
                              + _group("Coupon", _select("coupon_type", "Type", ["Standard", "Memory"]),
@@ -243,6 +249,30 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
 # building the products
 # ----------------------------------------------------------------------------------------------------------------
 
+def _payment_ccy(f: dict, eq):
+    """The payment currency of the deal fields: ``None`` when it is the underlying's (not quanto)."""
+    name = f.get("payment_ccy") or SAME_CCY
+    if name == SAME_CCY or name == eq.currency.name:
+        return None
+    return tq.Currency[name]
+
+
+def _fx_mode(f: dict) -> str:
+    return "composite" if f.get("fx_mode") == "Composite" else "quanto"
+
+
+def _composite_fx(mkt, f: dict, eq) -> float:
+    """FX spot of a composite (1 unit of the underlying's currency in the payment one), 1 otherwise: the levels of
+    a composite are in the payment currency (``S X``)."""
+    pay = _payment_ccy(f, eq)
+    return float(mkt.get_fx_spot(eq.currency, pay)) if pay is not None and _fx_mode(f) == "composite" else 1.0
+
+
+def _price_ccy(f: dict):
+    name = f.get("price_ccy") or PAYMENT_CCY
+    return None if name == PAYMENT_CCY else tq.Currency[name]
+
+
 def _equity_option(mkt, f: dict, kind: str):
     eq = mkt.get_equity(f["ticker"])
     s0 = float(f.get("_ref_spot", eq.spot))   # strikes on the market spot, not on an override
@@ -251,9 +281,11 @@ def _equity_option(mkt, f: dict, kind: str):
         raise ValueError("the expiry must be after the snapshot date")
     option_type = tq.OptionType.Call if f["option_type"] == "Call" else tq.OptionType.Put
     common = (eq.currency, mkt.evaluation_date, expiry, option_type, s0 * float(f["strike_pct"]) / 100)
-    if kind == "Vanilla":
+    if kind == "Vanilla":                          # composite: the strike in % of the spot in the payment currency
         exercise = tq.ExerciseType.American if f.get("exercise") == "American" else tq.ExerciseType.European
-        return tq.VanillaOption(*common, underlying=eq.ticker, exercise_type=exercise)
+        strike = common[4] * _composite_fx(mkt, f, eq)
+        return tq.VanillaOption(*common[:4], strike, underlying=eq.ticker, exercise_type=exercise,
+                                payment_ccy=_payment_ccy(f, eq), fx_mode=_fx_mode(f))
     if kind == "Digital":
         payoff = tq.PayoffType.AssetOrNothing if f.get("payoff") == "Asset" else tq.PayoffType.CashOrNothing
         return tq.DigitalOption(*common, payoff_type=payoff, cash_amount=float(f.get("cash_amount", 1.0)),
@@ -302,13 +334,14 @@ def _autocallable(mkt, f: dict):
     step = float(f.get("autocall_step", 0.0) or 0.0)                      # step-down, with its floor only then
     return tq.AutocallableOption(
         ccy=eq.currency, notional=float(f["notional"]), start_date=today, end_date=end,
-        strike=None if forward_start else float(f.get("_ref_spot", eq.spot)), strike_date=strike_date,
+        strike=None if forward_start else float(f.get("_ref_spot", eq.spot)) * _composite_fx(mkt, f, eq),
+        strike_date=strike_date,
         coupon_fixing_dates=coupons, coupon_payment_dates=coupons,
         coupon_rates=[float(f["coupon"])], coupon_barriers=[float(f["coupon_barrier"])],
         memory=f["coupon_type"] == "Memory", autocall_fixing_dates=autocalls, autocall_payment_dates=autocalls,
         autocall_barrier=[float(f["autocall_barrier"])], payoff_barrier=float(f["put_barrier"]),
         payoff_participation=float(f["put_participation"]) / 100, put_strike=float(f["put_strike"]),
-        underlying=eq.ticker, autocall_step=step,
+        underlying=eq.ticker, autocall_step=step, payment_ccy=_payment_ccy(f, eq), fx_mode=_fx_mode(f),
         autocall_floor=float(f["autocall_floor"]) if step > 0 and f.get("autocall_floor") not in (None, "") else None)
 
 
@@ -604,7 +637,11 @@ def describe_trade(mkt: tq.MarketEnvironment, request: dict) -> dict:
               else float(product.strike))
     summary = [["Strike (initial fixing)", strike, 2], ["Strike date", product.strike_date.isoformat(), None],
                ["Maturity", product.end_date.isoformat(), None],
-               ["Notional", float(product.notional), 2], ["Coupon type", "Memory" if product.memory else "Standard", None],
+               ["Notional", float(product.notional), 2],
+               ["Payment currency", f"{product.payment_ccy.name} (quanto)" if product.is_quanto
+                else f"{product.payment_ccy.name} (composite: levels on S X)" if product.is_composite
+                else product.payment_ccy.name, None],
+               ["Coupon type", "Memory" if product.memory else "Standard", None],
                ["Put", f"barrier {product.payoff_barrier:g}%, strike {product.put_strike:g}%, "
                        f"participation {100 * product.payoff_participation:g}%", None],
                ["Autocall", f"barrier {product.autocall_barrier[0]:g}%"
@@ -711,10 +748,14 @@ def _equity_price(mkt, cache, kind, f, model, n_paths, seed) -> dict:
             pricer = tq.VanillaMCPricer(model=instance, n_paths=int(n_paths),
                                         n_steps=max(MIN_STEPS, math.ceil(STEPS_PER_YEAR * T)), seed=int(seed))
     t0 = time.perf_counter()
-    pricer.price(product, mkt, autodiff=True)
+    price_ccy = _price_ccy(f)
+    pricer.price(product, mkt, autodiff=True, price_currency=price_ccy)
+    to_price = 1.0 if price_ccy is None else float(mkt.get_fx_spot(product.payment_ccy, price_ccy))
+    # reference of the % in the price currency: the spot (in the payment currency for a composite) or the notional
+    ref = (s0 * _composite_fx(mkt, f, eq) if kind != "Autocallable" else product.notional) * to_price
     return {"kind": kind, "f": f, "model": model, "n_paths": n_paths, "seed": seed, "eq": eq, "s0": s0, "qty": qty,
             "product": product, "pricer": pricer, "instance": instance, "calibration_s": calibration_s, "t0": t0,
-            "price_s": time.perf_counter() - t0}
+            "price_s": time.perf_counter() - t0, "ref": ref, "to_price": to_price}
 
 
 def _quick_headline(state: dict) -> list:
@@ -722,7 +763,7 @@ def _quick_headline(state: dict) -> list:
     kind, product, qty, s0 = state["kind"], state["product"], state["qty"], state["s0"]
     return [["Price", qty * float(product.price), 4],
             ["Premium (% spot)" if kind != "Autocallable" else "Price (% notional)",
-             100 * float(product.price) / (s0 if kind != "Autocallable" else product.notional), 3],
+             100 * float(product.price) / state["ref"], 3],
             ["Pricing [s]", state["price_s"], 1]]
 
 
@@ -732,7 +773,14 @@ def _equity_greeks(mkt, state: dict) -> dict:
     eq, s0, qty, product, pricer = state["eq"], state["s0"], state["qty"], state["product"], state["pricer"]
     instance, calibration_s, t0 = state["instance"], state["calibration_s"], state["t0"]
     params = instance.parameters if instance is not None else {}
-    g = pricer.tape.gradient(product.price, {"model": params, "market": eq.risk_factors()})
+    factors = eq.risk_factors()
+    fx_product = product.is_quanto or product.is_composite
+    converted = getattr(product, "price_currency", product.payment_ccy) != product.payment_ccy
+    if fx_product or converted:                     # payment curve, FX vols and spots, correlations too
+        factors = {**factors, **{k: v for k, v in mkt.risk_factors().items()
+                                 if k.startswith(f"IR:{product.payment_ccy.name}:") or k.startswith("CORR:")
+                                 or k.startswith("FX:")}}
+    g = pricer.tape.gradient(product.price, {"model": params, "market": factors})
     market = _to_numpy(g["market"])
     greeks = (tq.par_greeks(instance, {k: v.numpy() for k, v in g["model"].items()}, market, equity=eq)
               if instance is not None and params else market)
@@ -743,7 +791,7 @@ def _equity_greeks(mkt, state: dict) -> dict:
     rho = _rho_buckets(mkt, greeks, qty)
     price = qty * float(product.price)
     headline = [["Price", price, 4], ["Premium (% spot)" if kind != "Autocallable" else "Price (% notional)",
-                                      100 * float(product.price) / (s0 if kind != "Autocallable" else product.notional), 3],
+                                      100 * float(product.price) / state["ref"], 3],
                 ["Std error", None if se is None else qty * float(se), 4],
                 ["Delta", qty * float(np.sum(greeks[spot_key][0])), 4], ["Vega (1 vol pt)", vega["total"], 4],
                 ["Rho (1 bp)", sum(r["total"] for r in rho), 4],
@@ -759,6 +807,8 @@ def _equity_greeks(mkt, state: dict) -> dict:
     if kind != "Autocallable":
         info.insert(1, ["Strike", float(product.strike), 2])
         info.append(["Vol at strike (%)", 100 * float(eq.vol_surface.volatility(strike=float(product.strike), tenor=T)), 2])
+    if fx_product or converted:                     # quanto / composite / converted: inputs and sensitivities
+        info += _quanto_info(mkt, eq, product, greeks, qty)
     if instance is not None:
         info.append(["Monte Carlo", f"{int(n_paths):,} paths", None])
     if getattr(instance, "source_set", None):
@@ -770,7 +820,8 @@ def _equity_greeks(mkt, state: dict) -> dict:
                 dividend_model="discrete" if eq.dividend_model == "discrete" else "continuous")
         else:
             make = lambda o: tq.VanillaMCPricer(model=instance, n_paths=int(n_paths), n_steps=T_steps, seed=int(seed))
-        gamma, theta = _vanilla_gamma_theta(mkt, eq, f, kind, make, analytic=instance is None)
+        gamma, theta = (state["to_price"] * x for x in _vanilla_gamma_theta(mkt, eq, f, kind, make,
+                                                                             analytic=instance is None))
         by_label = {h[0]: h for h in headline}
         headline = [by_label["Price"], by_label["Premium (% spot)"], by_label["Delta"], ["Gamma", qty * gamma, 6],
                     ["Theta (1 day)", qty * theta, 4], by_label["Vega (1 vol pt)"], by_label["Rho (1 bp)"]]
@@ -783,6 +834,37 @@ def _equity_greeks(mkt, state: dict) -> dict:
                  "equivalent": value} for label, value, _ in headline if label in units]
         sensitivities = {"quantity": qty, "rows": rows}
     return {"headline": headline, "info": info, "vega": vega, "rho": rho, "sensitivities": sensitivities}
+
+
+def _quanto_info(mkt, eq, product, greeks: dict, qty: float) -> list:
+    """Quanto rows of the info table: payment currency, correlation with ``X`` (1 unit of the underlying's currency in
+    the payment one), FX vol, and the sensitivities to the FX vols (1 vol pt) and to that correlation (+0.01)."""
+    mode = " (quanto)" if product.is_quanto else " (composite: S X)" if product.is_composite else ""
+    rows = [["Payment currency", f"{product.payment_ccy.name}{mode}", None]]
+    if getattr(product, "price_currency", product.payment_ccy) != product.payment_ccy:
+        rows.append(["Price currency", f"{product.price_currency.name} (at the FX spot)", None])
+    fx_delta = sum(float(np.sum(v)) for k, vs in greeks.items() if k.startswith("FX:") and k.endswith(":SPOT")
+                   for v in vs if v is not None)
+    if fx_delta:
+        rows.append(["FX delta (per 1 of FX spot)", qty * fx_delta, 4])
+    if getattr(product, "quanto_correlation", None) is not None:
+        rows += [["Correlation with the FX rate", float(product.quanto_correlation), 3],
+                 ["FX vol (%)", 100 * float(product.quanto_fx_vol), 2]]
+    fx_vega = sum(float(np.sum(v)) for k, vs in greeks.items() if k.startswith("FX:") and k.endswith(":VOL")
+                  for v in vs if v is not None)
+    rows.append(["FX vega (1 vol pt)", qty * fx_vega / 100, 4])
+    corr_key = "CORR:ALL:GLOBAL:SPOT"
+    if corr_key in greeks and greeks[corr_key][0] is not None:
+        names = mkt.get_correlation_matrix().names
+        und = f"EQ:{eq.currency.name}:{eq.ticker}"
+        pay = product.payment_ccy.name
+        fx = next((n for n in names if n in (f"FX:{pay}:{eq.currency.name}{pay}", f"FX:{eq.currency.name}:{pay}{eq.currency.name}")),
+                  None)
+        g = np.asarray(greeks[corr_key][0])
+        if und in names and fx is not None and g.ndim == 2:
+            i, j = names.index(und), names.index(fx)
+            rows.append([f"Correlation sensitivity ({fx.split(':')[2]}, +0.01)", qty * float(g[i, j] + g[j, i]) / 100, 4])
+    return rows
 
 
 def _price_rates(mkt, kind, f) -> dict:

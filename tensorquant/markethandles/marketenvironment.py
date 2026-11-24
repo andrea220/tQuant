@@ -17,7 +17,7 @@ from .dividendcurve import DividendCurve
 from .equity import Equity
 from .correlation import CorrelationMatrix
 from .swaptionvolcube import SwaptionVolCube
-from ..numericalhandles.dtypes import as_variable
+from ..numericalhandles.dtypes import DTYPE, as_variable
 from ..timehandles.daycounter import DayCounter, DayCounterConvention
 from ..timehandles.utils import Settings
 
@@ -1094,6 +1094,38 @@ class MarketEnvironment:
             KeyError: If a name is unknown.
         """
         return self.get_correlation_matrix().submatrix(names)
+
+    def get_quanto(self, ticker: str, ccy: Currency | str, payment_ccy: Currency | str, tenor: float) -> tuple:
+        """Inputs of the quanto adjustment of *ticker* (currency *ccy*) paid in *payment_ccy*: the correlation of the
+        underlying with ``X``, the value of 1 unit of *ccy* in *payment_ccy*, and the vol of ``X``.
+
+        Under the payment-currency measure the underlying drifts by ``-rho sigma_S sigma_X`` more. ``X`` is the stored
+        pair *ccy*/*payment_ccy* or its inverse (``1 / x``: same vol, correlation with the opposite sign); the vol is the
+        pair's surface at its spot and *tenor*, the correlation the market's (``EQ:<ccy>:<ticker>`` with
+        ``FX:<quote>:<base><quote>``).
+
+        Returns:
+            tuple: ``(rho, sigma_x)`` float64 tensors, differentiable w.r.t. the correlation matrix and the FX vols.
+
+        Raises:
+            ValueError: If neither the pair nor its inverse is stored (crosses are not derived), or it has no vol
+                surface, or the market has no correlation matrix.
+            KeyError: If the correlation matrix does not have the underlying or the pair.
+        """
+        und = ccy.name if isinstance(ccy, Currency) else str(ccy)
+        pay = payment_ccy.name if isinstance(payment_ccy, Currency) else str(payment_ccy)
+        fx = RiskFactor.FX.value
+        if f"{fx}:{pay}:{und}{pay}:{MarketDataType.SPOT.value}" in self._market:
+            base, quote, sign = und, pay, 1.0                     # X is the stored pair
+        elif f"{fx}:{und}:{pay}{und}:{MarketDataType.SPOT.value}" in self._market:
+            base, quote, sign = pay, und, -1.0                    # X = 1 / the stored pair
+        else:
+            raise ValueError(f"quanto {und} -> {pay}: no FX pair {und}{pay} or {pay}{und} in the market")
+        surface = self.get_fx_vol_surface(base, quote)
+        sigma_x = surface.volatility(strike=float(self.get_fx_spot(base, quote)), tenor=float(tenor))
+        names = [f"{RiskFactor.EQ.value}:{und}:{ticker}", f"{fx}:{quote}:{base}{quote}"]
+        rho = sign * self.get_correlation(names)[0, 1]
+        return tf.cast(rho, DTYPE), tf.cast(sigma_x, DTYPE)
 
     def get_currency(self, ticker: str) -> Currency:
         """Return the :class:`Currency` associated with *ticker*.

@@ -137,6 +137,11 @@ history: the barrier is assumed not hit so far). Knock-in + knock-out = vanilla.
 (Reiner--Rubinstein, Broadie--Glasserman--Kou shift for discrete monitoring) and by Monte Carlo (Brownian-bridge
 survival for continuous monitoring, monitoring dates on the grid for discrete).
 
+\paragraph{Quanto and composite.} \code{Product} has a \code{payment\_ccy} (default \code{ccy}, the underlying's
+currency) and an \code{fx\_mode}, \code{"quanto"} (paid in \code{payment\_ccy} at a fixed rate) or \code{"composite"}
+(the payoff on $S X$, strikes and levels in \code{payment\_ccy}); \code{is\_quanto}, \code{is\_composite}.
+\code{VanillaOption} and \code{AutocallableOption} take both.
+
 \paragraph{\code{AutocallableOption}.} An equity autocallable, investor's side, as a derivative (no capital
 redemption):
 \begin{itemize}[nosep]
