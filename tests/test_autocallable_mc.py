@@ -268,6 +268,37 @@ class TestGreeks(ACTestCase):
         self.assertLess(abs(float(gbm.price) - float(lv.price)), 4 * se)
 
 
+class TestProjections(ACTestCase):
+    def test_expected_flows_reprice_the_product(self):
+        """Hard payoff: the expected coupons and puts of the paths, discounted, give the price (investor's side:
+        coupons minus the put); the autocall probabilities and the
+        probability of reaching the maturity add up to one; GBM forwards = the market ones within 3 SE."""
+        prod = make_autocallable(memory=True)
+        pricer = self.price(prod, n_paths=4_000)
+        proj = pricer.projections()
+        curve = self.mkt.get_ir_curve(tq.Currency.EUR)
+        coupons = sum(r["coupon"] * float(curve.discount(r["date"])) for r in proj["cash_flows"])
+        puts = sum(r["put"] * float(curve.discount(r["date"])) for r in proj["cash_flows"])         # negative
+        self.assertAlmostEqual(coupons + puts, float(prod.price), places=12)
+        self.assertAlmostEqual(-proj["cash_flows"][-1]["put"], proj["maturity"]["put"], places=14)
+        self.assertAlmostEqual(proj["autocall"][-1]["cumulative"] + proj["maturity"]["reached"], 1.0, places=12)
+        self.assertGreater(proj["maturity"]["knock_in"], 0.0)
+        years = lambda d: (d - EVAL_DATE).days / 365.0               # expected life = sum of P(redemption) x time
+        pay = dict(zip(prod.autocall_fixing_dates, prod.autocall_payment_dates))
+        life = sum(r["probability"] * years(pay[r["date"]]) for r in proj["autocall"])
+        life += proj["maturity"]["reached"] * years(prod.coupon_payment_dates[-1])
+        self.assertAlmostEqual(proj["maturity"]["expected_life"], life, places=12)
+        self.assertEqual(proj["worst"], [])                           # one underlying: no worst-of split
+        paths = pricer.paths.numpy()
+        for c, row in enumerate(proj["forwards"][0]["rows"]):
+            se = paths[:, c].std() / np.sqrt(len(paths))
+            self.assertLess(abs(row["mean"] - row["forward"]), 3 * se)
+
+    def test_nothing_priced(self):
+        with self.assertRaises(ValueError):
+            tq.AutocallableMCPricer().projections()
+
+
 def make_forward_start(start_years=1, tenor_years=3, strike_date=None, strike=None):
     """Autocallable struck at a future date: coupons every 6M after the strike date, autocalls from one year after
     it; barriers and put strike in % of the spot fixed at the strike date."""

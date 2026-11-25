@@ -53,6 +53,7 @@ class Engine:
             self.market = None                            # no snapshot yet: the app starts empty, waiting for a download
         self.models = ModelCache(CALIBRATIONS)
         self.jobs: dict = {}                              # pending second phases of the prices (greeks)
+        self.projections: dict = {}                       # projections of the last prices, computed on request
         self._job_ids = itertools.count(1)
 
     def _load(self, day: Optional[str], calibration_set: Optional[str]) -> tq.MarketEnvironment:
@@ -87,12 +88,18 @@ class Engine:
             out = price_trade(mkt, self.models, request, n_paths=int(request.get("n_paths", 50_000)),
                               phase=request.get("phase", "all"))
             pending = out.pop("pending", None)
+            projections = out.pop("projections", None)
             if pending is not None:
                 job = str(next(self._job_ids))
                 self.jobs[job] = (mkt, pending)
                 for old in list(self.jobs)[:-4]:          # keep the last few
                     self.jobs.pop(old, None)
+                if projections is not None:
+                    self.projections[job] = (mkt, projections)
+                    for old in list(self.projections)[:-4]:
+                        self.projections.pop(old, None)
                 out["job"] = job
+                out["has_projections"] = projections is not None
             return out
 
     def greeks(self, job: str) -> dict:
@@ -103,6 +110,18 @@ class Engine:
             mkt, finish = self.jobs.pop(job)
             tq.Settings.evaluation_date = mkt.evaluation_date
             return finish()
+
+    def project(self, job: str) -> dict:
+        """Projections of the price *job* (expected flows, autocall probabilities, forwards), from its paths; the
+        result is kept."""
+        with self.lock:
+            if job not in self.projections:
+                raise KeyError(f"no projections for pricing job {job} (price again)")
+            mkt, build = self.projections[job]
+            if callable(build):
+                tq.Settings.evaluation_date = mkt.evaluation_date
+                self.projections[job] = (mkt, build())
+            return self.projections[job][1]
 
     def refresh_latest(self) -> None:
         """A new snapshot was written: the latest one (``None`` keys, Tradepad market) is looked up again."""
@@ -299,6 +318,14 @@ def tradepad_market(request: dict = Body(...)) -> dict:
 def price(request: dict = Body(...)) -> dict:
     try:
         return engine.price(request)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/price/projections")
+def price_projections(request: dict = Body(...)) -> dict:
+    try:
+        return engine.project(str(request.get("job")))
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

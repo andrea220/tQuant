@@ -134,6 +134,18 @@ class TestPaths(WorstOfCase):
             with self.subTest(model=model.__name__, what="correlation"):
                 self.assertAlmostEqual(rho, RHO, delta=0.04)
 
+    def test_projections_worst_underlying(self):
+        """Who is the worst at maturity: the shares add up to one among the paths reaching it and among the knocked-in
+        ones, and match the argmin of the performances on the paths."""
+        prod = worst_of()
+        pricer = self.pricer(n_paths=4_000)
+        pricer.price(prod, self.mkt)
+        proj = pricer.projections()
+        self.assertEqual([w["ticker"] for w in proj["worst"]], ["A", "B"])
+        self.assertAlmostEqual(sum(w["maturity"] for w in proj["worst"]), 1.0, places=12)
+        self.assertAlmostEqual(sum(w["knock_in"] for w in proj["worst"]), 1.0, places=12)
+        self.assertGreater(proj["worst"][1]["maturity"], proj["worst"][0]["maturity"])   # B: the higher vol
+
     def test_heston_rejected(self):
         with self.assertRaises(ValueError):
             self.pricer(model=tq.HestonModel).price(worst_of(), self.mkt)

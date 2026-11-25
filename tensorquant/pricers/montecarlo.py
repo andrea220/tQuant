@@ -144,6 +144,7 @@ class AutocallableMCPricer(Pricer):
             n = self._n_paths
         elif product.is_quanto:
             curve = market_env.get_ir_curve(product.payment_ccy)
+        self._equities = [eq]
         return self._value(product, perf, set(known), curve, eval_date, n)
 
     def _model_for(self, ticker: str):
@@ -178,6 +179,7 @@ class AutocallableMCPricer(Pricer):
         fixings = self._future_dates(product, eval_date, forward_start)
         product.quanto = {}
         self.paths, self.time_grid, self.date_grid, self.performance = None, np.zeros(0), [], None
+        self._by_underlying, self._column = None, {}
         n = 1
         if fixings:
             fixing_times = np.array([daycounter.year_fraction(eval_date, d) for d in fixings])
@@ -201,11 +203,14 @@ class AutocallableMCPricer(Pricer):
             self.paths, self.time_grid, self.date_grid = paths, fixing_times, fixings
             k_paths = (paths[:, column[strike_date], :] if forward_start
                        else tf.stack([tf.cast(k, DTYPE) for k in strikes])[None, :])
-            performance = tf.reduce_min(paths / k_paths[:, None, :], axis=2)                          # worst of
+            by_underlying = paths / k_paths[:, None, :]
+            performance = tf.reduce_min(by_underlying, axis=2)                                         # worst of
             self.performance = performance
+            self._by_underlying, self._column = by_underlying, column      # projections: who is the worst
             perf.update({d: performance[:, column[d]] for d in fixings if d in observations})
             n = self._n_paths
         curve = market_env.get_ir_curve(payment_ccy)
+        self._equities = equities
         return self._value(product, perf, set(known), curve, eval_date, n)
 
     # ------------------------------------------------------------------
@@ -252,6 +257,99 @@ class AutocallableMCPricer(Pricer):
                     row.append(tf.constant(market_env.get_eq_fixing(eq.ticker, d, eq.currency), DTYPE))  # raises
             known[d] = row
         return known
+
+    def projections(self) -> dict:
+        """Expected values of the last pricing, from its paths (exact indicators, not discounted), per unit notional.
+
+        Returns:
+            dict: ``cash_flows`` (per payment date after the evaluation date: ``coupon``, ``redemption`` (the notional
+            back, at an autocall or at maturity), ``put`` (minus the put paid by the investor at maturity), ``total``), ``autocall`` (per autocall observation:
+            ``probability`` of being called there, ``cumulative``), ``maturity`` (``reached`` and ``knock_in``
+            probabilities, the expected ``put``, ``loss_given_knock_in``, ``expected_life``: the mean time to
+            the redemption, autocall or maturity, in years), ``worst`` (worst-of: per underlying the share of the paths
+            where it is the worst at maturity, among those reaching it and among those knocked in), ``forwards`` (per underlying and future observation: the mean
+            of the simulated level, its 10th and 90th percentiles ``p10`` / ``p90``, the market forward; with a quanto drift
+            the mean differs from the forward).
+
+        Raises:
+            ValueError: If nothing was priced yet.
+        """
+        if getattr(self, "_last", None) is None:
+            raise ValueError("price an autocallable first")
+        last = self._last
+        product, n, eval_date, known = last["product"], last["n"], last["eval_date"], last["known"]
+        perf = {d: np.broadcast_to(np.asarray(v.numpy() if hasattr(v, "numpy") else v, float), (n,))
+                for d, v in last["perf"].items()}
+        coupon_index = {d: i for i, d in enumerate(product.coupon_fixing_dates)}
+        autocall_index = {d: i for i, d in enumerate(product.autocall_fixing_dates)}
+        last_coupon = product.coupon_fixing_dates[-1]
+        alive, unpaid = np.ones(n, bool), np.zeros(n)
+        flows: dict = {}
+        autocall, maturity, worst = [], {}, []
+        years = lambda pay: max((pay - eval_date).days, 0) / 365.0
+        life = np.zeros(n)                                              # redemption time of each path (years)
+
+        def add(pay, kind, values):
+            if pay >= eval_date:
+                row = flows.setdefault(pay, {"date": pay, "coupon": 0.0, "redemption": 0.0, "put": 0.0})
+                row[kind] += float(np.mean(values))
+
+        for d in sorted(perf):
+            x = perf[d]
+            if d in coupon_index:
+                i = coupon_index[d]
+                above = x >= product.coupon_barriers[i] / 100.0
+                amount = product.coupon_rates[i] / 100.0 * ((1.0 + unpaid) if product.memory else 1.0)
+                add(product.coupon_payment_dates[i], "coupon", np.where(alive & above, amount, 0.0))
+                if d == last_coupon:                    # maturity: the paths not called (also not on this date)
+                    called_now = (alive & (x >= product.autocall_barrier[autocall_index[d]] / 100.0)
+                                  if d in autocall_index else np.zeros(n, bool))
+                    reached = alive & ~called_now
+                    put = np.zeros(n)
+                    knock_in = reached & (x < product.payoff_barrier / 100.0) if product.redemption_payoff is not None                         else np.zeros(n, bool)
+                    if knock_in.any():
+                        put = np.where(knock_in, product.payoff_participation
+                                       * np.maximum(getattr(product, "put_strike", 100.0) / 100.0 - x, 0.0), 0.0)
+                    add(product.coupon_payment_dates[i], "redemption", reached.astype(float))    # the notional
+                    add(product.coupon_payment_dates[i], "put", -put)                            # paid by the investor
+                    life = np.where(reached, years(product.coupon_payment_dates[i]), life)
+                    by_und = getattr(self, "_by_underlying", None)
+                    if product.is_worst_of and by_und is not None and d in self._column:
+                        worst_idx = np.argmin(by_und.numpy()[:, self._column[d], :], axis=1)
+                        for k, ticker in enumerate(product.underlyings):
+                            is_worst = worst_idx == k
+                            worst.append({"ticker": ticker,
+                                          "maturity": float((is_worst & reached).sum() / max(reached.sum(), 1)),
+                                          "knock_in": float((is_worst & knock_in).sum() / max(knock_in.sum(), 1))})
+                    maturity = {"reached": float(reached.mean()), "put": float(put.mean()),
+                                "knock_in": float(knock_in.mean()),
+                                "loss_given_knock_in": float(put[knock_in].mean()) if knock_in.any() else 0.0}
+                unpaid = np.where(alive & above, 0.0, np.where(alive & ~above, unpaid + 1.0, unpaid))
+            if d in autocall_index:
+                j = autocall_index[d]
+                called = alive & (x >= product.autocall_barrier[j] / 100.0)
+                add(product.autocall_payment_dates[j], "redemption", called.astype(float))
+                life = np.where(called, years(product.autocall_payment_dates[j]), life)
+                autocall.append({"date": d, "probability": float(called.mean()), "known": d in known})
+                alive = alive & ~called
+        total = 0.0
+        for row in autocall:
+            total += row["probability"]
+            row["cumulative"] = total
+        cash_flows = [dict(r, total=r["coupon"] + r["redemption"] + r["put"]) for _, r in sorted(flows.items())]
+        maturity["expected_life"] = float(life.mean())
+        forwards = []
+        paths = None if self.paths is None else self.paths.numpy()
+        for i, eq in enumerate(getattr(self, "_equities", [])):
+            rows = []
+            for c, d in enumerate(self.date_grid):
+                level = paths[:, c] if paths.ndim == 2 else paths[:, c, i]
+                rows.append({"date": d, "mean": float(level.mean()),            # composite: S X, no forward of S
+                             "p10": float(np.percentile(level, 10)), "p90": float(np.percentile(level, 90)),
+                             "forward": None if product.is_composite else float(eq.forward(d))})
+            forwards.append({"ticker": eq.ticker, "rows": rows})
+        return {"cash_flows": cash_flows, "autocall": autocall, "maturity": maturity, "forwards": forwards,
+                "worst": worst, "n_paths": n}
 
     def trade_state(self, product: AutocallableOption, market_env: MarketEnvironment) -> dict:
         """State of a live trade from the fixings already observed (the same fixings as the price).
@@ -300,6 +398,7 @@ class AutocallableMCPricer(Pricer):
 
     def _value(self, product, perf: dict, known: set, curve, eval_date, n: int) -> tf.Tensor:
         """Price from the performance on every observation date (past ones as numbers, future ones on the paths)."""
+        self._last = {"product": product, "perf": perf, "known": known, "eval_date": eval_date, "n": n}
         coupon_pv, put_pv = self._payoff(product, perf, known, curve, eval_date, n)
         total = coupon_pv - put_pv
         product.coupon_pv = tf.reduce_mean(coupon_pv)

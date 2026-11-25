@@ -15,6 +15,7 @@ in parallel so that the vol at the strike is the given one; the market is restor
 from __future__ import annotations
 
 import math
+import re
 import time
 from contextlib import contextmanager
 from datetime import date, timedelta
@@ -42,7 +43,8 @@ CALIBRATED = {"Heston": "Heston", "Displaced diffusion": "DisplacedDiffusion", "
 GBM_DEBUG = "GBM (debug)"
 SAME_CCY = "Underlying currency"         # payment currency of a product that is not quanto
 PAYMENT_CCY = "Payment currency"         # price currency: the payment one (no conversion)
-NO_TICKER = "None"                       # no second / third underlying (single-underlying autocallable)
+NO_TICKER = "None"                       # an empty extra underlying (ignored)
+MAX_UNDERLYINGS = 5                      # underlyings of a worst-of autocallable (the form adds them one by one)
 WORST_OF_MODELS = ("Local vol", "GBM (debug)")    # models of a worst-of (one normal per step and underlying)
 
 
@@ -222,10 +224,11 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
                          "models": ["Analytic (swaption cube)"]},
         },
         "Exotics": {
-            "Autocallable": {"fields": [underlying,
-                                        _select("ticker_2", "Underlying 2 (worst-of)", [NO_TICKER, *tickers], NO_TICKER),
-                                        _select("ticker_3", "Underlying 3 (worst-of)", [NO_TICKER, *tickers], NO_TICKER)]
-                             + _group("Deal parameters", _number("notional", "Notional", 100.0), *payment,
+            "Autocallable": {"fields": [underlying]
+                             + _group("Deal parameters", _number("notional", "Notional", 100.0),
+                                      # one currency: the flows are paid and the price is shown in it
+                                      _select("payment_ccy", "Currency", ccys, "EUR" if "EUR" in ccys else None),
+                                      payment[1],
                                       _date("strike_date", "Strike date", strike_default.isoformat()),
                                       _date("maturity", "Maturity", maturity_default))
                              + _group("Coupon", _select("coupon_type", "Type", ["Standard", "Memory"]),
@@ -241,7 +244,9 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
                                       _number("autocall_floor", "Step-down floor (%)", 80.0, 1.0),
                                       _select("autocall_frequency", "Frequency", ["3M", "6M", "1Y"], "6M"),
                                       _select("first_autocall", "First observation", ["3M", "6M", "1Y", "2Y"], "1Y")),
-                             "models": ["Local vol", *CALIBRATED, GBM_DEBUG], "create_trade": True},
+                             "models": ["Local vol", *CALIBRATED, GBM_DEBUG], "create_trade": True,
+                             "more_underlyings": MAX_UNDERLYINGS - 1,       # worst-of: ticker_2, ticker_3, ...
+                             "spots": {t: float(mkt.get_equity(t).spot) for t in tickers}},
         },
     }
     products["Rates"] = {name: spec for name, spec in products["Rates"].items()      # products with data only
@@ -316,7 +321,10 @@ def _backward_dates(today: date, maturity: date, months: int) -> list:
 
 def _tickers(f: dict) -> list:
     """Underlyings of the autocallable: the first, then the worst-of ones (distinct)."""
-    tickers = [f["ticker"]] + [f[k] for k in ("ticker_2", "ticker_3") if f.get(k) not in (None, "", NO_TICKER)]
+    extra = sorted((k for k in f if re.fullmatch(r"ticker_\d+", k)), key=lambda k: int(k.split("_")[1]))
+    tickers = [f["ticker"]] + [f[k] for k in extra if f.get(k) not in (None, "", NO_TICKER)]
+    if len(tickers) > MAX_UNDERLYINGS:
+        raise ValueError(f"at most {MAX_UNDERLYINGS} underlyings")
     if len(set(tickers)) != len(tickers):
         raise ValueError(f"the same underlying twice: {tickers}")
     return tickers
@@ -672,7 +680,7 @@ def describe_trade(mkt: tq.MarketEnvironment, request: dict) -> dict:
                ["Notional", float(product.notional), 2],
                ["Payment currency", f"{product.payment_ccy.name} (quanto)" if product.is_quanto
                 else f"{product.payment_ccy.name} (composite: levels on S X)" if product.is_composite
-                else product.payment_ccy.name, None],
+                else _worst_of_ccy(mkt, product), None],
                ["Coupon type", "Memory" if product.memory else "Standard", None],
                ["Put", f"barrier {product.payoff_barrier:g}%, strike {product.put_strike:g}%, "
                        f"participation {100 * product.payoff_participation:g}%", None],
@@ -682,7 +690,101 @@ def describe_trade(mkt: tq.MarketEnvironment, request: dict) -> dict:
                    if product.autocall_step else ""), None],
                ["Coupons / autocall dates", f"{len(product.coupon_fixing_dates)} / {len(product.autocall_fixing_dates)}",
                 None]]
-    return {"summary": summary, "schedule": schedule}
+    return {"summary": summary, "schedule": schedule, "market_data": _autocallable_market_data(mkt, product)}
+
+
+def _autocallable_market_data(mkt, product) -> dict:
+    """Market data an autocallable is priced on (the Market Data tab): per underlying the spot, the level at the
+    strike date (forward if the strike date is future, the spot if it is today, the historical fixing if it is past),
+    the repo and the dividends up to the maturity, the quanto inputs; the discount curves (payment currency and the
+    underlyings' currencies) with their zero rates up to the maturity."""
+    today = mkt.evaluation_date
+    end = product.end_date
+    pay_ccy = product.payment_ccy
+    strike_date = product.strike_date
+    underlyings = []
+    for i, ticker in enumerate(product.underlyings):
+        eq = mkt.get_equity(ticker)
+        spot = float(eq.spot)
+        if strike_date > today:
+            level, source = float(eq.forward(strike_date)), f"forward to {strike_date.isoformat()}"
+        elif strike_date == today:
+            level, source = (product.strikes[i] if product.strikes else spot), "spot (struck today)"
+        else:
+            given = product.fixings.get(strike_date)
+            if given is not None:
+                level = float(given[i] if isinstance(given, (list, tuple)) else given)
+                source = f"fixing of {strike_date.isoformat()} (on the trade)"
+            else:
+                level = float(mkt.get_eq_fixing(ticker, strike_date))
+                source = f"fixing of {strike_date.isoformat()} (close)"
+        dividends = []
+        if eq.dividends is not None:
+            pays = eq.dividends.payment_dates or eq.dividends.ex_dates
+            for ex, pay, amount in zip(eq.dividends.ex_dates, pays, eq.dividends.amounts):
+                if today < ex <= end:
+                    dividends.append({"ex_date": ex.isoformat(), "pay_date": pay.isoformat(), "amount": float(amount),
+                                      "pct_spot": 100 * float(amount) / spot,
+                                      "pv": float(amount) * float(eq.discount_curve.discount(pay))})
+        row = {"ticker": ticker, "ccy": eq.currency.name, "spot": spot, "strike_level": level, "strike_source": source,
+               "repo": 100 * float(eq.repo_rate(end)), "forward": float(eq.forward(end)),
+               "pv_dividends": float(eq.pv_dividends(eq.year_fraction(end))), "dividend_model": eq.dividend_model,
+               "div_yield": None if eq.div_yield is None else 100 * float(eq.div_yield), "dividends": dividends,
+               "quanto": None}
+        if eq.currency != pay_ccy:
+            rho, sigma_x = mkt.get_quanto(ticker, eq.currency, pay_ccy, eq.year_fraction(end))
+            row["quanto"] = {"correlation": float(rho), "fx_vol": 100 * float(sigma_x)}
+        underlyings.append(row)
+    curves, seen = [], set()
+    roles = [(pay_ccy, "discounting of the payments")] + [(mkt.get_equity(t).currency, f"forward of {t}")
+                                                            for t in product.underlyings]
+    for ccy, role in roles:
+        curve = mkt.get_ir_curve(ccy)
+        if curve.name in seen:
+            next(c for c in curves if c["name"] == curve.name)["role"] += f", {role}"
+            continue
+        seen.add(curve.name)
+        dates = list(curve.dates)
+        last = next((i for i, d in enumerate(dates) if d >= end), len(dates) - 1)
+        pillars = [{"date": d.isoformat(), "zero": 100 * float(curve.zero_rate(d)), "df": float(curve.discount(d))}
+                   for d in dates[:last + 1] if d > today]
+        _, c, name, _ = curve.name.split(":")
+        curves.append({"name": curve.name, "label": f"{c} {name}", "role": role,
+                       "zero_at_maturity": 100 * float(curve.zero_rate(end)), "df_at_maturity": float(curve.discount(end)),
+                       "pillars": pillars})
+    return {"maturity": end.isoformat(), "underlyings": underlyings, "curves": curves}
+
+
+def _projections(state: dict) -> dict:
+    """Projections of a priced autocallable from the paths of its Monte Carlo (computed on request, after the price):
+    expected cash flows (% of the notional, not discounted), autocall probabilities, maturity, mean simulated levels
+    against the market forwards (a quanto underlying: the mean carries the quanto drift)."""
+    product, pricer = state["product"], state["pricer"]
+    p = pricer.projections()
+    quanto = set(getattr(product, "quanto", None) or {}) | ({product.underlying} if product.is_quanto else set())
+    spots = {eq.ticker: float(eq.spot) for eq in getattr(pricer, "_equities", [])}
+    return {
+        "n_paths": p["n_paths"],
+        "cash_flows": [{"date": r["date"].isoformat(), "coupon": 100 * r["coupon"], "redemption": 100 * r["redemption"],
+                        "put": 100 * r["put"], "total": 100 * r["total"]} for r in p["cash_flows"]],
+        # the price split as priced (smoothed digitals): coupons and put, % of the notional
+        "pv": {"coupons": 100 * float(product.coupon_pv), "put": -100 * float(product.put_pv),
+               "total": 100 * (float(product.coupon_pv) - float(product.put_pv))},
+        "autocall": [{"date": r["date"].isoformat(), "probability": 100 * r["probability"],
+                      "cumulative": 100 * r["cumulative"], "known": r["known"]} for r in p["autocall"]],
+        "maturity": {k: v if k == "expected_life" else 100 * v for k, v in p["maturity"].items()},
+        "worst": [{"ticker": w["ticker"], "maturity": 100 * w["maturity"], "knock_in": 100 * w["knock_in"]}
+                  for w in p["worst"]],
+        "forwards": [{"ticker": f["ticker"], "quanto": f["ticker"] in quanto, "spot": spots.get(f["ticker"]),
+                      "rows": [{"date": r["date"].isoformat(), "mean": r["mean"], "p10": r["p10"], "p90": r["p90"],
+                                "forward": r["forward"]} for r in f["rows"]]} for f in p["forwards"]],
+    }
+
+
+def _worst_of_ccy(mkt, product) -> str:
+    """Currency of a worst-of with its quanto underlyings (those in another currency), or just the currency."""
+    quanto = [t for t in product.underlyings if mkt.get_equity(t).currency != product.payment_ccy]
+    return product.payment_ccy.name + (f" (quanto: {', '.join(quanto)})" if quanto else "")
 
 
 def _past_outcome(row, called_on, fixing_date) -> dict:
@@ -826,6 +928,17 @@ def _quick_headline(state: dict) -> list:
             ["Pricing [s]", state["price_s"], 1]]
 
 
+def _delta_rows(equities, greeks: dict, scale: float, notional: float) -> list:
+    """Delta per underlying: per 1 of spot, and the price change for a +1% spot move (currency, % of the notional)."""
+    rows = []
+    for eq in equities:
+        delta = scale * float(np.sum(greeks[f"EQ:{eq.currency.name}:{eq.ticker}:SPOT"][0]))
+        spot = float(eq.spot)
+        rows.append({"ticker": eq.ticker, "ccy": eq.currency.name, "spot": spot, "delta": delta,
+                     "delta_1pct": 0.01 * spot * delta, "delta_1pct_notional": 100 * 0.01 * spot * delta / notional})
+    return rows
+
+
 def _worst_of_greeks(mkt, state: dict) -> dict:
     """Greeks of a worst-of autocallable: delta and vega per underlying, vega map of all of them (rows by underlying
     and expiry, strikes in % of each spot), rho of the curves, sensitivity per correlation pair (+0.01), quanto rows
@@ -844,9 +957,7 @@ def _worst_of_greeks(mkt, state: dict) -> dict:
     rho = _rho_buckets(mkt, greeks, 1.0)
     headline = [["Price", float(product.price), 4], ["Price (% notional)", 100 * float(product.price) / state["ref"], 3],
                 ["Std error", float(se), 4]]
-    for eq in equities:
-        key = f"EQ:{eq.currency.name}:{eq.ticker}:SPOT"
-        headline.append([f"Delta {eq.ticker}", float(np.sum(greeks[key][0])), 4])
+    deltas = _delta_rows(equities, greeks, 1.0, product.notional)                 # a table in Risk
     headline += [[f"Vega {eq.ticker} (1 vol pt)", v["total"], 4] for eq, v in zip(equities, vegas)]
     headline += [["Rho (1 bp)", sum(r["total"] for r in rho), 4],
                  ["Calibration [s]", state["calibration_s"], 1], ["Pricing [s]", pricing_s, 1]]
@@ -879,18 +990,11 @@ def _worst_of_greeks(mkt, state: dict) -> dict:
     if fx_vega:
         info.append(["FX vega (1 vol pt)", fx_vega / 100, 4])
     info.append(["Monte Carlo", f"{int(state['n_paths']):,} paths", None])
-    # one heatmap: rows by underlying and expiry, columns the union of the strikes in % of each spot
-    columns = sorted({x for v in vegas for x in v["x"]}, key=lambda x: float(x.rstrip("%")))
-    z, y = [], []
-    for eq, v in zip(equities, vegas):
-        for label, row in zip(v["y"], v["z"]):
-            cells = dict(zip(v["x"], row))
-            z.append([cells.get(c) for c in columns])
-            y.append(f"{eq.ticker} {label}")
-    vega = {"title": "Vega per surface node (1 vol point), by underlying", "z": z, "x": columns,
-            "x_title": "strike / spot", "y": y, "y_title": "underlying, expiry",
-            "total": float(sum(v["total"] for v in vegas))}
-    return {"headline": headline, "info": info, "vega": vega, "rho": rho, "sensitivities": None}
+    # one vega map per underlying (a sub-tab each in the page)
+    maps = [{**v, "ticker": eq.ticker, "title": f"Vega per surface node of {eq.ticker} (1 vol point)"}
+            for eq, v in zip(equities, vegas)]
+    return {"headline": headline, "info": info, "vega": maps[0], "vega_maps": maps, "rho": rho, "sensitivities": None,
+            "deltas": deltas}
 
 
 def _equity_greeks(mkt, state: dict) -> dict:
@@ -924,6 +1028,10 @@ def _equity_greeks(mkt, state: dict) -> dict:
                 ["Delta", qty * float(np.sum(greeks[spot_key][0])), 4], ["Vega (1 vol pt)", vega["total"], 4],
                 ["Rho (1 bp)", sum(r["total"] for r in rho), 4],
                 ["Calibration [s]", calibration_s, 1], ["Pricing [s]", pricing_s, 1]]
+    deltas = None
+    if kind == "Autocallable":                      # the delta in a table of Risk, not in the bar
+        headline = [h for h in headline if h[0] != "Delta"]
+        deltas = _delta_rows([eq], greeks, qty, product.notional)
     T = eq.year_fraction(product.end_date)
     info = [["Spot", s0, 2], ["Expiry", f"{product.end_date.isoformat()} ({T:.2f}y)", None],
             ["Forward", float(eq.forward(T)), 2], ["Rate (zero, %)", 100 * float(eq.discount_curve.zero_rate(T)), 3],
@@ -964,7 +1072,8 @@ def _equity_greeks(mkt, state: dict) -> dict:
         rows = [{"greek": label, "unit": units[label], "per_unit": None if value is None or not qty else value / qty,
                  "equivalent": value} for label, value, _ in headline if label in units]
         sensitivities = {"quantity": qty, "rows": rows}
-    return {"headline": headline, "info": info, "vega": vega, "rho": rho, "sensitivities": sensitivities}
+    return {"headline": headline, "info": info, "vega": vega, "rho": rho, "sensitivities": sensitivities,
+            "deltas": deltas}
 
 
 def _quanto_info(mkt, eq, product, greeks: dict, qty: float) -> list:
@@ -1090,7 +1199,8 @@ def price_trade(mkt: tq.MarketEnvironment, cache: ModelCache, request: dict, n_p
                 with _overridden(eq, overrides, strike, T):
                     return {**_equity_greeks(mkt, state), **meta}
 
-            return {"headline": _quick_headline(state), "pending": finish, **meta}
+            projections = (lambda: _projections(state)) if request["product"] == "Autocallable" else None
+            return {"headline": _quick_headline(state), "pending": finish, "projections": projections, **meta}
         with _overridden(eq, overrides, strike, T):
             out = _price_equity(mkt, cache, request["product"], fields, model, n_paths, seed)
         return {**out, **meta}

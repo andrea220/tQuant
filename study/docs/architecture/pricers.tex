@@ -173,5 +173,16 @@ either; a past date without a fixing raises); they enter the same payoff with ex
 dates; payments before the evaluation date are left out; with no future observation nothing is simulated
 (\code{pricer.paths} \code{None}). \code{trade\_state(product, market\_env)}: strikes, per past observation the
 levels, the worst performance, coupon paid / missed (with the memory) and autocall, \code{called\_on},
-\code{unpaid\_coupons} (shown by the Tradepad). Composite products with past fixings are rejected. \nb{digital\_strip.ipynb},
+\code{unpaid\_coupons} (shown by the Tradepad). Composite products with past fixings are rejected.
+\code{projections()}: from the paths of the last pricing (exact indicators, not discounted, per unit notional) the
+expected coupons, redemptions (the notional back, at an autocall or at maturity) and puts (negative, paid by the
+investor at maturity) per payment date, the
+probability of the autocall at each observation and cumulated, at maturity the probability of reaching it and of the
+knock-in and the loss given the knock-in, the expected life (mean time to the redemption), for a worst-of the share
+of the paths where each underlying is the worst at maturity (among those reaching it and among the knocked-in ones),
+and per underlying the mean simulated level at each future observation
+against the market forward (a quanto underlying carries the quanto drift). The discounted coupons and puts give back the
+price with the hard payoff; the Tradepad shows above the chart the price split into the PV of the coupons and of the
+put (as priced). The Tradepad computes them only when its Projections tab is opened (the paths are
+kept with the pricing job). \nb{digital\_strip.ipynb},
 \nb{down\_and\_in\_put.ipynb}

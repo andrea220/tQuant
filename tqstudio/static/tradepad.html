@@ -38,11 +38,13 @@
         </div>
         <div class="form" id="head-fields" style="margin-top: 12px"></div>
 
+        <div id="market-section">
         <div class="section-label">Market <button id="reset-market" class="link hidden" type="button">reset to market</button></div>
         <div class="form" id="market-edit"></div>
         <div id="market-info" class="mini-info"></div>
         <p class="note">Edit spot and vol to reprice the same contract: the strike does not move, and the vol entered is
           the one used at the strike (the whole surface shifts in parallel).</p>
+        </div>
 
         <div class="section-label">Model</div>
         <div class="form">
@@ -55,9 +57,17 @@
 
       <!-- right: the deal, then the results -->
       <div>
+        <!-- products built with "Build trade": one tab bar for the deal, its market data, the risk and the projections -->
+        <div class="deal-tabs hidden" id="main-tabs">
+          <button type="button" class="active" data-tab="deal">Deal</button>
+          <button type="button" data-tab="market">Market Data</button>
+          <button type="button" data-tab="risk" disabled>Risk</button>
+          <button type="button" data-tab="projections" disabled>Projections</button>
+        </div>
         <div class="panel" id="deal-panel">
-          <h2>Deal</h2>
+          <h2 id="deal-title">Deal</h2>
           <div id="fields"></div>
+          <div id="market-data" class="hidden"></div>
         </div>
 
         <div class="panel hidden" id="legs-panel">
@@ -79,9 +89,34 @@
 
         <div id="empty" class="panel empty">Fill the deal and press <b>Price</b>.</div>
         <div id="results-section" class="hidden">
-          <div class="panel">
+          <div id="projections" class="hidden">
+            <div class="panel">
+              <h2>Projected cash flows <span class="muted">(expected, % of the notional, not discounted)</span></h2>
+              <div id="pv-info" class="mini-info wide-info"></div>
+              <div id="chart-flows" class="chart" style="height: 320px"></div>
+              <div id="flows-table" class="hscroll"></div>
+            </div>
+            <div class="panel">
+              <h2>Autocall probability</h2>
+              <div id="maturity-info" class="mini-info wide-info"></div>
+              <div id="chart-autocall" class="chart" style="height: 300px"></div>
+            </div>
+            <div class="panel">
+              <h2>Projected levels <span class="muted">(mean of the paths, 10%-90% band, market forward; % of spot)</span></h2>
+              <div id="chart-forwards" class="chart" style="height: 320px"></div>
+              <div id="forwards-table" class="hscroll"></div>
+              <p class="note">A quanto underlying is simulated with the quanto drift: its mean differs from the forward
+                by about exp(-&rho; &sigma; &sigma;<sub>X</sub> t).</p>
+            </div>
+          </div>
+          <div id="risk-panels">
+          <div class="panel" id="info-panel">
             <h2>Pricing details</h2>
             <div id="info" class="cards"></div>
+          </div>
+          <div class="panel hidden" id="delta-panel">
+            <h2>Delta</h2>
+            <div id="delta-table" class="hscroll"></div>
           </div>
           <div class="panel hidden" id="sens-panel">
             <h2>Sensitivities <span id="sens-qty" class="muted"></span></h2>
@@ -89,12 +124,14 @@
           </div>
           <div class="panel" id="vega-panel">
             <h2 id="vega-title">Vega</h2>
+            <div class="deal-tabs hidden" id="vega-tabs"></div>
             <div id="chart-vega" class="chart" style="height: 400px"></div>
           </div>
           <div class="panel" id="rho-panel">
             <h2>Rho per curve pillar <span class="muted">(1 bp)</span></h2>
             <div id="rho-table" class="hscroll scroll-tall"></div>
             <p id="rho-note" class="note"></p>
+          </div>
           </div>
         </div>
       </div>

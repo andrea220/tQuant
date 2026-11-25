@@ -59,7 +59,8 @@ select:focus, input:focus { outline: 2px solid var(--accent-soft); border-color:
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 .card { border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: #fbfcfe; }
 .card .label { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.4px; }
-.card .value { font-size: 17px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.card .value { font-size: 17px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums;
+               overflow-wrap: anywhere; }
 .card.big .value { font-size: 24px; }
 .card.big { background: var(--accent-soft); border-color: #cfdaf0; }
 
@@ -78,7 +79,7 @@ th:first-child, td:first-child { text-align: left; }
 .hscroll { overflow-x: auto; }
 
 /* tradepad */
-.tradepad { display: grid; grid-template-columns: 340px 1fr; gap: 18px; align-items: start; }
+.tradepad { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 18px; align-items: start; }
 .form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field.wide { grid-column: 1 / -1; }
@@ -282,4 +283,29 @@ h3 { font-size: 13px; color: var(--muted); font-weight: 600; margin: 10px 0 6px;
 .calibrated-link { font-size: 12px; margin-left: 10px; }
 label.flag input[type="checkbox"] { width: auto; padding: 0; margin: 0 6px 0 0; vertical-align: middle; }
 #subtabs, #uv-classes { display: inline-flex; margin-bottom: 14px; }
+/* worst-of underlyings: one per row, added and removed in place */
+#underlyings { display: flex; flex-direction: column; gap: 6px; }
+.underlying-row { display: flex; flex-direction: column; gap: 2px; }
+.underlying-pick { display: flex; align-items: center; gap: 6px; }
+.underlying-pick select { flex: 1; }
+.underlying-spot { font-size: 11.5px; padding-left: 2px; }
+button.remove-underlying { margin: 0; padding: 0 4px; font-size: 13px; color: var(--muted); }
+button.add-underlying { align-self: flex-start; margin: 2px 0 0; }
 
+/* deal panel tabs: the deal fields, the market data of the built trade */
+.deal-tabs { display: inline-flex; gap: 4px; background: #eef1f6; border-radius: 8px; padding: 3px; margin-bottom: 14px; }
+.deal-tabs button { width: auto; margin: 0; padding: 7px 14px; background: transparent; color: var(--muted);
+                    font-weight: 600; border-radius: 6px; }
+.deal-tabs button:hover { background: rgba(255, 255, 255, 0.6); color: var(--text); }
+.deal-tabs button.active { background: #fff; color: var(--accent); box-shadow: var(--shadow); }
+#market-data .subpanel { margin-bottom: 12px; }
+
+.tab-hidden { display: none !important; }
+.deal-tabs button:disabled { background: transparent; color: #b5bdcc; cursor: default; }
+#main-tabs { margin-bottom: 12px; }
+
+/* long values wrap instead of widening the page */
+.mini-info b { overflow-wrap: anywhere; text-align: right; }
+
+/* pricing details of the tabbed products: one column, growing in height */
+.mini-info.one-column { grid-template-columns: minmax(0, 1fr); max-width: 560px; }

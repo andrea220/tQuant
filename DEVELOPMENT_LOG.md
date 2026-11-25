@@ -645,3 +645,20 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       exactly, then 0), seasoned trade = new trade on the remaining dates plus the pending coupon (same draws), trade
       fixings win and a missing one raises, fixing today = spot, no delta when every date is fixed, trade state,
       worst-of replica and fixings on the trade, market round trip; `marketdata` test of `equity_fixings`.
+- [x] Tradepad on the autocallable: underlyings together in the deal (one by default, "+ Add underlying" up to 5, the
+      spot under each), one currency (EUR by default, the flows paid and the price shown in it; the underlyings in
+      another currency quanto, listed in the summary), no spot / vol editing and no single-underlying market block on
+      the left; a Market Data tab next to Deal, filled by "Build trade" (per underlying spot, level at the strike date:
+      forward / spot / historical fixing, forward and repo to maturity, dividends; the discount curves with their
+      pillars); a Projections tab next to Risk after the price, computed on request from the paths kept with the
+      pricing job (`AutocallableMCPricer.projections`, about 0.4 s): expected cash flows per payment date (coupon,
+      redemption, put as a negative flow, % of the notional; above the chart the PV of the coupons and of the put), autocall probability per observation and cumulated, maturity (reached,
+      knock-in, loss given knock-in, expected life), mean simulated levels with their 10%-90% band vs the market
+      forwards (the worst underlying at maturity is computed by `projections` but not shown: the bands show the
+      dispersion). 2026-11-13, SX5E / SPX / ISP 3Y
+      worst-of: expected life 2.11 years, ISP the worst in 85% of the paths at maturity (83% of the knock-ins), SPX
+      11%, SX5E 4%. SX5E / SPX 3Y worst-of
+      in EUR, 20k paths: called at the first autocall 55%, by maturity 76%, knock-in 17.6% with a 50% loss; SPX
+      (quanto, rho -0.31) mean 7845 vs forward 7832 after one year, SX5E on its forward. Test: expected flows
+      discounted = the price (hard payoff), probabilities add up to one, GBM means = forwards within 3 SE, expected
+      life = sum of probability x time, worst shares add up to one (the higher-vol underlying the worst more often).
