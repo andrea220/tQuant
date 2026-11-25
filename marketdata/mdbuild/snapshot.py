@@ -158,20 +158,39 @@ def build_tables(source, universe: list[Instrument], fields: dict, today: date, 
                                                               tables["eq_dividends.csv"], rates, options,
                                                               Path(cache_dir), today, history)
 
-    names = {i.bbg: f"EQ:{currency[i.bbg]}:{i.code}" for i in equities}
-    names.update({i.bbg: f"FX:{i.fx_quote}:{i.code}" for i in universe if i.kind == "fx"})
+    tables.update(cross_tables(history, [(i, currency[i.bbg]) for i in equities],
+                               [(i, float(ref.loc[i.bbg, fields["price"]])) for i in universe if i.kind == "fx"],
+                               today, correlation, fx_vol))
+    return tables
+
+
+def cross_tables(history: pd.DataFrame, equities: list, fx: list, today: date, correlation,
+                 fx_vol: dict = None) -> dict[str, pd.DataFrame]:
+    """The tables computed from the price history of every instrument together: ``correlations.csv``,
+    ``eq_fixings.csv``, ``fx_vol.csv``.
+
+    Args:
+        history: Long price history (Bloomberg tickers).
+        equities: ``[(Instrument, ccy)]`` of the equities.
+        fx: ``[(Instrument, spot)]`` of the FX pairs.
+        today: Snapshot date.
+        correlation: The ``correlation`` block of the settings, or a number of daily returns.
+        fx_vol: The ``fx_vol`` block of the settings.
+    """
+    names = {i.bbg: f"EQ:{ccy}:{i.code}" for i, ccy in equities}
+    names.update({i.bbg: f"FX:{i.fx_quote}:{i.code}" for i, _ in fx})
+    out = {}
     if isinstance(correlation, dict):
-        tables["correlations.csv"] = rolling_correlations(
+        out["correlations.csv"] = rolling_correlations(
             history, names, correlation.get("frequency", "W-FRI"), int(correlation.get("window", 13)),
             float(correlation.get("percentile", 90.0)), float(correlation.get("fx_percentile", 50.0)))
     else:
-        tables["correlations.csv"] = correlations(history, names, int(correlation))
-    tables["eq_fixings.csv"] = equity_fixings(history, {i.bbg: (i.code, currency[i.bbg]) for i in equities}, today)
+        out["correlations.csv"] = correlations(history, names, int(correlation))
+    out["eq_fixings.csv"] = equity_fixings(history, {i.bbg: (i.code, ccy) for i, ccy in equities}, today)
     fx_vol = fx_vol or {}                                   # historical FX vols: the quanto drift
-    tables["fx_vol.csv"] = historical_fx_vols(
-        history, {i.bbg: (i.fx_base, i.fx_quote, float(ref.loc[i.bbg, fields["price"]])) for i in universe
-                  if i.kind == "fx"}, today, fx_vol.get("frequency", "W-FRI"), int(fx_vol.get("periods", 52)))
-    return tables
+    out["fx_vol.csv"] = historical_fx_vols(history, {i.bbg: (i.fx_base, i.fx_quote, spot) for i, spot in fx}, today,
+                                           fx_vol.get("frequency", "W-FRI"), int(fx_vol.get("periods", 52)))
+    return out
 
 
 def write_snapshot(root: Path, tables: dict[str, pd.DataFrame], info: dict, now: datetime) -> Path:
@@ -185,8 +204,9 @@ def write_snapshot(root: Path, tables: dict[str, pd.DataFrame], info: dict, now:
 
 
 def run(source, universe: list[Instrument], settings: dict, base: Path, now: datetime,
-        curves: list[Curve] = ()) -> Path:
-    """Update the history, build the tables and write the snapshot (the whole manual run)."""
+        curves: list[Curve] = (), selected: list = None) -> Path:
+    """Update the history, build the tables and write the snapshot (the whole manual run). *selected*: the names asked
+    for in a selected download (recorded in ``snapshot_info.json``)."""
     fields, out = settings["fields"], settings["output"]
     priced = [i.bbg for i in universe if i.kind in ("equity", "fx")]
     history = update_history(Path(base) / out["history"] / "prices.parquet", source, priced, fields["price"],
@@ -198,7 +218,8 @@ def run(source, universe: list[Instrument], settings: dict, base: Path, now: dat
             "universe": [i.bbg for i in universe], "fields": fields,
             "history": {"rows": int(len(history)), "first": str(history["date"].min().date()) if len(history) else None},
             "rows": {name: int(len(frame)) for name, frame in tables.items()},
-            "curves": {f"{c.ccy} {c.name}": c.bbg for c in curves},
+            "curves": {c.label: c.bbg for c in curves},
+            "selected": list(selected) if selected else None,
             "correlation": dict(tables["correlations.csv"].attrs),
             "fx_vol": dict(tables["fx_vol.csv"].attrs),
             "missing": "ir_vol: from the internal service (not yet); fx_vol: historical, flat (implied FX vols not yet); curves: quotes only (ir_quotes.csv), "

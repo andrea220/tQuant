@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT))
 import socket  # noqa: E402
 from tqstudio.views.universe import (DownloadRuns, add_ticker, allowed_client, app_settings,  # noqa: E402
                                      bloomberg_endpoint, bloomberg_reachable, read_universe, remove_ticker,
-                                     resolve_python, server_authorized, universe_view)
+                                     resolve_python, server_authorized, set_active, universe_view)
 
 UNIVERSE = """\
 tickers:
@@ -143,25 +143,26 @@ class TestAddTicker(unittest.TestCase):
         return [r["bbg"] for r in read_universe(self.universe)[kind] if r["included"]]
 
     def test_add_stock_after_the_equities(self):
+        """A new stock goes after the last stock, active; the file is rewritten in the new format."""
         out = add_ticker("equity", "isp  im equity", self.universe)
-        self.assertEqual(out, {"ticker": "ISP IM Equity", "section": "tickers", "action": "added"})
-        lines = self.universe.read_text(encoding="utf-8").splitlines()
-        self.assertEqual(lines[lines.index("  - ISP IM Equity") - 1], "  # - UCG IM Equity")   # with the equities
-        self.assertIn("  # Italy", lines)                                                       # comments kept
+        self.assertEqual(out, {"ticker": "ISP IM Equity", "action": "added"})
+        order = [r["bbg"] for r in read_universe(self.universe)["equity"]]
+        self.assertEqual(order.index("ISP IM Equity"), order.index("UCG IM Equity") + 1)    # with the stocks
+        self.assertIn("instruments:", self.universe.read_text(encoding="utf-8"))
         self.assertEqual(self.active("equity"), ["ENI IM Equity", "ISP IM Equity", "SX5E Index"])
 
-    def test_uncomment_instead_of_duplicate(self):
+    def test_activate_instead_of_duplicate(self):
         out = add_ticker("equity", "UCG IM Equity", self.universe)
-        self.assertEqual(out["action"], "uncommented")
-        text = self.universe.read_text(encoding="utf-8")
-        self.assertEqual(text.count("UCG IM Equity"), 1)
+        self.assertEqual(out["action"], "activated")
+        self.assertEqual(self.universe.read_text(encoding="utf-8").count("UCG IM Equity"), 1)
         self.assertIn("UCG IM Equity", self.active("equity"))
-        self.assertEqual(add_ticker("equity", "SPX Index", self.universe)["section"], "equity_indices")
-        self.assertIn("SPX Index", self.active("equity"))
+        self.assertEqual(add_ticker("equity", "SPX Index", self.universe)["action"], "activated")
+        spx = next(r for r in read_universe(self.universe)["equity"] if r["bbg"] == "SPX Index")
+        self.assertEqual((spx["type"], spx["active"]), ("index", True))
 
     def test_index_fx_and_fixing(self):
-        self.assertEqual(add_ticker("equity", "FTSEMIB Index", self.universe)["section"], "equity_indices")
-        self.assertIn("FTSEMIB Index", self.active("equity"))
+        add_ticker("equity", "FTSEMIB Index", self.universe)
+        self.assertEqual(self.active("equity"), ["ENI IM Equity", "SX5E Index", "FTSEMIB Index"])
         add_ticker("fx", "EURJPY Curncy", self.universe)
         self.assertEqual(self.active("fx"), ["EURUSD Curncy", "EURJPY Curncy"])
         add_ticker("rates", "EUR003M Index", self.universe)
@@ -181,16 +182,19 @@ class TestAddTicker(unittest.TestCase):
         self.assertEqual(self.universe.read_bytes(), before)       # file untouched
 
     def test_remove_and_add_back(self):
+        """Remove = inactive (kept in the universe); added back = active again, the same entries."""
+        add_ticker("fx", "EURJPY Curncy", self.universe)               # the file in the new format
+        before = read_universe(self.universe)
         out = remove_ticker("equity", "ENI IM Equity", self.universe)
-        self.assertEqual(out, {"ticker": "ENI IM Equity", "section": "tickers", "action": "removed"})
+        self.assertEqual(out, {"ticker": "ENI IM Equity", "action": "deactivated"})
         self.assertNotIn("ENI IM Equity", self.active("equity"))
-        self.assertIn("  # - ENI IM Equity", self.universe.read_text(encoding="utf-8").splitlines())
-        self.assertEqual(add_ticker("equity", "ENI IM Equity", self.universe)["action"], "uncommented")
-        self.assertEqual(self.universe.read_text(encoding="utf-8"), UNIVERSE)       # back to the same file
+        self.assertIn("ENI IM Equity", [r["bbg"] for r in read_universe(self.universe)["equity"]])
+        self.assertEqual(add_ticker("equity", "ENI IM Equity", self.universe)["action"], "activated")
+        self.assertEqual(read_universe(self.universe), before)
 
     def test_remove_index_fx_fixing(self):
-        """An index is commented in equity_indices only (its implied_spot entry stays: harmless)."""
-        self.assertEqual(remove_ticker("equity", "SX5E Index", self.universe)["section"], "equity_indices")
+        """An index made inactive keeps its attributes (implied spot)."""
+        remove_ticker("equity", "SX5E Index", self.universe)
         self.assertNotIn("SX5E Index", self.active("equity"))
         self.assertEqual(read_universe(self.universe)["implied_spot"], ["SX5E Index"])
         remove_ticker("fx", "EURUSD Curncy", self.universe)
@@ -200,13 +204,22 @@ class TestAddTicker(unittest.TestCase):
 
     def test_remove_rejected(self):
         before = self.universe.read_bytes()
-        for cls, ticker in [("equity", "UCG IM Equity"),            # already excluded
+        for cls, ticker in [("equity", "UCG IM Equity"),            # already inactive
                             ("equity", "EURUSD Curncy"),            # not an equity
                             ("rates", "YCSW0514 Index"),            # a curve, not a fixing
                             ("credit", "ENI IM Equity")]:
             with self.assertRaises(ValueError, msg=f"{cls} {ticker}"):
                 remove_ticker(cls, ticker, self.universe)
         self.assertEqual(self.universe.read_bytes(), before)
+
+    def test_active_flag_of_instruments_and_curves(self):
+        self.assertEqual(set_active("EUR 6M", False, self.universe), {"name": "EUR 6M", "active": False})
+        self.assertEqual([(c["name"], c["active"]) for c in read_universe(self.universe)["curves"]],
+                         [("EUR ESTR", True), ("EUR 6M", False)])
+        set_active("ucg im equity", True, self.universe)
+        self.assertIn("UCG IM Equity", self.active("equity"))
+        with self.assertRaises(ValueError):
+            set_active("XXX IM Equity", True, self.universe)
 
     def test_line_endings_kept(self):
         self.universe.write_bytes(UNIVERSE.replace("\n", "\r\n").encode("utf-8"))
@@ -234,6 +247,28 @@ class TestDownloadRuns(unittest.TestCase):
         self.assertEqual(status["exit_code"], 0)
         self.assertEqual(status["result"], "live/20261116/1000")
         self.assertIn("history updated", status["log"])
+
+    def test_then_after_a_success_only(self):
+        """*then* (e.g. the calibration) runs on the new snapshot folder once the download has succeeded, its result in
+        the status; not after a failure."""
+        code = "print('snapshot -> live/20261116/1000')"
+        seen = []
+        runs = DownloadRuns(cwd=Path(tempfile.gettempdir()), command=[sys.executable, "-c", code])
+        runs.start(select=["ENI IM Equity"], then=lambda folder: seen.append(folder) or "calibration started")
+        status = self.wait(runs)
+        for _ in range(100):                                          # the reader thread calls it after the exit
+            if runs.status()["after"]:
+                break
+            time.sleep(0.05)
+        status = runs.status()
+        self.assertEqual(seen, [Path("live/20261116/1000")])
+        self.assertEqual((status["after"], status["calibrate"], status["select"]),
+                         ("calibration started", True, ["ENI IM Equity"]))
+        failed = DownloadRuns(cwd=Path(tempfile.gettempdir()), command=[sys.executable, "-c", "raise SystemExit(1)"])
+        failed.start(then=lambda folder: seen.append(folder))
+        self.wait(failed)
+        time.sleep(0.2)
+        self.assertEqual(len(seen), 1)
 
     def test_one_at_a_time_and_failure(self):
         runs = DownloadRuns(cwd=Path(tempfile.gettempdir()),

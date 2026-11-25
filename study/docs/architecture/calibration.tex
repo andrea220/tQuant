@@ -101,6 +101,11 @@ SLV Heston part & rarely (weekly, or on a trigger) & \code{HestonModel.calibrate
 \bottomrule
 \end{tabular}
 \end{center}
+\paragraph{Which models.} The models of each equity are the \code{models} flags of its entry in the universe
+(edited from the tqstudio Home; the defaults per asset class in \code{marketdata/config/calibration.yaml}). Create
+new snapshot with Calibrate starts \code{python -m tqstudio.calibrate} on the new snapshot once the download has
+succeeded (\code{DownloadRuns.start(select, then)}).
+
 Heston SLV is the slowest model to calibrate and the most stable to hold, so it runs on its own, asynchronous
 schedule: the Heston parameters and the conditional expectation are kept until a rule says they no longer describe
 the market, while the local vol it multiplies is always today's. Because the leverage is

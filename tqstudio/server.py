@@ -26,7 +26,8 @@ from .views.market import catalog, equity_tickers, fit_view, fx_view, market_vie
 from .views.tradepad import ModelCache, describe_trade, market_inputs, price_trade
 from .views.tradepad import catalog as tradepad_catalog
 from .paths import MARKETDATA
-from .views.universe import DownloadRuns, add_ticker, allowed_client, app_settings, remove_ticker, server_authorized
+from .views.universe import (DownloadRuns, add_ticker, allowed_client, app_settings, remove_ticker,
+                             server_authorized, set_active)
 from .views.universe import universe_view as market_universe_view
 
 ROOT = Path(__file__).resolve().parent
@@ -262,8 +263,22 @@ def market_universe_remove(request: Request, body: dict = Body(...)) -> dict:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@app.post("/api/market/universe/active")
+def market_universe_active(request: Request, body: dict = Body(...)) -> dict:
+    """Switch the ``active`` flag of an instrument or a curve (``{"name", "active"}``): active ones are downloaded by
+    a full download."""
+    if not is_local(request):
+        raise HTTPException(status_code=403, detail="the universe can be changed only from the pcs of authorized_pcs (tqstudio/config.yaml)")
+    try:
+        return set_active(body.get("name", ""), bool(body.get("active")))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.post("/api/market/download")
-def market_download(request: Request) -> dict:
+def market_download(request: Request, body: Optional[dict] = Body(None)) -> dict:
+    """Start a download: every active instrument, or ``{"select": [Bloomberg tickers]}`` (those equities with the
+    active rates, FX and curves); ``"calibrate": true`` also calibrates the models of the new snapshot."""
     if DATA_SOURCE != "live":
         raise HTTPException(status_code=400, detail="downloads write live snapshots: start tqstudio with --data live")
     if not server_authorized(app_settings()["authorized_pcs"]):
@@ -276,7 +291,14 @@ def market_download(request: Request) -> dict:
         raise HTTPException(status_code=403, detail=f"Not authorized: your pc ({who}) is not in authorized_pcs of "
                                                     "tqstudio/config.yaml, the pcs allowed to start downloads.")
     try:
-        return downloads.start()
+        body = body or {}
+
+        def calibrate(folder):                         # the models of the new snapshot, their flags
+            runs.start({"date": f"{folder.parent.name[:4]}-{folder.parent.name[4:6]}-{folder.parent.name[6:]}",
+                        "set": folder.name})
+            return f"calibration started on {folder.parent.name}/{folder.name}"
+
+        return downloads.start(body.get("select") or None, then=calibrate if body.get("calibrate") else None)
     except ValueError as exc:                          # already running, or no Python with blpapi
         raise HTTPException(status_code=409, detail=str(exc))
 

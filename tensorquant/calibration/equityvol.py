@@ -1179,17 +1179,20 @@ def calibrate_snapshot_vols(folder) -> list:
                     quote_rows += [{"ticker": ticker, "ccy": ccy, "expiry": expiry, **q} for q in qv.to_dict("records")]
     finally:
         Settings.evaluation_date = previous
-    pd.DataFrame(vols, columns=["ticker", "ccy", "expiry", "strike", "vol"]).to_csv(folder / "eq_vol.csv", index=False)
-    pd.DataFrame(repos, columns=["ticker", "ccy", "pillar", "rate"]).to_csv(folder / "eq_repo.csv", index=False)
-    pd.DataFrame(reports).to_csv(folder / "eq_vol_calibration.csv", index=False)
+    def write(name: str, frame: pd.DataFrame) -> None:
+        frame.to_csv(folder / name, index=False)
+
+    write("eq_vol.csv", pd.DataFrame(vols, columns=["ticker", "ccy", "expiry", "strike", "vol"]))
+    write("eq_repo.csv", pd.DataFrame(repos, columns=["ticker", "ccy", "pillar", "rate"]))
+    write("eq_vol_calibration.csv", pd.DataFrame(reports))
     if implied_spots:                                     # the pricers use the same spot as the vols
         spots = pd.read_csv(folder / "eq_spot.csv")
         for (ticker, ccy), spot in implied_spots.items():
             spots.loc[(spots["ticker"] == ticker) & (spots["ccy"] == ccy), "spot"] = spot
         spots.to_csv(folder / "eq_spot.csv", index=False)
-    pd.DataFrame(quote_rows, columns=["ticker", "ccy", "expiry", "strike", "option_type", "iv_bid", "iv_mid", "iv_ask",
-                                      "settlement", "used", "model_vol"]).to_csv(folder / "eq_vol_quotes.csv",
-                                                                                 index=False)
+    write("eq_vol_quotes.csv", pd.DataFrame(quote_rows, columns=["ticker", "ccy", "expiry", "strike", "option_type",
+                                                                 "iv_bid", "iv_mid", "iv_ask", "settlement", "used",
+                                                                 "model_vol"]))
     written = ["eq_vol.csv", "eq_repo.csv", "eq_vol_calibration.csv", "eq_vol_quotes.csv"]
     if index_dividends:                                   # the indices' dividends replaced, the download kept apart
         if not download_path.is_file():

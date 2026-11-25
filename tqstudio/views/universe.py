@@ -48,50 +48,138 @@ def _mdbuild_universe():
     return sys.modules[name]
 
 
-_EXCLUDED = re.compile(r"^\s*#\s*-\s*(\S.*\s(?:Equity|Curncy|Index))\s*$")
-
-
 def read_universe(path: Path = UNIVERSE) -> dict:
-    """The universe file: instruments (included, and excluded = commented ``- <ticker>`` lines of ``tickers`` /
-    ``equity_indices``), curves, option roots, implied-spot underlyings. The data folder's copy when present, else
-    the repository's :data:`UNIVERSE_TEMPLATE` (read-only fallback).
+    """The universe file: every instrument (active or not), curves, option roots, implied-spot underlyings. The data
+    folder's copy when present, else the repository's :data:`UNIVERSE_TEMPLATE` (read-only fallback).
 
     Returns:
-        dict: ``equity`` / ``fx`` / ``fixing`` lists of ``{bbg, code, type, included}`` (equity ``type``: ``stock`` or
-        ``index``), ``curves`` (``{name, ccy, curve, bbg, kind}``), ``option_roots``, ``implied_spot``.
+        dict: ``equity`` / ``fx`` / ``fixing`` lists of ``{bbg, code, type, included, active, models}`` in the
+        order of the file (equity ``type``: ``stock`` or ``index``; ``included`` = ``active``; ``models``: the
+        instrument's own calibration flags), ``curves`` (``{name, ccy, curve, bbg, kind, active}``), ``option_roots``,
+        ``implied_spot``.
     """
     u = _mdbuild_universe()
     path = Path(path)
     if not path.is_file():
         path = Path(UNIVERSE_TEMPLATE)
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    indices = {str(t).strip() for t in data.get("equity_indices") or []}
+    entries, curve_entries = u.read_entries(path)
     out = {"equity": [], "fx": [], "fixing": []}
-    for inst in u.load_universe(path):
-        out[inst.kind].append({"bbg": inst.bbg, "code": inst.code, "included": True,
-                               "type": ("index" if inst.bbg in indices else "stock") if inst.kind == "equity" else None})
-    section, seen = None, {r["bbg"] for v in out.values() for r in v}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if re.match(r"^[A-Za-z_]+:", line):
-            section = line.split(":")[0]
-        m = _EXCLUDED.match(line)
-        if m and section in ("tickers", "equity_indices") and m.group(1).strip() not in seen:
-            bbg = m.group(1).strip()
-            if section == "equity_indices":
-                inst, kind = u.Instrument(bbg, "equity", "_".join(bbg.split()[:-1])), "index"
-            else:
-                try:
-                    inst = u.parse(bbg)
-                except ValueError:
-                    continue
-                kind = "stock" if inst.kind == "equity" else None
-            out[inst.kind].append({"bbg": inst.bbg, "code": inst.code, "included": False, "type": kind})
-            seen.add(bbg)
-    out["curves"] = [{"name": f"{c.ccy} {c.name}", "ccy": c.ccy, "curve": c.name, "bbg": c.bbg, "kind": c.kind}
-                     for c in u.load_curves(path)]
+    for e in entries:
+        inst = u.instrument(e)
+        out[inst.kind].append({"bbg": inst.bbg, "code": inst.code, "included": e["active"], "active": e["active"],
+                               "type": ("index" if e.get("equity_index") else "stock") if inst.kind == "equity"
+                               else None, "models": dict(e.get("models") or {})})
+    out["curves"] = []
+    for c in curve_entries:
+        curve = u._curve(c["name"], c["ticker"])
+        out["curves"].append({"name": curve.label, "ccy": curve.ccy, "curve": curve.name, "bbg": curve.bbg,
+                              "kind": curve.kind, "active": c["active"]})
     out["option_roots"] = u.load_option_roots(path)
     out["implied_spot"] = u.load_implied_spot(path)
     return out
+
+
+def _write(path: Path, entries: list, curves: list) -> None:
+    _mdbuild_universe().write_entries(path, entries, curves)
+
+
+def add_ticker(asset_class: str, ticker: str, path: Path = UNIVERSE) -> dict:
+    """Add a Bloomberg ticker to the universe file, active (downloaded at the next full download); an inactive one
+    already there is activated instead.
+
+    Equities (``Equity`` yellow key), equity indices (``Index`` under *asset_class* ``"equity"``), FX pairs
+    (``Curncy``) and rate fixings (``Index`` under ``"rates"``); a new entry goes after the last one of its kind. Rate
+    curves need quote conventions in tQuant and are not added here.
+
+    Args:
+        asset_class (str): ``"equity"``, ``"fx"`` or ``"rates"``.
+        ticker (str): Bloomberg ticker with its yellow key (``"UCG IM Equity"``, ``"EURJPY Curncy"``).
+        path (Path): The universe file.
+
+    Returns:
+        dict: ``{"ticker", "action"}`` (``"added"`` or ``"activated"``).
+
+    Raises:
+        ValueError: Unknown asset class, a yellow key that does not belong to it, an invalid ticker, or a ticker
+            already active in the universe.
+    """
+    u = _mdbuild_universe()
+    if asset_class not in ASSET_CLASSES:
+        raise ValueError(f"unknown asset class {asset_class}")
+    ticker = " ".join(str(ticker).split())
+    parts = ticker.split()
+    if len(parts) < 2:
+        raise ValueError(f"'{ticker}': give the Bloomberg ticker with its yellow key (e.g. UCG IM Equity)")
+    parts = [p.upper() for p in parts[:-1]] + [parts[-1].capitalize()]      # Bloomberg form: ISP IM Equity
+    ticker = " ".join(parts)
+    if parts[-1] not in ASSET_CLASSES[asset_class]:
+        raise ValueError(f"'{ticker}': {asset_class} tickers end with {' or '.join(ASSET_CLASSES[asset_class])}")
+    u.parse(ticker)                                         # raises on an invalid FX pair, etc.
+    index = asset_class == "equity" and parts[-1] == "Index"
+    path = _ensure_universe(path)                           # write side: bootstrap the data copy from the template
+    entries, curves = u.read_entries(path)
+    existing = next((e for e in entries if e["ticker"].upper() == ticker.upper()), None)
+    if existing is not None:
+        if existing["active"]:
+            raise ValueError(f"'{ticker}' is already in the universe")
+        existing["active"] = True
+        _write(path, entries, curves)
+        return {"ticker": existing["ticker"], "action": "activated"}
+    entry = {"ticker": ticker, "active": True, **({"equity_index": True} if index else {})}
+    kind = u.instrument(entry).kind
+    same = [i for i, e in enumerate(entries) if u.instrument(e).kind == kind
+            and bool(e.get("equity_index")) == index]
+    entries.insert((same[-1] + 1) if same else len(entries), entry)
+    _write(path, entries, curves)
+    return {"ticker": ticker, "action": "added"}
+
+
+def set_active(name: str, active: bool, path: Path = UNIVERSE) -> dict:
+    """Switch the ``active`` flag of an instrument (Bloomberg ticker) or a curve (``"EUR ESTR"``) of the universe.
+
+    Returns:
+        dict: ``{"name", "active"}``.
+
+    Raises:
+        ValueError: If *name* is not in the universe.
+    """
+    u = _mdbuild_universe()
+    path = _ensure_universe(path)
+    entries, curves = u.read_entries(path)
+    name = " ".join(str(name).split())
+    target = next((e for e in entries if e["ticker"].upper() == name.upper()), None) or \
+        next((c for c in curves if c["name"].upper() == name.upper()), None)
+    if target is None:
+        raise ValueError(f"'{name}' is not in the universe")
+    target["active"] = bool(active)
+    _write(path, entries, curves)
+    return {"name": target["name"] if "name" in target else target["ticker"], "active": bool(active)}
+
+
+def remove_ticker(asset_class: str, ticker: str, path: Path = UNIVERSE) -> dict:
+    """Take a ticker out of the full download: its entry becomes inactive (kept in the universe, it can still be
+    downloaded alone or activated again). Past snapshots keep their data.
+
+    Args:
+        asset_class (str): ``"equity"``, ``"fx"`` or ``"rates"`` (rate fixings; curves: :func:`set_active`).
+        ticker (str): The Bloomberg ticker as listed.
+        path (Path): The universe file.
+
+    Returns:
+        dict: ``{"ticker", "action": "deactivated"}``.
+
+    Raises:
+        ValueError: Unknown asset class, or the ticker is not an active one of that asset class.
+    """
+    if asset_class not in ASSET_CLASSES:
+        raise ValueError(f"unknown asset class {asset_class}")
+    ticker = " ".join(str(ticker).split())
+    kind = {"equity": "equity", "fx": "fx", "rates": "fixing"}[asset_class]
+    match = next((r for r in read_universe(path)[kind] if r["included"] and r["bbg"].upper() == ticker.upper()), None)
+    if match is None:
+        raise ValueError(f"'{ticker}' is not an active {asset_class} ticker of the universe")
+    set_active(match["bbg"], False, path)
+    return {"ticker": match["bbg"], "action": "deactivated"}
 
 
 def _read(folder: Path, name: str) -> pd.DataFrame:
@@ -116,7 +204,9 @@ def universe_view(snapshot: Path | None, path: Path = UNIVERSE) -> dict:
     quotes whose model vol is within bid / ask; FX: spot; fixings: value and date; curves: quotes, last update,
     bootstrapped. ``in_snapshot`` is False for an instrument added after the snapshot (or excluded).
     """
+    from .calibration import MODELS, _flags, read_config
     uni = read_universe(path)
+    config = read_config(universe=path if Path(path).is_file() else None)
     info, folder = {}, Path(snapshot) if snapshot is not None else None
     if folder is not None and (folder / "snapshot_info.json").is_file():
         info = json.loads((folder / "snapshot_info.json").read_text(encoding="utf-8"))
@@ -142,6 +232,7 @@ def universe_view(snapshot: Path | None, path: Path = UNIVERSE) -> dict:
             if len(two):
                 within = float(((two["model_vol"] >= two["iv_bid"] - 1e-12) & (two["model_vol"] <= two["iv_ask"] + 1e-12)).mean())
         equity.append({**r, "in_snapshot": r["bbg"] in snap_universe and not spot.empty,
+                       "flags": _flags(config, "equity", code),         # the models calibrated (own or default)
                        "ccy": spot["ccy"].iloc[0] if not spot.empty else None,
                        "spot": float(spot["spot"].iloc[0]) if not spot.empty else None,
                        "spot_source": cal["spot_source"].iloc[0] if not cal.empty else None,
@@ -174,117 +265,17 @@ def universe_view(snapshot: Path | None, path: Path = UNIVERSE) -> dict:
         snapshot_info = {"date": datetime.strptime(folder.parent.name, "%Y%m%d").date().isoformat(), "set": folder.name,
                          "created": info.get("created"), "history_rows": (info.get("history") or {}).get("rows"),
                          "history_first": (info.get("history") or {}).get("first")}
+    if snapshot_info is not None:
+        snapshot_info.update(selected=info.get("selected"))
     out = {"snapshot": snapshot_info, "equity": equity, "fx": fx, "fixing": fixings, "curves": curves,
+           "models": MODELS["equity"],
            "file": str(Path(path).relative_to(ROOT.parent)) if Path(path).is_relative_to(ROOT.parent) else str(path)}
-    return {k: ([{kk: _clean(vv) for kk, vv in row.items()} for row in v] if isinstance(v, list) else v)
+    return {k: ([{kk: _clean(vv) for kk, vv in row.items()} for row in v]
+                if isinstance(v, list) and v and isinstance(v[0], dict) else v)
             for k, v in out.items()}
 
 
 ASSET_CLASSES = {"equity": ("Equity", "Index"), "fx": ("Curncy",), "rates": ("Index",)}
-
-
-def add_ticker(asset_class: str, ticker: str, path: Path = UNIVERSE) -> dict:
-    """Add a Bloomberg ticker to the universe file (downloaded at the next download), keeping its comments.
-
-    Equities (``Equity`` yellow key) and FX pairs (``Curncy``) go to ``tickers``, equity indices (``Index`` under
-    *asset_class* ``"equity"``) to ``equity_indices``, rate fixings (``Index`` under ``"rates"``) to ``tickers``. A
-    ticker commented out in its section is uncommented instead of added again. Rate curves need quote conventions in
-    tQuant and are not added here.
-
-    Args:
-        asset_class (str): ``"equity"``, ``"fx"`` or ``"rates"``.
-        ticker (str): Bloomberg ticker with its yellow key (``"UCG IM Equity"``, ``"EURJPY Curncy"``).
-        path (Path): The universe file.
-
-    Returns:
-        dict: ``{"ticker", "section", "action"}`` (``"added"`` or ``"uncommented"``).
-
-    Raises:
-        ValueError: Unknown asset class, a yellow key that does not belong to it, an invalid ticker, or a ticker
-            already in the universe.
-    """
-    u = _mdbuild_universe()
-    if asset_class not in ASSET_CLASSES:
-        raise ValueError(f"unknown asset class {asset_class}")
-    ticker = " ".join(str(ticker).split())
-    parts = ticker.split()
-    if len(parts) < 2:
-        raise ValueError(f"'{ticker}': give the Bloomberg ticker with its yellow key (e.g. UCG IM Equity)")
-    parts = [p.upper() for p in parts[:-1]] + [parts[-1].capitalize()]      # Bloomberg form: ISP IM Equity
-    ticker = " ".join(parts)
-    if parts[-1] not in ASSET_CLASSES[asset_class]:
-        raise ValueError(f"'{ticker}': {asset_class} tickers end with {' or '.join(ASSET_CLASSES[asset_class])}")
-    u.parse(ticker)                                         # raises on an invalid FX pair, etc.
-    section = "equity_indices" if asset_class == "equity" and parts[-1] == "Index" else "tickers"
-    path = _ensure_universe(path)                           # write side: bootstrap the data copy from the template
-    current = read_universe(path)
-    active = {r["bbg"].upper() for k in ("equity", "fx", "fixing") for r in current[k] if r["included"]}
-    if ticker.upper() in active:
-        raise ValueError(f"'{ticker}' is already in the universe")
-
-    raw = Path(path).read_bytes().decode("utf-8")
-    newline = "\r\n" if "\r\n" in raw else "\n"             # the file's own line endings
-    lines = raw.splitlines()
-    start = next((i for i, l in enumerate(lines) if re.match(rf"^{section}:\s*$", l)), None)
-    if start is None:                                       # section missing: append it
-        lines += ["", f"{section}:", f"  - {ticker}"]
-        action = "added"
-    else:
-        end = next((i for i in range(start + 1, len(lines)) if re.match(r"^[A-Za-z_#]", lines[i])), len(lines))
-        commented = next((i for i in range(start + 1, end) if (m := _EXCLUDED.match(lines[i]))
-                          and m.group(1).strip().upper() == ticker.upper()), None)
-        if commented is not None:
-            lines[commented] = f"  - {ticker}"
-            action = "uncommented"
-        else:
-            items = [i for i in range(start + 1, end) if re.match(r"^\s+-\s|^\s*#\s*-\s", lines[i])]
-            at = (items[-1] if items else start) + 1
-            if section == "tickers" and items:              # after the last item of its kind (equity / FX / fixing)
-                kind = u.parse(ticker).kind
-                same = [i for i in items if lines[i].strip().lstrip("#").strip().lstrip("-").strip().endswith(
-                    {"equity": "Equity", "fx": "Curncy", "fixing": "Index"}[kind])]
-                at = (same[-1] if same else items[-1]) + 1
-            lines.insert(at, f"  - {ticker}")
-            action = "added"
-    Path(path).write_bytes((newline.join(lines) + newline).encode("utf-8"))
-    return {"ticker": ticker, "section": section, "action": action}
-
-
-def remove_ticker(asset_class: str, ticker: str, path: Path = UNIVERSE) -> dict:
-    """Remove a ticker from the universe: its line in ``tickers`` / ``equity_indices`` is commented out (no longer
-    downloaded; :func:`add_ticker` brings it back). Past snapshots keep their data.
-
-    Args:
-        asset_class (str): ``"equity"``, ``"fx"`` or ``"rates"`` (rate fixings; curves are not removed here).
-        ticker (str): The Bloomberg ticker as listed.
-        path (Path): The universe file.
-
-    Returns:
-        dict: ``{"ticker", "section", "action": "removed"}``.
-
-    Raises:
-        ValueError: Unknown asset class, or the ticker is not an active one of that asset class.
-    """
-    if asset_class not in ASSET_CLASSES:
-        raise ValueError(f"unknown asset class {asset_class}")
-    ticker = " ".join(str(ticker).split())
-    kind = {"equity": "equity", "fx": "fx", "rates": "fixing"}[asset_class]
-    if ticker.upper() not in {r["bbg"].upper() for r in read_universe(path)[kind] if r["included"]}:
-        raise ValueError(f"'{ticker}' is not an active {asset_class} ticker of the universe")
-    path = _ensure_universe(path)                           # write side: bootstrap the data copy from the template
-    raw = Path(path).read_bytes().decode("utf-8")
-    newline = "\r\n" if "\r\n" in raw else "\n"
-    lines = raw.splitlines()
-    section = None
-    for i, line in enumerate(lines):
-        if re.match(r"^[A-Za-z_]+:", line):
-            section = line.split(":")[0]
-        m = re.match(r"^(\s*)-\s*(\S.*?)\s*$", line)
-        if m and section in ("tickers", "equity_indices") and m.group(2).upper() == ticker.upper():
-            lines[i] = f"{m.group(1)}# - {m.group(2)}"
-            Path(path).write_bytes((newline.join(lines) + newline).encode("utf-8"))
-            return {"ticker": m.group(2), "section": section, "action": "removed"}
-    raise ValueError(f"'{ticker}' not found in tickers / equity_indices")
 
 
 from ..paths import CONFIG as APP_CONFIG  # noqa: E402  (tqstudio/config.yaml: authorized pcs, Python)
@@ -389,7 +380,10 @@ class DownloadRuns:
         self.settings = Path(settings)
         self.run = None
 
-    def start(self) -> dict:
+    def start(self, select=None, then=None) -> dict:
+        """Start a download: every active instrument, or *select* (equities, Bloomberg tickers) with the active rates,
+        FX and curves. *then*: called with the new snapshot folder once the download has succeeded (e.g. start the
+        calibration of its models); its result or error is reported in the status (``after``)."""
         if self.run is not None and self.run["process"].poll() is None:
             raise ValueError("a download is already running")
         if self.command is None:                       # no process without a terminal: the error at once
@@ -400,6 +394,8 @@ class DownloadRuns:
         universe = str(_ensure_universe(self.root / "config" / "universe.yaml"))     # bootstrap on first download
         command = self.command or [resolve_python(app_settings(self.settings)["python"]), "-u", "-m", "mdbuild",
                                    "--root", str(self.root), "--universe", universe, "--settings", str(SETTINGS)]
+        if select:
+            command = [*command, "--select", ",".join(select)]
         log = []
         env = {**os.environ, "PYTHONIOENCODING": "utf-8", "TF_ENABLE_ONEDNN_OPTS": "0"}
         process = subprocess.Popen(command, cwd=self.cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -409,10 +405,17 @@ class DownloadRuns:
             with process.stdout:
                 for line in process.stdout:
                     log.append(line.rstrip())
+            if then is not None and process.wait() == 0:      # the next step on the new snapshot
+                folder = next((l.split("-> ")[-1].strip() for l in log if l.startswith("snapshot ->")), None)
+                try:
+                    self.run["after"] = then(Path(folder)) if folder else "no snapshot written"
+                except Exception as exc:                       # e.g. a calibration already running
+                    self.run["after"] = f"{type(exc).__name__}: {exc}"
 
         reader = threading.Thread(target=read, daemon=True)
         reader.start()
-        self.run = {"process": process, "log": log, "reader": reader, "python": command[0],
+        self.run = {"process": process, "log": log, "reader": reader, "python": command[0], "select": select,
+                    "then": then is not None, "after": None,
                     "started": datetime.now().isoformat(timespec="seconds"), "t0": time.perf_counter(), "t1": None}
         return self.status()
 
@@ -426,5 +429,7 @@ class DownloadRuns:
         end = self.run["t1"] or time.perf_counter()
         result = next((l.split("-> ")[-1].strip() for l in log if l.startswith("snapshot ->")), None)
         return {"running": code is None, "exit_code": code, "started": self.run["started"], "python": self.run["python"],
+                "select": self.run.get("select"), "calibrate": self.run.get("then"),
+                "after": self.run.get("after"),
                 "seconds": round(end - self.run["t0"], 1), "result": result, "log": log[-12:],
                 "errors": [l for l in log if "Error" in l or "Traceback" in l][-5:]}

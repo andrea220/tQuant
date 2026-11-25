@@ -662,3 +662,18 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       (quanto, rho -0.31) mean 7845 vs forward 7832 after one year, SX5E on its forward. Test: expected flows
       discounted = the price (hard payoff), probabilities add up to one, GBM means = forwards within 3 SE, expected
       life = sum of probability x time, worst shares add up to one (the higher-vol underlying the worst more often).
+- [x] Universe with an active flag, Create new snapshot (selected or all active, optional calibration). `universe.yaml`:
+      `instruments` (ticker, `active`, optional `equity_index`, `implied_spot`, `option_root`, `models` = the
+      calibration flags of the equity, moved from `calibration.yaml`, which keeps the defaults) and `curves` (name,
+      ICVS ticker, `active`); `mdbuild.universe` reads it (and the former format: commented = inactive;
+      `convert_universe`, the repository's file converted). Full download: the active ones; `python -m mdbuild --select
+      "<equities>"`: those (active or not) with every active rate fixing, FX pair and curve, a complete snapshot of its
+      own (`selected` in `snapshot_info.json`). tqstudio Home: the universe (Equity / Rates / FX; Select, Active, the
+      model flags of the equities, status in the latest snapshot, Add ticker) and Create new snapshot (popup: only the
+      selected equities or all active; Calibrate: `DownloadRuns.start(select, then)` starts the calibration of the new
+      snapshot after a successful download); the universe view left the Market data page. A first version copied the
+      latest snapshot of the day and the models of the other underlyings (dropped: every snapshot complete and
+      independent). Real run on 2026-11-25 (Bloomberg, with that first version): ENI alone -> 20261125/1756 with FX,
+      fixings and the 4 curves (curves 76 s, vols 16 s). Tests: `marketdata` (format, conversion, selection, selected
+      snapshot recorded), `test_tqstudio_universe.py` (add / activate, deactivate, active flag of instruments and
+      curves, the step after a successful download only).

@@ -1,6 +1,6 @@
-# Models calibrated in the calibration sets (tqstudio Calibration tab > Universe edits this file).
-# Per asset class, the underlyings of the market data with a flag per model; an underlying not listed here takes the
-# defaults of its asset class. Rates models are listed but not calibrated in the sets yet (flags off).
+# Models calibrated in the calibration sets: the defaults per asset class. The flags of each equity are in the universe
+# file (models of its entry, edited from tqstudio > Market Data > Universe); rates / FX underlyings listed here.
+# An underlying without its own flags takes the defaults of its asset class. Rates models are listed but not calibrated in the sets yet (flags off).
 defaults:
   equity:
     Heston: true
@@ -10,10 +10,6 @@ defaults:
     HullWhite: false
     G2pp: false
   fx: {}
-equity:
-  SX5E:
-    Heston: true
-    DisplacedDiffusion: true
-    HestonSLV: true
+equity: {}
 rates: {}
 fx: {}

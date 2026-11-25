@@ -1,6 +1,7 @@
 """mdbuild with an in-memory source (no Bloomberg): universe parsing, incremental history, correlations, snapshot
 tables in the ``MarketEnvironment.from_folder`` layout. Run from ``marketdata``: ``python -m unittest discover -s tests``."""
 
+import json
 import sys
 import tempfile
 import unittest
@@ -16,7 +17,8 @@ from mdbuild.history import (correlations, equity_fixings, historical_fx_vols, n
                             rolling_correlations,
                              update_history)
 from mdbuild.snapshot import build_tables, curve_quotes, run             # noqa: E402
-from mdbuild.universe import Curve, load_curves, load_universe, parse    # noqa: E402
+from mdbuild.universe import (Curve, convert_universe, instrument, load_curves, load_implied_spot,  # noqa: E402
+                              load_option_roots, load_universe, parse, read_entries, write_entries)
 
 TODAY = date(2026, 11, 12)
 FIELDS = {"price": "PX_LAST", "currency": "CRNCY", "name": "NAME", "last_update": "LAST_UPDATE_DT",
@@ -89,6 +91,69 @@ class TestUniverse(unittest.TestCase):
         kinds = [i.kind for i in universe]
         self.assertEqual((kinds.count("equity"), kinds.count("fx"), kinds.count("fixing")), (6, 5, 4))
         self.assertEqual([i.code for i in universe if i.bbg.endswith("Index") and i.kind == "equity"], ["SX5E", "SPX"])
+
+
+FORMER = """tickers:
+  # Italy
+  - ENI IM Equity
+  # - UCG IM Equity
+  - EURUSD Curncy
+  - ESTRON Index
+equity_indices:
+  - SPX Index
+  # - SX5E Index
+implied_spot:
+  - SPX Index
+option_roots:
+  UCG IM Equity: UCG IM
+curves:
+  EUR ESTR: YCSW0514 Index
+"""
+
+
+class TestUniverseFormat(unittest.TestCase):
+    """The universe file: instruments with an active flag and attributes; the former format read and converted."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "universe.yaml"
+        self.path.write_text(FORMER, encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_former_format_and_conversion(self):
+        """Commented tickers are inactive; the conversion keeps every instrument, flag and attribute."""
+        before = read_entries(self.path)
+        self.assertEqual([(e["ticker"], e["active"]) for e in before[0]],
+                         [("ENI IM Equity", True), ("UCG IM Equity", False), ("EURUSD Curncy", True),
+                          ("ESTRON Index", True), ("SPX Index", True), ("SX5E Index", False)])
+        self.assertTrue(convert_universe(self.path))
+        self.assertFalse(convert_universe(self.path))                 # already converted
+        self.assertEqual(read_entries(self.path), before)
+        self.assertEqual([i.bbg for i in load_universe(self.path)],
+                         ["ENI IM Equity", "EURUSD Curncy", "ESTRON Index", "SPX Index"])
+        self.assertEqual(load_option_roots(self.path), {"UCG IM Equity": "UCG IM"})
+        self.assertEqual(load_implied_spot(self.path), ["SPX Index"])
+        self.assertEqual(instrument(before[0][5]), parse("SX5E Index").__class__("SX5E Index", "equity", "SX5E"))
+
+    def test_selection_and_flags(self):
+        """A selection takes any instrument or curve of the universe, active or not; the flag is written back."""
+        convert_universe(self.path)
+        self.assertEqual([i.bbg for i in load_universe(self.path, select=["ucg im equity", "SX5E Index"])],
+                         ["UCG IM Equity", "SX5E Index"])
+        self.assertEqual([c.label for c in load_curves(self.path, select=["EUR ESTR"])], ["EUR ESTR"])
+        self.assertEqual(load_curves(self.path, select=[]), [])
+        entries, curves = read_entries(self.path)
+        entries[1]["active"] = True
+        entries[0]["models"] = {"Heston": False}
+        write_entries(self.path, entries, curves)
+        again = read_entries(self.path)[0]
+        self.assertTrue(again[1]["active"])
+        self.assertEqual(again[0]["models"], {"Heston": False})
+        self.path.write_text("instruments:\n  - {ticker: ENI IM Equity}\n  - {ticker: ENI IM Equity}\n", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            read_entries(self.path)
 
 
 class TestCurves(unittest.TestCase):
@@ -291,6 +356,21 @@ class TestSnapshot(unittest.TestCase):
                               "ir_fixings.csv",
                               "ir_quotes.csv", "snapshot_info.json"])
             self.assertTrue((Path(tmp) / "history" / "prices.parquet").is_file())
+            self.assertIsNone(json.loads((folder / "snapshot_info.json").read_text(encoding="utf-8"))["selected"])
+
+    def test_selected_download(self):
+        """A selected download: a complete snapshot of its own with the selection recorded."""
+        settings = {"fields": FIELDS, "history": {"years": 10},
+                    "correlation": {"frequency": "W-FRI", "window": 13, "percentile": 90},
+                    "output": {"snapshots": "live", "history": "history"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = run(FakeSource(), [parse(t) for t in TICKERS], settings, Path(tmp),
+                         datetime(2026, 11, 12, 17, 30), [Curve("EUR", "ESTR", "YCSW0514 Index")],
+                         selected=["AAA IM Equity"])
+            info = json.loads((folder / "snapshot_info.json").read_text(encoding="utf-8"))
+            self.assertEqual(info["selected"], ["AAA IM Equity"])
+            self.assertEqual(info["curves"], {"EUR ESTR": "YCSW0514 Index"})
+
 
 
 if __name__ == "__main__":

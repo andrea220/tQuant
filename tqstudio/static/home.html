@@ -17,6 +17,29 @@
     <div class="topbar"><h1>Home</h1></div>
 
     <main>
+      <!-- the universe of the market data: what a snapshot downloads, the models a calibration calibrates -->
+      <div class="panel">
+        <h2>Universe <span id="uv-snapshot" class="muted"></span></h2>
+        <div class="form-row">
+          <div class="segmented" id="uv-classes">
+            <button data-cls="equity" class="active">Equity</button><button data-cls="rates">Rates</button><button data-cls="fx">FX</button>
+          </div>
+          <button id="snap-new" class="compact" style="margin: 0">Create new snapshot</button>
+          <button id="uv-add" class="secondary compact" style="margin: 0">Add ticker</button>
+          <span id="dl-status" class="muted"></span>
+        </div>
+        <div id="uv-add-form" class="form-row hidden" style="margin-top: 12px">
+          <input id="uv-ticker" placeholder="Bloomberg ticker, e.g. UCG IM Equity" style="width: 320px">
+          <button id="uv-add-ok" class="compact" style="margin: 0">Add</button>
+          <button id="uv-add-cancel" class="secondary compact" style="margin: 0">Cancel</button>
+          <span id="uv-add-msg" class="muted"></span>
+        </div>
+        <div id="uv-table" class="hscroll" style="margin-top: 14px"></div>
+        <div id="uv-table2" class="hscroll" style="margin-top: 14px"></div>
+        <p id="uv-note" class="note"></p>
+        <pre id="dl-log" class="log hidden"></pre>
+      </div>
+
       <div class="panel">
         <h2>Documents</h2>
         <div class="tiles" id="documents"></div>
@@ -24,16 +47,37 @@
     </main>
   </div>
 
-  <script>
-    fetch("/api/documents").then((r) => r.json()).then(({ snapshot, source, documents }) => {
-      document.getElementById("snapshot").textContent = `${source} · ${snapshot}`;
-      document.getElementById("documents").innerHTML = documents.map((d) => d.available
-        ? `<a class="tile" href="/documents/${d.key}" target="_blank" rel="noopener">
-             <div class="tile-title">${d.title} <span class="pill">PDF</span></div></a>`
-        : `<div class="tile disabled"><div class="tile-title">${d.title}</div>
-             <div class="tile-text">Not built on this machine: run <code>latexmk</code> in <code>study/docs</code>.</div></div>`
-      ).join("");
-    });
-  </script>
+  <!-- Create new snapshot: what to download, and whether to calibrate the models after -->
+  <div class="modal hidden" id="new-snapshot">
+    <div class="modal-box panel new-snapshot-box" role="dialog" aria-modal="true" aria-labelledby="ns-title">
+      <div class="modal-head">
+        <h2 id="ns-title">Create new snapshot</h2>
+        <button id="ns-cancel" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <label class="choice"><input type="radio" name="ns-what" id="ns-all"> Download all active instruments</label>
+      <label class="choice"><input type="radio" name="ns-what" id="ns-selected">
+        <span id="ns-selected-label">Download only the selected equities</span></label>
+      <p class="note">Both download the active rate fixings, FX pairs and curves too: the snapshot is complete on its own.</p>
+      <label class="choice"><input type="checkbox" id="ns-calibrate"> Calibrate: after the download, calibrate the
+        flagged models of its equities (a calibration set)</label>
+      <div class="form-row" style="margin-top: 16px">
+        <button id="ns-start" class="compact" style="margin: 0">Start</button>
+        <span id="ns-msg" class="muted"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="dl-error">
+    <div class="modal-box panel dl-error-box" role="alertdialog" aria-modal="true" aria-labelledby="dl-error-title">
+      <div class="modal-head">
+        <h2 id="dl-error-title" class="error">Download failed</h2>
+        <button id="dl-error-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <p id="dl-error-text"></p>
+      <details id="dl-error-details"><summary class="muted">Details</summary><pre id="dl-error-log" class="log"></pre></details>
+    </div>
+  </div>
+
+  <script src="/static/home.js"></script>
 </body>
 </html>

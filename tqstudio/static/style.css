@@ -309,3 +309,7 @@ button.add-underlying { align-self: flex-start; margin: 2px 0 0; }
 
 /* pricing details of the tabbed products: one column, growing in height */
 .mini-info.one-column { grid-template-columns: minmax(0, 1fr); max-width: 560px; }
+/* home: Create new snapshot */
+.new-snapshot-box { width: min(560px, 94vw); }
+label.choice { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0; font-size: 13px; cursor: pointer; }
+label.choice input { width: auto; margin-top: 2px; }

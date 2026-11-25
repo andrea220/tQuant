@@ -239,27 +239,47 @@ class CalibrationRuns:
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# universe: the models to calibrate per underlying (marketdata/config/calibration.yaml in the repository)
+# universe: the models to calibrate per underlying: the equities' flags in the universe file (models of each
+# instrument), the defaults per asset class (and the rates / FX flags) in marketdata/config/calibration.yaml
 # ----------------------------------------------------------------------------------------------------------------------
 
 CONFIG = CODE_MARKETDATA / "config" / "calibration.yaml"
+
+
+def _universe_file() -> Path:
+    from .universe import UNIVERSE, UNIVERSE_TEMPLATE
+    return UNIVERSE if UNIVERSE.is_file() else UNIVERSE_TEMPLATE
+
+
+def universe_models(path: Path = None) -> dict:
+    """``{code: models}`` of the equities of the universe file with their own flags (``models`` of the entry)."""
+    from .universe import _mdbuild_universe
+    u = _mdbuild_universe()
+    path = Path(path) if path is not None else _universe_file()
+    if not path.is_file():
+        return {}
+    return {u.instrument(e).code: dict(e["models"]) for e in u.read_entries(path)[0] if e.get("models")}
 MODELS = {"equity": ["Heston", "DisplacedDiffusion", "HestonSLV"], "rates": ["HullWhite", "G2pp"], "fx": []}
 SUPPORTED = {"Heston", "DisplacedDiffusion", "HestonSLV"}     # models of the calibration sets (rates: not yet)
 
 
-def read_config(path: Path = CONFIG) -> dict:
-    """The flags file, completed with an empty section and the defaults of every asset class."""
+def read_config(path: Path = CONFIG, universe: Path = None) -> dict:
+    """The flags file, completed with an empty section and the defaults of every asset class, and the equities'
+    flags of the universe file (``_universe``: they win over the file's)."""
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) if Path(path).is_file() else {}
     data = data or {}
     data.setdefault("defaults", {})
     for cls in MODELS:
         data[cls] = data.get(cls) or {}
         data["defaults"][cls] = data["defaults"].get(cls) or {m: False for m in MODELS[cls]}
+    data["_universe"] = universe_models(universe)
     return data
 
 
 def _flags(config: dict, cls: str, name: str) -> dict:
     stored = (config.get(cls) or {}).get(name) or {}
+    if cls == "equity":                                # the universe's flags first
+        stored = {**stored, **config.get("_universe", {}).get(name, {})}
     defaults = config["defaults"].get(cls) or {}
     return {m: bool(stored.get(m, defaults.get(m, False))) for m in MODELS[cls]}
 
@@ -294,11 +314,23 @@ def universe_view(mkt, root: Path, path: Path = CONFIG) -> dict:
     return out
 
 
-def save_flags(asset_class: str, name: str, flags: dict, path: Path = CONFIG) -> dict:
-    """Store the flags of one underlying (the comment header of the file is kept)."""
+def save_flags(asset_class: str, name: str, flags: dict, path: Path = CONFIG, universe: Path = None) -> dict:
+    """Store the flags of one underlying: an equity of the universe in its entry of the universe file (``models``),
+    the others in the flags file (the comment header of the file is kept)."""
     if asset_class not in MODELS:
         raise ValueError(f"unknown asset class {asset_class}")
+    if asset_class == "equity":
+        from .universe import _ensure_universe, _mdbuild_universe
+        u = _mdbuild_universe()
+        target = _ensure_universe(universe) if universe is not None else _ensure_universe()
+        entries, curves = u.read_entries(target)
+        entry = next((e for e in entries if u.instrument(e).kind == "equity" and u.instrument(e).code == name), None)
+        if entry is not None:
+            entry["models"] = {m: bool(flags.get(m, False)) for m in MODELS[asset_class]}
+            u.write_entries(target, entries, curves)
+            return entry["models"]
     config = read_config(path)
+    config.pop("_universe", None)
     config[asset_class][name] = {m: bool(flags.get(m, False)) for m in MODELS[asset_class]}
     text = Path(path).read_text(encoding="utf-8") if Path(path).is_file() else ""
     header = "".join(line for line in text.splitlines(keepends=True) if line.startswith("#"))

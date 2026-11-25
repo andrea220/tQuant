@@ -122,8 +122,19 @@ amounts vector). In the synthetic data the payment is 14 days after the ex-date.
 
 \paragraph{Where the data come from (live snapshots).} \code{marketdata/mdbuild} downloads them from the Bloomberg
 Desktop API (fields in \code{marketdata/config/settings.yaml}); single stocks (\code{Equity} yellow key) and equity
-indices (\code{Index} yellow key, listed under \code{equity\_indices} in \code{universe.yaml}) differ in the dividends,
+indices (\code{Index} yellow key flagged \code{equity\_index} in \code{universe.yaml}) differ in the dividends,
 the options and, for SPX, the spot.
+
+\paragraph{The universe and what a download takes.} \code{universe.yaml} (with the data, edited from tqstudio >
+Home > Universe) lists the \code{instruments} (Bloomberg ticker, \code{active}, optional \code{equity\_index},
+\code{implied\_spot}, \code{option\_root}, \code{models}: the calibration flags) and the \code{curves}
+(\code{"<CCY> <name>"}, ICVS ticker, \code{active}); \code{mdbuild.universe} reads it (\code{read\_entries},
+\code{load\_universe(path, select)}, \code{load\_curves}) and still reads the former format (commented tickers =
+inactive; \code{convert\_universe} rewrites it). A full download (\code{python -m mdbuild}) takes the active
+instruments and curves; \code{python -m mdbuild --select "ENI IM Equity,SX5E Index"} the named equities (active or
+not) with every active rate fixing, FX pair and curve: a complete snapshot of its own, \code{selected} in
+\code{snapshot\_info.json}. Both are started from the tqstudio Home (Create new snapshot), optionally followed by the
+calibration of the models of the new snapshot.
 
 \begin{center}
 \small

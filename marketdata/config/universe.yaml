@@ -1,52 +1,39 @@
-# Universe of the market data snapshots: Bloomberg tickers only, the yellow key decides the type
-# (Equity -> equity spot, dividends, history; Curncy -> FX spot, history; Index -> interest-rate fixing).
-# Add a line to add an underlying (commented ones: left out for now, uncomment to add them back).
-tickers:
-  # Italy
-  - ENI IM Equity
-  - ISP IM Equity
-  # - UCG IM Equity
-  # - ENEL IM Equity
-  # - RACE IM Equity
-  # USA
-  - AAPL US Equity
-  - MSFT US Equity
-  # - AMZN US Equity
-  # - NVDA US Equity
-  # - JPM US Equity
-  # FX (1 base = x quote)
-  - EURUSD Curncy
-  - GBPUSD Curncy
-  - EURGBP Curncy
-  - EURCHF Curncy
-  - USDJPY Curncy
-  # interest-rate fixings
-  - ESTRON Index
-  - EUR006M Index
-  - SOFRRATE Index
-  - SONIO/N Index
+# Universe of the market data snapshots (edited from tqstudio > Market Data > Universe).
+# instruments: Bloomberg tickers, the yellow key decides the type (Equity -> equity spot, dividends, history, listed
+#   options; Curncy -> FX spot, history; Index -> interest-rate fixing, or an equity index with equity_index: true).
+#   active: downloaded by a full download (an inactive one can still be downloaded on its own).
+#   Optional: equity_index, implied_spot (price delayed against its options: spot implied by the options),
+#   option_root ("<root> <exchange>" of the listed options when not the underlying's own), models (calibration flags,
+#   the defaults of calibration.yaml when absent).
+# curves: "<CCY> <tQuant curve name>" and the Bloomberg ICVS curve (names like 6M are Ibor curves, the others OIS).
 
-# Equity indices (Index yellow key, but equity underlyings: spot, history, listed options; no dividend projections,
-# the dividends are in the implied carry)
-equity_indices:
-  - SX5E Index
-  - SPX Index
-
-# Underlyings whose price on this terminal is delayed against their options (no real-time subscription): the spot
-# is implied by the options (forward of the nearest expiry from 3 days, plus the dividends, discounted)
-implied_spot:
-  - SPX Index
-
-# Listed options: by default the root with the underlying's ticker and exchange (ENI IM, AAPL US); override here
-# with "<underlying>: <root> <exchange>" (e.g. a European-style root).
-option_roots:
-  ENEL IM Equity: ENE IM
-  RACE IM Equity: RAC IM
-
-# Rate curves: "<CCY> <tQuant curve name>": Bloomberg ICVS curve. The snapshot stores the quotes of the curve members
-# (ir_quotes.csv); tQuant bootstraps the curves. Names like "6M" are Ibor curves (fixing, FRAs, swaps), the others OIS.
+instruments:
+- {ticker: ENI IM Equity, active: true}
+- {ticker: ISP IM Equity, active: true}
+- {ticker: UCG IM Equity, active: false}
+- {ticker: ENEL IM Equity, active: false, option_root: ENE IM}
+- {ticker: RACE IM Equity, active: false, option_root: RAC IM}
+- {ticker: AAPL US Equity, active: true}
+- {ticker: MSFT US Equity, active: true}
+- {ticker: AMZN US Equity, active: false}
+- {ticker: NVDA US Equity, active: false}
+- {ticker: JPM US Equity, active: false}
+- {ticker: EURUSD Curncy, active: true}
+- {ticker: GBPUSD Curncy, active: true}
+- {ticker: EURGBP Curncy, active: true}
+- {ticker: EURCHF Curncy, active: true}
+- {ticker: USDJPY Curncy, active: true}
+- {ticker: ESTRON Index, active: true}
+- {ticker: EUR006M Index, active: true}
+- {ticker: SOFRRATE Index, active: true}
+- {ticker: SONIO/N Index, active: true}
+- ticker: SX5E Index
+  active: true
+  equity_index: true
+  models: {Heston: true, DisplacedDiffusion: true, HestonSLV: true}
+- {ticker: SPX Index, active: true, equity_index: true, implied_spot: true}
 curves:
-  EUR ESTR: YCSW0514 Index
-  EUR 6M: YCSW0045 Index
-  USD SOFR: YCSW0490 Index
-  GBP SONIA: YCSW0141 Index
+- {name: EUR ESTR, ticker: YCSW0514 Index, active: true}
+- {name: EUR 6M, ticker: YCSW0045 Index, active: true}
+- {name: USD SOFR, ticker: YCSW0490 Index, active: true}
+- {name: GBP SONIA, ticker: YCSW0141 Index, active: true}

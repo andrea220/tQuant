@@ -7,7 +7,7 @@ Examples (from the repository root, in tqenv)::
     python -m tqstudio.calibrate --date 2026-11-13 --set 1619 --models Heston
 
 Without ``--models`` / ``--tickers`` / ``--slv`` the models of each underlying are the flags of
-``marketdata/config/calibration.yaml`` (Calibration tab > Universe). The sets go to ``marketdata/calibrations/<source>/<yyyymmdd>/<hhmm>/`` (git-ignored); the web app lists them in the
+the universe (models of each instrument, defaults in ``marketdata/config/calibration.yaml``). The sets go to ``marketdata/calibrations/<source>/<yyyymmdd>/<hhmm>/`` (git-ignored); the web app lists them in the
 Calibration tab and starts this command for its "New calibration set" button (a separate process: the calibrations
 take minutes and set the global evaluation date).
 """
@@ -64,6 +64,7 @@ def main(argv=None) -> None:
         day = datetime.strptime(snapshot.parent.name, "%Y%m%d").date()
         plan = universe_plan(read_config(), MarketEnvironment.from_folder(snapshot.parent.parent, day, snapshot.name))
         print("plan " + ", ".join(t + ": " + ("/".join(m) or "-") for t, m in plan.items()), flush=True)
+
 
     def progress(done, total, label):
         print(f"progress {done}/{total} {label}", flush=True)
