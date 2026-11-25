@@ -18,6 +18,7 @@ instruments:
 - {ticker: AMZN US Equity, active: false}
 - {ticker: NVDA US Equity, active: false}
 - {ticker: JPM US Equity, active: false}
+- {ticker: SOXX US Equity, active: true}
 - {ticker: EURUSD Curncy, active: true}
 - {ticker: GBPUSD Curncy, active: true}
 - {ticker: EURGBP Curncy, active: true}

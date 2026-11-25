@@ -83,9 +83,10 @@ def _write(path: Path, entries: list, curves: list) -> None:
     _mdbuild_universe().write_entries(path, entries, curves)
 
 
-def add_ticker(asset_class: str, ticker: str, path: Path = UNIVERSE) -> dict:
+def add_ticker(asset_class: str, ticker: str, path: Path = UNIVERSE, verify=None) -> dict:
     """Add a Bloomberg ticker to the universe file, active (downloaded at the next full download); an inactive one
-    already there is activated instead.
+    already there is activated instead. A new ticker is checked first with *verify* (e.g. :func:`verify_ticker`: it
+    exists on Bloomberg, of the right type) when given.
 
     Equities (``Equity`` yellow key), equity indices (``Index`` under *asset_class* ``"equity"``), FX pairs
     (``Curncy``) and rate fixings (``Index`` under ``"rates"``); a new entry goes after the last one of its kind. Rate
@@ -95,13 +96,16 @@ def add_ticker(asset_class: str, ticker: str, path: Path = UNIVERSE) -> dict:
         asset_class (str): ``"equity"``, ``"fx"`` or ``"rates"``.
         ticker (str): Bloomberg ticker with its yellow key (``"UCG IM Equity"``, ``"EURJPY Curncy"``).
         path (Path): The universe file.
+        verify (callable, optional): ``verify(ticker) -> dict`` (``name``, ``ccy``, ``type``), raising
+            ``ValueError`` for a ticker that cannot be added.
 
     Returns:
-        dict: ``{"ticker", "action"}`` (``"added"`` or ``"activated"``).
+        dict: ``{"ticker", "action"}`` (``"added"`` or ``"activated"``), with ``name``, ``ccy``, ``type`` when
+        verified.
 
     Raises:
-        ValueError: Unknown asset class, a yellow key that does not belong to it, an invalid ticker, or a ticker
-            already active in the universe.
+        ValueError: Unknown asset class, a yellow key that does not belong to it, an invalid ticker, a ticker
+            already active in the universe, or one the verification rejects.
     """
     u = _mdbuild_universe()
     if asset_class not in ASSET_CLASSES:
@@ -125,13 +129,48 @@ def add_ticker(asset_class: str, ticker: str, path: Path = UNIVERSE) -> dict:
         existing["active"] = True
         _write(path, entries, curves)
         return {"ticker": existing["ticker"], "action": "activated"}
+    found = verify(ticker) if verify is not None else {}             # on Bloomberg, before the file changes
+    kind_type = str(found.get("type") or "").lower()
+    if found and asset_class == "equity" and index and "equity index" not in kind_type:
+        raise ValueError(f"'{ticker}' is a {found.get('type')} on Bloomberg, not an equity index")
+    if found and asset_class == "rates" and "equity" in kind_type:
+        raise ValueError(f"'{ticker}' is an {found.get('type')} on Bloomberg: add it under Equity")
     entry = {"ticker": ticker, "active": True, **({"equity_index": True} if index else {})}
     kind = u.instrument(entry).kind
     same = [i for i, e in enumerate(entries) if u.instrument(e).kind == kind
             and bool(e.get("equity_index")) == index]
     entries.insert((same[-1] + 1) if same else len(entries), entry)
     _write(path, entries, curves)
-    return {"ticker": ticker, "action": "added"}
+    return {"ticker": ticker, "action": "added",
+            **{k: found.get(k) for k in ("name", "ccy", "type") if found.get(k)}}
+
+
+def verify_ticker(ticker: str, settings: Path = None, timeout: float = 60.0) -> dict:
+    """Check a Bloomberg ticker on the terminal of this pc (``python -m mdbuild.check`` with the download's Python).
+
+    Returns:
+        dict: ``{"ticker", "found", "name", "ccy", "type"}``.
+
+    Raises:
+        ValueError: The terminal is not reachable (the ticker cannot be checked), or the ticker does not exist.
+    """
+    host, port = bloomberg_endpoint()
+    if not bloomberg_reachable(host, port):
+        raise ValueError(f"cannot check '{ticker}': the Bloomberg terminal is not reachable on {host}:{port} "
+                         "(open the terminal and add it again)")
+    python = resolve_python(app_settings(settings or APP_CONFIG)["python"])
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    done = subprocess.run([python, "-m", "mdbuild.check", ticker, "--settings", str(SETTINGS)], cwd=CODE_MARKETDATA,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, env=env)
+    lines = [l for l in done.stdout.splitlines() if l.startswith("{")]
+    if not lines:
+        raise ValueError(f"cannot check '{ticker}': {(done.stderr or done.stdout).strip()[-300:]}")
+    data = json.loads(lines[-1])
+    if data.get("found") is None:
+        raise ValueError(f"cannot check '{ticker}': {data.get('error')}")
+    if not data["found"]:
+        raise ValueError(f"'{ticker}' not found on Bloomberg")
+    return data
 
 
 def set_active(name: str, active: bool, path: Path = UNIVERSE) -> dict:
@@ -197,12 +236,29 @@ def _clean(x):
     return x
 
 
+def last_downloads(root: Path | None) -> dict:
+    """When each instrument (Bloomberg ticker) and curve (``"EUR ESTR"``) was last downloaded: the ``created`` time of
+    the latest snapshot under *root* (``<yyyymmdd>/<hhmm>/snapshot_info.json``) that has it."""
+    out = {}
+    if root is None or not Path(root).is_dir():
+        return out
+    for info_path in sorted(Path(root).glob("*/*/snapshot_info.json"), reverse=True):     # the latest first
+        try:
+            info = json.loads(info_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for name in list(info.get("universe") or []) + list(info.get("curves") or {}):
+            out.setdefault(name, info.get("created"))
+    return out
+
+
 def universe_view(snapshot: Path | None, path: Path = UNIVERSE) -> dict:
     """The universe and, per instrument, its status in the snapshot folder *snapshot* (``live/<yyyymmdd>/<hhmm>``).
 
     Equities: spot and its source, dividends, option quotes (count, quote date), expiries with a smile, share of the
     quotes whose model vol is within bid / ask; FX: spot; fixings: value and date; curves: quotes, last update,
     bootstrapped. ``in_snapshot`` is False for an instrument added after the snapshot (or excluded).
+    ``last_download``: when each instrument was last downloaded, over every snapshot next to *snapshot*.
     """
     from .calibration import MODELS, _flags, read_config
     uni = read_universe(path)
@@ -214,6 +270,7 @@ def universe_view(snapshot: Path | None, path: Path = UNIVERSE) -> dict:
         "eq_spot.csv", "eq_dividends.csv", "eq_option_quotes.csv", "eq_vol_calibration.csv", "eq_vol_quotes.csv",
         "fx_spot.csv", "ir_fixings.csv", "ir_quotes.csv", "ir_curves.csv")}
     snap_universe = set(info.get("universe", []))
+    last = last_downloads(folder.parent.parent if folder is not None else None)
 
     def rows_of(name, column, value):
         t = tables[name]
@@ -232,6 +289,7 @@ def universe_view(snapshot: Path | None, path: Path = UNIVERSE) -> dict:
             if len(two):
                 within = float(((two["model_vol"] >= two["iv_bid"] - 1e-12) & (two["model_vol"] <= two["iv_ask"] + 1e-12)).mean())
         equity.append({**r, "in_snapshot": r["bbg"] in snap_universe and not spot.empty,
+                       "last_download": last.get(r["bbg"]),
                        "flags": _flags(config, "equity", code),         # the models calibrated (own or default)
                        "ccy": spot["ccy"].iloc[0] if not spot.empty else None,
                        "spot": float(spot["spot"].iloc[0]) if not spot.empty else None,
@@ -245,11 +303,12 @@ def universe_view(snapshot: Path | None, path: Path = UNIVERSE) -> dict:
     for r in uni["fx"]:
         t = tables["fx_spot.csv"]
         row = t[(t["base"] == r["code"][:3]) & (t["quote"] == r["code"][3:])] if not t.empty else t
-        fx.append({**r, "in_snapshot": not row.empty, "spot": float(row["spot"].iloc[0]) if not row.empty else None})
+        fx.append({**r, "in_snapshot": not row.empty, "spot": float(row["spot"].iloc[0]) if not row.empty else None,
+                   "last_download": last.get(r["bbg"])})
     fixings = []
     for r in uni["fixing"]:
         row = rows_of("ir_fixings.csv", "bloomberg", r["bbg"])
-        fixings.append({**r, "in_snapshot": not row.empty,
+        fixings.append({**r, "in_snapshot": not row.empty, "last_download": last.get(r["bbg"]),
                         "value": float(row["value"].iloc[0]) if not row.empty else None,
                         "fixing_date": row["fixing_date"].iloc[0] if not row.empty else None})
     curves = []
@@ -257,7 +316,7 @@ def universe_view(snapshot: Path | None, path: Path = UNIVERSE) -> dict:
     for r in uni["curves"]:
         quotes = q[(q["ccy"] == r["ccy"]) & (q["curve"].astype(str) == r["curve"])] if not q.empty else q
         built = c[(c["ccy"] == r["ccy"]) & (c["curve"].astype(str) == r["curve"])] if not c.empty else c
-        curves.append({**r, "in_snapshot": not quotes.empty, "quotes": int(len(quotes)),
+        curves.append({**r, "in_snapshot": not quotes.empty, "quotes": int(len(quotes)), "last_download": last.get(r["name"]),
                        "last_update": quotes["last_update"].max() if not quotes.empty else None,
                        "pillars": int(len(built)), "bootstrapped": not built.empty})
     snapshot_info = None

@@ -1,4 +1,4 @@
-// tqstudio home: the universe of the market data (every instrument and curve, active or not, the model flags of the
+// tqstudio home: the documents, then the reference data of the market data (every instrument and curve, active or not, the model flags of the
 // equities, its status in the latest snapshot), "Create new snapshot" (download the selected or every active
 // instrument, optionally calibrate), and the documents.
 
@@ -22,19 +22,15 @@ async function postJson(url, body) {
 }
 
 // ---------- universe ----------
-const mark = (r) => (r.in_snapshot ? `<span class="pill ok">in snapshot</span>`
-  : r.active === false ? `<span class="pill">inactive</span>` : `<span class="pill warn">next download</span>`);
 const dash = (x, f) => (x === null || x === undefined ? "–" : f(x));
+const when = (r) => (r.last_download ? r.last_download.replace("T", " ").slice(0, 16) : "never");
 const ADD_HINT = { equity: "Bloomberg ticker, e.g. UCG IM Equity or FTSEMIB Index",
                    rates: "Bloomberg fixing, e.g. EUR003M Index", fx: "Bloomberg pair, e.g. EURJPY Curncy" };
 
 function renderUniverse() {
   const d = state.data;
   if (!d) return;
-  const s = d.snapshot;
   document.querySelectorAll("#uv-classes button").forEach((b) => b.classList.toggle("active", b.dataset.cls === state.cls));
-  $("uv-snapshot").textContent = s ? `status in the latest snapshot ${s.date} ${s.set}`
-    + (s.selected ? ` (downloaded for ${s.selected.join(", ")})` : "") : "no snapshot yet";
   const sorted = (rows) => [...rows].sort((a, b) => (b.active - a.active) || a.bbg.localeCompare(b.bbg));
   const lock = d.can_edit ? "" : " disabled";
   const pick = (name) => `<input type="checkbox" class="uv-select" data-name="${name}"${
@@ -51,12 +47,8 @@ function renderUniverse() {
       ...lead,
       ["Bloomberg ticker", (r) => r.bbg],
       ["Type", (r) => r.type],
-      ["Status", mark],
       ["Ccy", (r) => r.ccy || ""],
-      ["Spot", (r) => dash(r.spot, (x) => fmt(x, 2))],
-      ["Dividends", (r) => (r.in_snapshot ? r.dividends : "")],
-      ["Options", (r) => (r.in_snapshot ? r.options : "")],
-      ["Model within bid / ask", (r) => dash(r.within_bid_ask, (x) => `${pct(x, 0)}%`)],
+      ["Last download", when],
       ["Settings", (r) => [r.option_root ? `options ${r.option_root}` : "", r.implied_spot ? "implied spot" : ""]
         .filter(Boolean).join(", ")],
       ...models,
@@ -65,17 +57,17 @@ function renderUniverse() {
     $("uv-table").innerHTML = table([
       ["Active", (r) => flag(r.name, r.active)],
       ["Curve", (r) => r.name], ["Bloomberg (ICVS)", (r) => r.bbg], ["Kind", (r) => r.kind.toUpperCase()],
-      ["Status", mark], ["Quotes", (r) => r.quotes], ["Last update", (r) => r.last_update || ""],
+      ["Last download", when], ["Quotes", (r) => r.quotes], ["Last update", (r) => r.last_update || ""],
       ["Bootstrapped", (r) => (r.bootstrapped ? `${r.pillars} pillars` : "–")],
     ], [...d.curves].sort((a, b) => a.name.localeCompare(b.name)));
     $("uv-table2").innerHTML = table([
-      ["Active", (r) => flag(r.bbg, r.active)], ["Fixing", (r) => r.bbg], ["Status", mark],
+      ["Active", (r) => flag(r.bbg, r.active)], ["Fixing", (r) => r.bbg], ["Last download", when],
       ["Value (%)", (r) => dash(r.value, (x) => pct(x, 3))], ["Date", (r) => r.fixing_date || ""],
     ], sorted(d.fixing));
   } else {
     $("uv-table").innerHTML = table([
-      ["Active", (r) => flag(r.bbg, r.active)], ["Bloomberg ticker", (r) => r.bbg], ["Status", mark],
-      ["Spot", (r) => dash(r.spot, (x) => fmt(x, 4))],
+      ["Active", (r) => flag(r.bbg, r.active)], ["Bloomberg ticker", (r) => r.bbg],
+      ["Last download", when], ["Spot", (r) => dash(r.spot, (x) => fmt(x, 4))],
     ], sorted(d.fx));
   }
   document.querySelectorAll("input.uv-select").forEach((b) => b.addEventListener("change", () => {
@@ -143,12 +135,13 @@ function showAddForm(show) {
 async function addTicker() {
   const ticker = $("uv-ticker").value.trim();
   if (!ticker) return;
+  $("uv-add-msg").textContent = "Checking on Bloomberg…";
   try {
     const data = await postJson("/api/market/universe", { asset_class: state.cls, ticker });
     showAddForm(false);
     await loadUniverse();
-    $("dl-status").textContent = `${data.ticker} ${data.action === "activated" ? "active again in" : "added to"} the `
-      + "universe: downloaded by the next full snapshot";
+    $("dl-status").textContent = `${data.ticker}${data.name ? ` (${data.name}, ${data.ccy})` : ""} `
+      + `${data.action === "activated" ? "active again in" : "added to"} the reference data: downloaded by the next full snapshot`;
   } catch (e) {
     $("uv-add-msg").innerHTML = `<span class="error">${e.message}</span>`;
   }

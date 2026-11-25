@@ -27,7 +27,7 @@ from .views.tradepad import ModelCache, describe_trade, market_inputs, price_tra
 from .views.tradepad import catalog as tradepad_catalog
 from .paths import MARKETDATA
 from .views.universe import (DownloadRuns, add_ticker, allowed_client, app_settings, remove_ticker,
-                             server_authorized, set_active)
+                             server_authorized, set_active, verify_ticker)
 from .views.universe import universe_view as market_universe_view
 
 ROOT = Path(__file__).resolve().parent
@@ -247,7 +247,7 @@ def market_universe_add(request: Request, body: dict = Body(...)) -> dict:
     if not is_local(request):
         raise HTTPException(status_code=403, detail="the universe can be changed only from the pcs of authorized_pcs (tqstudio/config.yaml)")
     try:
-        return add_ticker(body.get("asset_class", ""), body.get("ticker", ""))
+        return add_ticker(body.get("asset_class", ""), body.get("ticker", ""), verify=verify_ticker)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

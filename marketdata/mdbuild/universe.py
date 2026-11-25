@@ -213,7 +213,7 @@ def load_implied_spot(path: Path) -> list[str]:
 # ------------------------------------------------------------------------------------------------- writing
 
 
-HEADER = """# Universe of the market data snapshots (edited from tqstudio > Market Data > Universe).
+HEADER = """# Universe of the market data snapshots (edited from tqstudio > Home > Reference data).
 # instruments: Bloomberg tickers, the yellow key decides the type (Equity -> equity spot, dividends, history, listed
 #   options; Curncy -> FX spot, history; Index -> interest-rate fixing, or an equity index with equity_index: true).
 #   active: downloaded by a full download (an inactive one can still be downloaded on its own).

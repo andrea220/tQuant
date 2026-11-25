@@ -13,7 +13,8 @@ sys.path.insert(0, str(ROOT))
 import socket  # noqa: E402
 from tqstudio.views.universe import (DownloadRuns, add_ticker, allowed_client, app_settings,  # noqa: E402
                                      bloomberg_endpoint, bloomberg_reachable, read_universe, remove_ticker,
-                                     resolve_python, server_authorized, set_active, universe_view)
+                                     last_downloads, resolve_python, server_authorized, set_active,
+                                     universe_view)
 
 UNIVERSE = """\
 tickers:
@@ -112,6 +113,8 @@ class TestMarketUniverse(unittest.TestCase):
         self.assertEqual((estr["quotes"], estr["last_update"], estr["pillars"], estr["bootstrapped"]),
                          (2, "2026-11-13", 2, True))
         self.assertEqual((six["in_snapshot"], six["bootstrapped"]), (False, False))
+        self.assertEqual(eni["last_download"], "2026-11-13T16:19:25")
+        self.assertIsNone(next(r for r in v["equity"] if r["code"] == "UCG_IM")["last_download"])
         json.dumps(v)                                                 # JSON-ready (no numpy types, no NaN)
 
     def test_added_after_the_snapshot(self):
@@ -122,6 +125,18 @@ class TestMarketUniverse(unittest.TestCase):
         isp = next(r for r in v["equity"] if r["code"] == "ISP_IM")
         self.assertTrue(isp["included"])
         self.assertFalse(isp["in_snapshot"])
+
+    def test_last_download_over_the_snapshots(self):
+        """The latest snapshot that has the instrument: a later one with SX5E only moves SX5E's time, not ENI's."""
+        later = self.snapshot.parent.parent / "20261114" / "0900"
+        later.mkdir(parents=True)
+        (later / "snapshot_info.json").write_text(json.dumps(
+            {"created": "2026-11-14T09:00:00", "universe": ["SX5E Index"], "curves": {"EUR ESTR": "YCSW0514 Index"}}),
+            encoding="utf-8")
+        last = last_downloads(self.snapshot.parent.parent)
+        self.assertEqual((last["SX5E Index"], last["ENI IM Equity"], last["EUR ESTR"]),
+                         ("2026-11-14T09:00:00", "2026-11-13T16:19:25", "2026-11-14T09:00:00"))
+        self.assertEqual(last_downloads(None), {})
 
     def test_no_snapshot(self):
         v = universe_view(None, self.universe)
@@ -168,6 +183,29 @@ class TestAddTicker(unittest.TestCase):
         add_ticker("rates", "EUR003M Index", self.universe)
         self.assertEqual(self.active("fixing"), ["ESTRON Index", "EUR003M Index"])
         self.assertNotIn("EUR003M Index", self.active("equity"))
+
+    def test_verified_before_writing(self):
+        """A new ticker is checked first: rejected ones (not found, wrong type) leave the file untouched; a verified
+        one comes back with its name; an inactive one is activated without a check."""
+        before = self.universe.read_bytes()
+
+        def bloomberg(ticker):
+            known = {"UNKNOWN IM Equity": None, "FTSEMIB Index": {"name": "FTSE MIB INDEX", "ccy": "EUR", "type": "Equity Index"},
+                     "EUR003M Index": {"name": "EURIBOR 3 MONTH", "ccy": "EUR", "type": "Index"}}
+            if known.get(ticker) is None:
+                raise ValueError(f"'{ticker}' not found on Bloomberg")
+            return known[ticker]
+
+        with self.assertRaisesRegex(ValueError, "not found"):
+            add_ticker("equity", "UNKNOWN IM Equity", self.universe, verify=bloomberg)
+        with self.assertRaisesRegex(ValueError, "not an equity index"):
+            add_ticker("equity", "EUR003M Index", self.universe, verify=bloomberg)
+        with self.assertRaisesRegex(ValueError, "add it under Equity"):
+            add_ticker("rates", "FTSEMIB Index", self.universe, verify=bloomberg)
+        self.assertEqual(self.universe.read_bytes(), before)
+        out = add_ticker("equity", "FTSEMIB Index", self.universe, verify=bloomberg)
+        self.assertEqual((out["action"], out["name"], out["ccy"]), ("added", "FTSE MIB INDEX", "EUR"))
+        self.assertEqual(add_ticker("equity", "UCG IM Equity", self.universe, verify=bloomberg)["action"], "activated")
 
     def test_rejected(self):
         before = self.universe.read_bytes()

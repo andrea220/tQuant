@@ -462,6 +462,70 @@ class TestWingDensity(unittest.TestCase):
         self.assertGreaterEqual(_line_g(spec["lo"]), _line_g(self.edge_wing()) - 1e-12)
 
 
+class TestShortFirstExpiry(unittest.TestCase):
+    def test_near_the_money_only_under_seven_days(self):
+        """An expiry five days away quoted from 60% to 140%: only its quotes within 90%-110% of the forward are used,
+        so it is a narrow expiry guided by the next one's smile; a later expiry keeps all its quotes."""
+        from tensorquant.calibration.equityvol import NARROW_RANGE, SHORT_DAYS
+        tq.Settings.evaluation_date = EVAL_DATE
+        mkt, rows = true_market(), []
+        short = EVAL_DATE + timedelta(days=5)
+        self.assertLess(5, SHORT_DAYS)
+        for k in np.arange(60.0, 141.0, 5.0):
+            for cp in ("C", "P"):
+                opt = tq.VanillaOption(Currency.EUR, start_date=EVAL_DATE, end_date=short,
+                                       option_type=tq.OptionType.Call if cp == "C" else tq.OptionType.Put,
+                                       strike=float(k), underlying="X", exercise_type=tq.ExerciseType.European)
+                tq.BlackScholesPricer().price(opt, mkt, autodiff=False)
+                rows.append({"expiry": short, "strike": float(k), "option_type": cp, "exercise": "European",
+                             "bid": float(opt.price), "ask": float(opt.price)})
+        frame = pd.concat([pd.DataFrame(rows), quotes("European")], ignore_index=True)
+        _, _, report = build_equity_vol(mkt.get_equity("X"), frame)
+        first = report.iloc[0]
+        qv = first["quote_vols"]
+        used = qv[qv["used"]]["strike"] / first["forward"]
+        self.assertTrue(((used >= NARROW_RANGE[0] - 1e-9) & (used <= NARROW_RANGE[1] + 1e-9)).all())
+        self.assertLess(len(used), int(qv["iv_mid"].notna().sum()))       # the far quotes dropped
+        self.assertEqual(first["smile_from"], EXPIRIES[0])                 # guided by the next expiry
+        later = report.iloc[1]["quote_vols"]
+        self.assertTrue(later["used"].all())
+
+    def test_far_strikes_without_an_implied_vol(self):
+        """A first expiry two days away quoted near the money: at the far strikes of the grid its price can be zero,
+        with no implied vol (NaN, here forced below 45% of the forward, as on SOXX on 2026-11-25); those points are
+        filled along the wing (the time interpolation needs finite values) and the surface is built, finite
+        everywhere, the same as without that expiry after the first year."""
+        from unittest import mock
+        from tensorquant.calibration import equityvol
+        original = equityvol._smile_w
+
+        def no_far_vol(mixture, t, k, spec):
+            w, reliable = original(mixture, t, k, spec)
+            return (np.where(np.asarray(k) < np.log(0.45), np.nan, w) if t < 0.01 else w), reliable
+
+        tq.Settings.evaluation_date = EVAL_DATE
+        mkt, rows = true_market(), []
+        short = EVAL_DATE + timedelta(days=2)
+        for k in np.arange(86.0, 107.0, 2.0):
+            for cp in ("C", "P"):
+                opt = tq.VanillaOption(Currency.EUR, start_date=EVAL_DATE, end_date=short,
+                                       option_type=tq.OptionType.Call if cp == "C" else tq.OptionType.Put,
+                                       strike=float(k), underlying="X", exercise_type=tq.ExerciseType.European)
+                tq.BlackScholesPricer().price(opt, mkt, autodiff=False)
+                rows.append({"expiry": short, "strike": float(k), "option_type": cp, "exercise": "European",
+                             "bid": float(opt.price), "ask": float(opt.price)})
+        frame = pd.concat([pd.DataFrame(rows), quotes("European")], ignore_index=True)
+        with mock.patch.object(equityvol, "_smile_w", no_far_vol):
+            surface, _, report = build_equity_vol(mkt.get_equity("X"), frame)
+        matrix = surface.volatility_matrix.numpy()
+        self.assertTrue(np.isfinite(matrix).all())
+        self.assertEqual(report["expiry"].iloc[0], short)
+        reference, _, _ = build_equity_vol(mkt.get_equity("X"), quotes("European"))
+        later = np.asarray(surface.maturity) >= 1.0                    # past the short expiry: as without it
+        np.testing.assert_allclose(matrix[later], reference.volatility_matrix.numpy()[
+            np.isin(np.round(reference.maturity, 8), np.round(np.asarray(surface.maturity)[later], 8))], atol=0.02)
+
+
 class TestImpliedSpot(unittest.TestCase):
     """Spot implied by the options (index with a delayed price): the forward of the first expiry from 3 days, plus
     the dividends to it, discounted: that expiry has zero repo."""

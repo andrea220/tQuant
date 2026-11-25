@@ -17,9 +17,14 @@
     <div class="topbar"><h1>Home</h1></div>
 
     <main>
-      <!-- the universe of the market data: what a snapshot downloads, the models a calibration calibrates -->
       <div class="panel">
-        <h2>Universe <span id="uv-snapshot" class="muted"></span></h2>
+        <h2>Documents</h2>
+        <div class="tiles" id="documents"></div>
+      </div>
+
+      <!-- reference data: the instruments a snapshot downloads, the models a calibration calibrates -->
+      <div class="panel">
+        <h2>Reference data</h2>
         <div class="form-row">
           <div class="segmented" id="uv-classes">
             <button data-cls="equity" class="active">Equity</button><button data-cls="rates">Rates</button><button data-cls="fx">FX</button>
@@ -40,10 +45,6 @@
         <pre id="dl-log" class="log hidden"></pre>
       </div>
 
-      <div class="panel">
-        <h2>Documents</h2>
-        <div class="tiles" id="documents"></div>
-      </div>
     </main>
   </div>
 

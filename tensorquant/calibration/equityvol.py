@@ -476,6 +476,7 @@ WING_INWARD = 0.2            # how far inside the quotes (log moneyness) the jun
 WING_QUOTE_TOL = 0.0025      # largest vol gap between a wing moved inside the quotes and the smile it replaces
 MIN_QUOTES = 3               # quotes of a calibrated expiry (and two-sided quotes of a good bid / ask expiry)
 NARROW_RANGE = (0.9, 1.1)    # an expiry without quotes outside this forward moneyness borrows its wings' shape
+SHORT_DAYS = 7               # expiries closer than this keep their quotes within NARROW_RANGE only (wings borrowed)
 NARROW_ANCHORS = (0.5, 0.6, 0.7, 0.8, 0.85, 1.15, 1.2, 1.3, 1.5)   # forward moneyness of the borrowed wing points
 NARROW_ANCHOR_WEIGHT = 0.1   # their fit weight (a two-sided quote weighs 1)
 DIVIDEND_YEARS = 10.0        # equity indices: dividends extrapolated at a constant yield to this horizon
@@ -555,7 +556,8 @@ def _borrow_narrow_smiles(good: pd.DataFrame, n: int = 4) -> pd.DataFrame:
     """Expiries whose quotes leave a wing free: quoted only near the money (none outside ``NARROW_RANGE`` of the
     forward, e.g. a few days) or out of the money on one side of the forward only (a long expiry with puts only). The
     smile of the next complete expiry (the previous one for the last expiries), carried to the maturity
-    (:func:`_carry_smile`; for a narrow expiry scaled to its at-the-money vol), guides them: the mixture is fitted again
+    (:func:`_carry_smile`; for a narrow expiry scaled to its at-the-money vol: the vols of the scenarios, and the
+    spread of their forwards too when that spread alone gives more than its at-the-money vol), guides them: the mixture is fitted again
     to the expiry's own quotes (weight 1) plus that smile at ``NARROW_ANCHORS`` beyond the quotes (weight
     ``NARROW_ANCHOR_WEIGHT``), starting from it. ``smile_from`` is the expiry lent, ``fit_rms`` on the own quotes."""
     good = good.copy()
@@ -578,15 +580,20 @@ def _borrow_narrow_smiles(good: pd.DataFrame, n: int = 4) -> pd.DataFrame:
         t, forward = float(row["t"]), float(row["forward"])
         guide = _carry_smile(lend["mixture"], float(lend["t"]), t)
         if narrow[i]:                                      # quoted at the money: the guide at its at-the-money vol
-            def gap(beta, m=guide):
-                scaled = LognormalMixture(m.weights, m.means, beta * m.stdevs, m.default)
-                return float(scaled.implied_vols(1.0, [1.0], t)[0]) - float(row["atm_vol"])
+            def scaled(beta, m=guide, spread=False):        # the vols of the scenarios (and their forwards' spread)
+                means = np.exp(beta * np.log(m.means)) if spread else m.means
+                return LognormalMixture(m.weights, means, beta * m.stdevs, m.default)
+
+            def gap(beta, spread=False):
+                return float(scaled(beta, spread=spread).implied_vols(1.0, [1.0], t)[0]) - float(row["atm_vol"])
 
             try:
-                beta = brentq(gap, 0.2, 5.0)
-            except ValueError:
-                continue
-            guide = LognormalMixture(guide.weights, guide.means, beta * guide.stdevs, guide.default)
+                guide = scaled(brentq(gap, 0.2, 5.0))
+            except ValueError:                             # the forwards' spread alone above the ATM vol: scale it too
+                try:
+                    guide = scaled(brentq(lambda b: gap(b, spread=True), 0.01, 5.0), spread=True)
+                except ValueError:
+                    continue
         qv = row["quote_vols"]
         used = qv["used"].to_numpy(bool)
         k, v = qv["strike"].to_numpy(float)[used], qv["iv_mid"].to_numpy(float)[used]
@@ -767,6 +774,8 @@ def build_equity_vol(equity: Equity, quotes: pd.DataFrame, dividend_model: str =
         if keep.any():
             median = np.median(v[keep])
             keep &= (v > 0.2 * median) & (v < 5.0 * median)
+        if t < SHORT_DAYS / 365.0:                     # a few days: near the money only, the wings from the next expiry
+            keep &= (k >= NARROW_RANGE[0] * forward - 1e-12) & (k <= NARROW_RANGE[1] * forward + 1e-12)
         quote_vols = pd.DataFrame({"strike": k, "option_type": np.concatenate(types), "iv_bid": np.concatenate(bids),
                                    "iv_mid": v, "iv_ask": np.concatenate(asks),
                                    "settlement": np.concatenate(settles), "used": keep})
@@ -841,7 +850,11 @@ def build_equity_vol(equity: Equity, quotes: pd.DataFrame, dividend_model: str =
             w_ext, _ = _smile_w(ext, t, np.log(x), sp)
             vols = np.sqrt(np.fmax(w_ext, w_exp[-1]) / t)          # not below the last expiry
         else:
-            vols = np.sqrt(PchipInterpolator(times, w_exp, axis=0)(t) / t)   # PCHIP keeps the monotonicity
+            w_fit = w_exp.copy()
+            for j, tt in enumerate(times):                 # far strikes of a short expiry: no implied vol (price 0)
+                if not np.isfinite(w_fit[j]).all():
+                    w_fit[j] = _fill_wings(np.log(x), np.sqrt(w_fit[j] / tt)) ** 2 * tt
+            vols = np.sqrt(PchipInterpolator(times, w_fit, axis=0)(t) / t)   # PCHIP keeps the monotonicity
         matrix[i] = _fill_wings(np.log(x), vols)
     surface = VolatilitySurface(reference_date=reference, calendar=None,
                                 daycounter=DayCounter(DayCounterConvention.Actual365),

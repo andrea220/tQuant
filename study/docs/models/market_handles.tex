@@ -332,10 +332,15 @@ weighted vol errors measures the fit.
 
 \paragraph{Expiries with a wing free of quotes.} A very short expiry quoted only near the money (no quote outside
 $90\%$--$110\%$ of the forward), or a long one quoted on one side of the forward only (puts only), has nothing that
-shapes a wing. Following Bloomberg's short-term extrapolation, the smile of the next complete expiry $T'$ (the
+shapes a wing. An expiry less than 7 days away is treated so whatever its quotes: only those within $90\%$--$110\%$
+of its forward are kept. Further out, with a few days left, the prices are tiny against their spreads and do not
+measure a smile (on 2026-11-25 a 2-day SOXX expiry quoted down to 85\% gave a 647\% vol at 30\% of the spot).
+Following Bloomberg's short-term extrapolation, the smile of the next complete expiry $T'$ (the
 previous one for the last expiries) is carried to its maturity $T$: probabilities and scenario vols $\sigma_l$ kept,
 $\ln\xi_l$ scaled by $\sqrt{T/T'}$; for a short expiry its vols are scaled by a common factor to the expiry's own
-at-the-money vol. That smile guides the fit of the expiry: a few points of it beyond the quotes, with weight $0.1$, and
+at-the-money vol (and the $\ln\xi_l$ too when the spread of the scenario forwards alone gives more than that vol:
+on SPX, 3 days, the guide's spread gave 15.8\% against an at-the-money vol of 15.2\%). A point of the grid where no
+smile has an implied vol (a price of zero) is extended along the wing before the interpolation in time. That smile guides the fit of the expiry: a few points of it beyond the quotes, with weight $0.1$, and
 the start of the least squares; the expiry's own quotes are fitted as usual.
 
 \paragraph{The smile beyond the quotes.} Between the lowest and the highest quote of an expiry the smile is the

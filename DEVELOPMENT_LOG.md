@@ -677,3 +677,19 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       fixings and the 4 curves (curves 76 s, vols 16 s). Tests: `marketdata` (format, conversion, selection, selected
       snapshot recorded), `test_tqstudio_universe.py` (add / activate, deactivate, active flag of instruments and
       curves, the step after a successful download only).
+- [x] Home: Documents first, then Reference data (the universe: Select, Active, Last download = the latest snapshot
+      with the instrument, model flags; no status, spot or option columns); Heston off by default
+      (`calibration.yaml`). Add ticker checks a new ticker on Bloomberg first (`python -m mdbuild.check`, with the
+      download's Python: name, currency, security type; `verify_ticker`): not found, an equity index added under
+      Rates or a fixing added as an equity index are rejected and the file is untouched, the terminal not reachable
+      too (it cannot be checked); 2026-11-25: UCG IM Equity -> UNICREDIT SPA, EUR; ENII IM Equity -> not found.
+- [x] Equity vols, very short expiries. Expiries less than 7 days away (`SHORT_DAYS`) keep only their quotes within
+      90%-110% of the forward (`NARROW_RANGE`): narrow, their wings guided by the next complete expiry. The guide is
+      scaled to the expiry's at-the-money vol by the vols of its scenarios, and by the spread of their forwards too
+      when that spread alone is above it (SPX 3 days on 2026-11-13: 15.8% vs 15.2%, the guide was skipped before). A
+      grid point with no implied vol in a smile (price 0) is extended along the wing before the PCHIP in time (it
+      stopped the SOXX surface on 2026-11-25: `y` must contain only finite values). Real snapshots: SOXX 2-day row
+      max vol 647% -> 202%, SPX short rows 180% -> 168% (3 expiries guided instead of 0), quotes within bid / ask
+      unchanged (SPX 96.0% -> 95.9%, one quote), AAPL, ENI, ISP, MSFT, SX5E identical. Tests (`test_equity_vol.py`):
+      a 5-day expiry quoted 60%-140% uses 90%-110% only and is guided, a later one keeps all its quotes; NaN far
+      points of a short expiry (forced) give a finite surface, the same as without it after one year.

@@ -531,7 +531,7 @@ async function init() {
   document.querySelectorAll("#eq-fit-vol button").forEach((b) => b.addEventListener("click", () => {
     state.fitVol = b.dataset.vol; renderFit(); }));
   if (state.snapshots.length) await loadSnapshot(CLASSES[p.get("class")] ? p.get("class") : "equity", p.get("item"));
-  else $("status").innerHTML = 'No snapshot yet: create one from the <a href="/">Home</a> (Universe > Create new snapshot).';
+  else $("status").innerHTML = 'No snapshot yet: create one from the <a href="/">Home</a> (Reference data > Create new snapshot).';
 }
 
 init();
