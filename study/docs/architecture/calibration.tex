@@ -101,6 +101,16 @@ SLV Heston part & rarely (weekly, or on a trigger) & \code{HestonModel.calibrate
 \bottomrule
 \end{tabular}
 \end{center}
+\paragraph{The local vol in a set.} \code{LocalVol} (\code{LocalVolatilityModel}) is in the sets as a check only:
+\code{calibrate} fits nothing, it builds the local vol on the snapshot and stores its diagnostics as the report
+(share of the grid with arbitrage where the surface has data, share below the floor of $g$, largest local vol, share
+at the cap), and \code{model\_fit} reprices the surface nodes by Monte Carlo (as Heston SLV), on the grid of the autocallable
+pricer (daily steps over three months, weekly after). A node where fewer than 30 paths are expected beyond the
+strike (market probability $\times$ paths) is not measured (grey in the page, out of the rms): there the price is a
+handful of paths and its implied vol no measure of the model. The pricers do not
+read it: they rebuild the local vol on the market of each price. The model test (\code{model\_test}) runs only when
+asked (Run test in the Calibration page), the stored results shown otherwise.
+
 \paragraph{Which models.} The models of each equity are the \code{models} flags of its entry in the universe
 (edited from the tqstudio Home; the defaults per asset class in \code{marketdata/config/calibration.yaml}). Create
 new snapshot with Calibrate starts \code{python -m tqstudio.calibrate} on the new snapshot once the download has

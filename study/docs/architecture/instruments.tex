@@ -108,7 +108,12 @@ Instrument & Module & Content \\
 \code{DigitalOption} & \code{digital.py} & European; cash-or-nothing (\code{cash\_amount}) or asset-or-nothing \\
 \code{BarrierOption} & \code{barrier.py} & single barrier, knock-in / knock-out, up / down, continuous or discrete
   monitoring, no rebate \\
-\code{AutocallableOption} & \code{autocallable.py} & coupon and autocall schedules, final put, optional forward start \\
+\code{AutocallableOption} & \code{autocallable.py} & coupon and autocall schedules, final put, optional forward start,
+  \code{side} (\code{SwapType.Receiver} client, \code{Payer} issuer) \\
+\code{AutocallableSwap} & \code{autocallable.py} & the autocallable plus a funding leg: \code{funding\_curve} (ticker
+  of the index curve in the payment currency), \code{funding\_margin} (bp), \code{funding\_day\_count} (ACT/360); the
+  periods \code{funding\_start\_dates} / \code{funding\_end\_dates} / \code{funding\_payment\_dates} /
+  \code{funding\_accruals}, from the strike date to each coupon payment date \\
 \bottomrule
 \end{tabular}
 \end{center}

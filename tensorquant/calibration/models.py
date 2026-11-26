@@ -29,10 +29,12 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from scipy.stats import norm
 
 from ..markethandles.equity import Equity
 from ..markethandles.utils import Currency, OptionType
 from ..models.displaceddiffusion import DisplacedDiffusionModel
+from ..models.brownian import simulation_grid
 from ..models.heston import HestonModel
 from ..models.hestonslv import HestonSLVModel
 from ..models.localvolatility import LocalVolatilityModel
@@ -42,7 +44,9 @@ from .equityvol import black_implied_vol
 __all__ = ["MODEL_CLASSES", "calibrate_snapshot_models", "list_calibration_sets", "load_calibration_set",
            "load_model", "model_fit", "check_calibration", "model_test", "STALE_VOLPTS"]
 
-MODEL_CLASSES = {"Heston": HestonModel, "DisplacedDiffusion": DisplacedDiffusionModel, "HestonSLV": HestonSLVModel}
+MODEL_CLASSES = {"Heston": HestonModel, "DisplacedDiffusion": DisplacedDiffusionModel, "HestonSLV": HestonSLVModel,
+                 "LocalVol": LocalVolatilityModel}      # local vol: a check of the surface only (pricing rebuilds it)
+MC_MODELS = (HestonSLVModel, LocalVolatilityModel)      # no closed form: fitted by Monte Carlo
 STALE_VOLPTS = 1.0                   # rms model - market error (vol points) above which a calibration is to redo
 QUALITY = ((1.0, "good"), (2.5, "fair"))   # rms of the fit (vol points): good, fair, else poor
 
@@ -51,8 +55,16 @@ QUALITY = ((1.0, "good"), (2.5, "fair"))   # rms of the fit (vol points): good, 
 # fit and drift
 # ----------------------------------------------------------------------------------------------------------------------
 
-def _mc_vanilla_vols(model, equity: Equity, maturities, strikes, n_paths: int = 20_000, seed: int = 7) -> np.ndarray:
-    """Black vols of Monte Carlo out-of-the-money vanillas (shared paths), ``[n_maturities, n_strikes]``."""
+MIN_PATHS_BEYOND = 30      # a node is measured by the Monte Carlo fit when at least so many paths end beyond it
+
+
+def _mc_vanilla_vols(model, equity: Equity, maturities, strikes, n_paths: int = 20_000, seed: int = 7,
+                     market: np.ndarray = None) -> np.ndarray:
+    """Black vols of Monte Carlo out-of-the-money vanillas (shared paths), ``[n_maturities, n_strikes]``.
+
+    With the *market* vols, a node where fewer than :data:`MIN_PATHS_BEYOND` paths are expected beyond the strike
+    (the market probability of ending there times *n_paths*) is NaN: its price is a handful of paths or none, its
+    implied vol no measure of the model (the 200% calls of SX5E within a year come out at a zero vol)."""
     t_obs = np.asarray(maturities, dtype=float)
     terminal = _simulate(model, equity, t_obs, n_paths, seed)
     out = np.full((len(t_obs), len(strikes)), np.nan)
@@ -61,6 +73,11 @@ def _mc_vanilla_vols(model, equity: Equity, maturities, strikes, n_paths: int = 
         s = terminal[:, i]
         for j, k in enumerate(strikes):
             cp = "P" if k < f else "C"
+            if market is not None:
+                sd = float(market[i, j]) * np.sqrt(t)
+                d2 = (np.log(f / k) - 0.5 * sd ** 2) / sd
+                if n_paths * norm.cdf(-d2 if cp == "P" else d2) < MIN_PATHS_BEYOND:
+                    continue
             payoff = np.maximum(k - s, 0.0) if cp == "P" else np.maximum(s - k, 0.0)
             out[i, j] = black_implied_vol([payoff.mean()], f, [k], float(t), cp)[0]
     return out
@@ -70,10 +87,10 @@ def model_fit(model, equity: Equity, mc_paths: int = 20_000) -> pd.DataFrame:
     """Model and market vols on the nodes of the vol surface of *equity*.
 
     Args:
-        model: A calibrated :class:`HestonModel`, :class:`DisplacedDiffusionModel` (closed forms) or
-            :class:`HestonSLVModel` (Monte Carlo).
+        model: A calibrated :class:`HestonModel`, :class:`DisplacedDiffusionModel` (closed forms),
+            :class:`HestonSLVModel` or :class:`LocalVolatilityModel` (Monte Carlo).
         equity (Equity): The underlying (its surface is the market).
-        mc_paths (int): Paths of the Monte Carlo fit (Heston SLV).
+        mc_paths (int): Paths of the Monte Carlo fit (Heston SLV, local vol).
 
     Returns:
         pd.DataFrame: ``t``, ``strike``, ``moneyness``, ``market_vol``, ``model_vol``, ``error_volpts`` (model -
@@ -82,8 +99,8 @@ def model_fit(model, equity: Equity, mc_paths: int = 20_000) -> pd.DataFrame:
     surface = equity.vol_surface
     maturities, strikes = [float(t) for t in surface.maturity], [float(k) for k in surface.strike]
     market = surface.volatility_matrix.numpy()
-    if isinstance(model, HestonSLVModel):
-        vols = _mc_vanilla_vols(model, equity, maturities, strikes, mc_paths)
+    if isinstance(model, MC_MODELS):
+        vols = _mc_vanilla_vols(model, equity, maturities, strikes, mc_paths, market=market)
     else:
         process = model.process(equity)
         vols = np.array([[process.implied_vol(k, t) for k in strikes] for t in maturities])
@@ -259,9 +276,10 @@ def load_model(folder, ticker: str, name: str):
 # ----------------------------------------------------------------------------------------------------------------------
 
 def _simulate(model, equity: Equity, t_obs, n_paths: int, seed: int, step: float = 1.0 / 52.0) -> np.ndarray:
-    """Spots at the times *t_obs* ``[n_paths, n_obs]`` (one simulation, weekly steps)."""
+    """Spots at the times *t_obs* ``[n_paths, n_obs]`` (one simulation: daily steps over the first three months,
+    weekly after, as the autocallable pricer)."""
     t_obs = np.asarray(t_obs, dtype=float)
-    grid = np.unique(np.concatenate([np.arange(step, t_obs[-1], step), t_obs]))
+    grid = np.unique(np.concatenate([simulation_grid(t_obs[-1], step), t_obs]))
     process = model.process(equity, float(t_obs[-1])) if hasattr(model, "process") else model
     k = process.noise_size()
     dw = tf.random.stateless_normal([n_paths, len(grid)] + ([k] if k > 1 else []), seed=[seed, 0], dtype=DTYPE)

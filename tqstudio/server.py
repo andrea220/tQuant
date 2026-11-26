@@ -85,7 +85,7 @@ class Engine:
         ``request["phase"] == "price"``: the price at once and a ``job`` id for :meth:`greeks` (the rest of the
         computation is kept here: the last few only)."""
         with self.lock:
-            mkt = self.snapshot(request.get("date"), None)
+            mkt = self.snapshot(request.get("date"), request.get("set"))
             out = price_trade(mkt, self.models, request, n_paths=int(request.get("n_paths", 50_000)),
                               phase=request.get("phase", "all"))
             pending = out.pop("pending", None)
@@ -130,9 +130,11 @@ class Engine:
             self.markets.pop((None, None), None)
             self.market = self._load(None, None)
 
-    def tradepad(self, build, day: Optional[str] = None, request: Optional[dict] = None):
+    def tradepad(self, build, day: Optional[str] = None, request: Optional[dict] = None,
+                 calibration_set: Optional[str] = None):
+        """*build* on the snapshot of *day* and *calibration_set* (the time of the snapshot; latest when absent)."""
         with self.lock:
-            mkt = self.snapshot(day, None)
+            mkt = self.snapshot(day, calibration_set)
             return build(mkt) if request is None else build(mkt, request)
 
 
@@ -313,9 +315,9 @@ def market_download_status() -> dict:
 
 
 @app.get("/api/tradepad/catalog")
-def tradepad_products(date: Optional[str] = None) -> dict:
+def tradepad_products(date: Optional[str] = None, set: Optional[str] = None) -> dict:
     try:
-        return engine.tradepad(tradepad_catalog, date)
+        return engine.tradepad(tradepad_catalog, date, calibration_set=set)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -323,7 +325,7 @@ def tradepad_products(date: Optional[str] = None) -> dict:
 @app.post("/api/tradepad/trade")
 def tradepad_trade(request: dict = Body(...)) -> dict:
     try:
-        return engine.tradepad(describe_trade, request.get("date"), request)
+        return engine.tradepad(describe_trade, request.get("date"), request, request.get("set"))
     except (KeyError, ValueError, FileNotFoundError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -331,7 +333,7 @@ def tradepad_trade(request: dict = Body(...)) -> dict:
 @app.post("/api/tradepad/market")
 def tradepad_market(request: dict = Body(...)) -> dict:
     try:
-        return engine.tradepad(market_inputs, request.get("date"), request)
+        return engine.tradepad(market_inputs, request.get("date"), request, request.get("set"))
     except (KeyError, ValueError, FileNotFoundError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

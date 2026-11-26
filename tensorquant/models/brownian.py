@@ -166,3 +166,21 @@ class ArithmeticBrownianMotion(StochasticProcess):
         if observation_times is not None:
             paths = tf.gather(paths, observation_columns(t_grid.numpy(), observation_times), axis=1)
         return paths
+
+
+FINE_TIME_STEP = 1.0 / 365.0        # daily steps over the first months (the smile of a local vol needs them)
+FINE_HORIZON = 0.25
+
+
+def simulation_grid(end: float, max_time_step: float = 1.0 / 52.0, fine_time_step: float = FINE_TIME_STEP,
+                    fine_horizon: float = FINE_HORIZON) -> np.ndarray:
+    """Simulation times in ``(0, end)``: steps of *fine_time_step* up to *fine_horizon*, of *max_time_step* after
+    (the caller adds its own dates, *end* included).
+
+    A local vol builds the smile of a short maturity only through steps small against it: with weekly steps the
+    1-3 month wings of a steep index smile come out several vol points too low (SPX, 2026-11-25: 50% strike at
+    1.7 months -6.7 vol pts weekly, -1.5 daily). ``fine_horizon = 0`` gives the uniform grid.
+    """
+    fine = np.arange(fine_time_step, min(fine_horizon, end), fine_time_step) if fine_horizon > 0 else np.zeros(0)
+    coarse = np.arange(max_time_step, end, max_time_step)
+    return np.unique(np.concatenate([fine, coarse[coarse > fine_horizon]]))

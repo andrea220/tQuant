@@ -154,11 +154,26 @@ rejected). \code{Pricer.price(..., price\_currency=)}: the price (and \code{prod
 the payment currency at \code{get\_fx\_spot} inside the tape (delta to the FX spot by AAD);
 \code{product.price\_currency}.
 
+\paragraph{\code{AutocallableSwapPricer} (\code{montecarlo.py}).} Subclass of \code{AutocallableMCPricer} for an
+\code{AutocallableSwap} (which \code{AutocallableMCPricer} refuses): \code{\_payoff} records the alive indicator after
+each autocall payment date (\code{\_survival}), \code{\_funding} weights each funding period by it at the period start,
+forward on \code{get\_ir\_curve(payment\_ccy, funding\_curve)}, discounted on \code{get\_ir\_curve(payment\_ccy)};
+\code{product.funding\_pv} (per unit notional), \code{projections()} adds the \code{funding} flows. Both pricers
+multiply by \code{product.side\_sign} (+1 client, -1 issuer), the projected flows too. Tradepad: the
+\emph{Autocallable Swap} screen (funding index and margin), Side on both autocallable screens.
+
+\paragraph{Vega by expiry (\code{analytics/vega.py}).} \code{vega\_by\_expiry(vega, equity)} reads a node-vega
+matrix (price per vol point, \code{[n\_maturities, n\_strikes]}) by expiry: \code{level} (row sum),
+\code{cumulative}, \code{skew} (the row weighted by \code{skew\_weights(equity)}: $(1 - K/F)/$\code{SKEW\_STEP}, the
+moneyness clipped to \code{SKEW\_RANGE}); the Tradepad shows it next to the vega map. \nb{autocallable\_skew\_sensy.ipynb}
+
 \paragraph{\code{AutocallableMCPricer} (\code{montecarlo.py}).} \code{AutocallableOption}, investor's side:
 $N\,\E\big[\sum_i \text{coupon}_i\,P(0,\text{pay}_i) - \text{put}\,P(0,T)\big]$. Arguments: \code{model} (default
 \code{LocalVolatilityModel}; \code{GeometricBrownianMotion} accepted for debugging only: the Black--Scholes model of
 one expiry, wrong at the intermediate fixings), \code{n\_paths} (20\,000), \code{seed}, \code{max\_time\_step} (1/52: the grid is the
-union of the future fixing dates and a uniform grid of that step), \code{barrier\_smoothing} (1\%). Forward start: the
+union of the future fixing dates and \code{simulation\_grid}: daily steps (\code{fine\_time\_step}) up to
+\code{fine\_horizon} = 3 months, steps of \code{max\_time\_step} after; \code{fine\_horizon} = 0 gives the uniform
+grid), \code{barrier\_smoothing} (1\%). Forward start: the
 strike date is simulated and the initial level is $S(t_0)$ on each path. After pricing: \code{product.coupon\_pv},
 \code{product.put\_pv} (per unit notional), \code{product.standard\_error}; \code{pricer.paths} at the fixings
 (\code{pricer.date\_grid}, \code{pricer.time\_grid}) for diagnostics. Worst-of: \code{model} a class for every

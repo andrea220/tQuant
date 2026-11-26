@@ -87,17 +87,18 @@ def underlying_view(folder: Path, ticker: str, source, latest=None) -> dict:
         if r["status"] == "ok":
             fit = pd.read_csv(folder / ticker / f"{r['model']}_fit.csv")
             model_vols = fit.pivot(index="t", columns="strike", values="model_vol").sort_index().sort_index(axis=1)
-            entry["vols"] = model_vols.to_numpy().tolist()
-            entry["errors"] = (100.0 * (model_vols.to_numpy() - market)).tolist()
+            nodes = lambda a: [[_nan(float(x)) for x in row] for row in a]     # NaN: a node the MC fit cannot reach
+            entry["vols"] = nodes(model_vols.to_numpy())
+            entry["errors"] = nodes(100.0 * (model_vols.to_numpy() - market))
             model = load_model(folder, ticker, r["model"])
             entry["parameter_view"] = parameter_view(model)
             entry.pop("parameters", None)                 # raw values (SLV: the whole table): the view above instead
-            if r["model"] != "HestonSLV":
+            if r["model"] not in NO_CLOSED_FORM:
                 process = model.process(eq)
                 entry["atm"] = [float(process.implied_vol(float(eq.forward(t)), t)) for t in maturities]
             report = folder / ticker / f"{r['model']}_report.csv"
             entry["report"] = _records(pd.read_csv(report)) if report.is_file() else None
-            if latest is not None and r["model"] != "HestonSLV" and ticker in [k.split(":")[2] for k in latest.risk_factors()
+            if latest is not None and r["model"] not in NO_CLOSED_FORM and ticker in [k.split(":")[2] for k in latest.risk_factors()
                                                                              if k.endswith(":VOL")]:
                 previous = tq.Settings.evaluation_date            # the drift on the latest market, at its date
                 tq.Settings.evaluation_date = latest.evaluation_date
@@ -132,6 +133,17 @@ def parameter_view(model) -> dict:
     (``title, columns, rows``): Heston's five parameters and the Feller condition, the displaced diffusion pieces,
     Heston SLV's Heston part, mixing and a summary of the ``E[v | X]`` table (not its thousands of values)."""
     name = type(model).__name__
+    if name == "LocalVolatilityModel":                 # no parameters: the diagnostics of the local vol built
+        d = model.report.iloc[0].to_dict() if model.report is not None and len(model.report) else {}
+        pct = lambda k: 100.0 * float(d[k]) if k in d and d[k] == d[k] else None
+        return {"scalars": [
+            {"name": "arbitrage (% of the grid with data)", "value": pct("arbitrage_fraction"),
+             "note": "g < 0 or dw/dT <= 0: no local vol reprices the surface there"},
+            {"name": "thin density (% below the floor of g)", "value": pct("floored_fraction"),
+             "note": "local vol held by the floor"},
+            {"name": "largest local vol (%)", "value": pct("max_local_vol"), "note": "cap 200%"},
+            {"name": "at the cap (% of the grid)", "value": pct("at_cap_fraction"), "note": ""}],
+            "table": None}
     if name == "HestonModel":
         p = {k: float(v.numpy()) for k, v in model.parameters.items()}
         rows = _scalar_rows(p)
@@ -182,10 +194,13 @@ def _quotes(folder: Path, ticker: str, expiries: list[str]) -> dict:
 
 
 def test_view(folder: Path, ticker: str, source, rerun: bool = False, n_paths: int = 20_000) -> dict:
-    """The model test of an underlying (cached in the set: ``<ticker>/model_test.csv``)."""
+    """The model test of an underlying (cached in the set: ``<ticker>/model_test.csv``): run only on request
+    (*rerun*), otherwise the stored results, or none (``ran`` False)."""
     path = folder / ticker / "model_test.csv"
     seconds = {}
-    if rerun or not path.is_file():
+    if not rerun and not path.is_file():              # not run yet: the user starts it (Run test)
+        return {"engines": [], "rows": [], "seconds": {}, "cached": False, "ran": False}
+    if rerun:
         summary = load_calibration_set(folder)["summary"]
         names = summary[(summary["ticker"] == ticker) & (summary["status"] == "ok")]["model"].tolist()
         models = {n: load_model(folder, ticker, n) for n in names}
@@ -196,7 +211,7 @@ def test_view(folder: Path, ticker: str, source, rerun: bool = False, n_paths: i
     frame = pd.read_csv(path)
     engines = [c for c in frame.columns if not c.endswith(("_se", "_vol")) and c not in
                ("product", "option_type", "t", "expiry", "strike_pct", "barrier_pct", "Black")]
-    return {"engines": engines, "rows": _records(frame), "seconds": seconds, "cached": not seconds}
+    return {"engines": engines, "rows": _records(frame), "seconds": seconds, "cached": not seconds, "ran": True}
 
 
 class CalibrationRuns:
@@ -259,8 +274,10 @@ def universe_models(path: Path = None) -> dict:
     if not path.is_file():
         return {}
     return {u.instrument(e).code: dict(e["models"]) for e in u.read_entries(path)[0] if e.get("models")}
-MODELS = {"equity": ["Heston", "DisplacedDiffusion", "HestonSLV"], "rates": ["HullWhite", "G2pp"], "fx": []}
-SUPPORTED = {"Heston", "DisplacedDiffusion", "HestonSLV"}     # models of the calibration sets (rates: not yet)
+MODELS = {"equity": ["LocalVol", "Heston", "DisplacedDiffusion", "HestonSLV"], "rates": ["HullWhite", "G2pp"],
+          "fx": []}
+SUPPORTED = {"LocalVol", "Heston", "DisplacedDiffusion", "HestonSLV"}   # models of the calibration sets (rates: not yet)
+NO_CLOSED_FORM = ("HestonSLV", "LocalVol")                    # Monte Carlo only: no ATM line, no drift on opening
 
 
 def read_config(path: Path = CONFIG, universe: Path = None) -> dict:

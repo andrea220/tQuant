@@ -37,7 +37,8 @@ function renderUniverse() {
     state.selected.has(name) ? " checked" : ""}>`;
   const flag = (name, on) => `<input type="checkbox" class="uv-active" data-name="${name}"${on ? " checked" : ""}${lock}>`;
   const lead = [["Select", (r) => pick(r.bbg)], ["Active", (r) => flag(r.bbg, r.active)]];
-  const models = (d.models || []).map((m) => [m.replace("DisplacedDiffusion", "DD").replace("HestonSLV", "SLV"),
+  const models = (d.models || []).map((m) => [m.replace("DisplacedDiffusion", "DD").replace("HestonSLV", "SLV")
+    .replace("LocalVol", "LV"),
     (r) => `<input type="checkbox" class="uv-model" data-code="${r.code}" data-model="${m}"${
       (r.flags || {})[m] ? " checked" : ""}${lock}>`]);
   $("uv-ticker").placeholder = ADD_HINT[state.cls];

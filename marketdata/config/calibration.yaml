@@ -3,6 +3,7 @@
 # An underlying without its own flags takes the defaults of its asset class. Rates models are listed but not calibrated in the sets yet (flags off).
 defaults:
   equity:
+    LocalVol: true
     Heston: false
     DisplacedDiffusion: true
     HestonSLV: false

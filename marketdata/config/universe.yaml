@@ -1,4 +1,4 @@
-# Universe of the market data snapshots (edited from tqstudio > Market Data > Universe).
+# Universe of the market data snapshots (edited from tqstudio > Home > Reference data).
 # instruments: Bloomberg tickers, the yellow key decides the type (Equity -> equity spot, dividends, history, listed
 #   options; Curncy -> FX spot, history; Index -> interest-rate fixing, or an equity index with equity_index: true).
 #   active: downloaded by a full download (an inactive one can still be downloaded on its own).
@@ -8,17 +8,44 @@
 # curves: "<CCY> <tQuant curve name>" and the Bloomberg ICVS curve (names like 6M are Ibor curves, the others OIS).
 
 instruments:
-- {ticker: ENI IM Equity, active: true}
-- {ticker: ISP IM Equity, active: true}
-- {ticker: UCG IM Equity, active: false}
-- {ticker: ENEL IM Equity, active: false, option_root: ENE IM}
-- {ticker: RACE IM Equity, active: false, option_root: RAC IM}
-- {ticker: AAPL US Equity, active: true}
-- {ticker: MSFT US Equity, active: true}
-- {ticker: AMZN US Equity, active: false}
-- {ticker: NVDA US Equity, active: false}
-- {ticker: JPM US Equity, active: false}
-- {ticker: SOXX US Equity, active: true}
+- ticker: ENI IM Equity
+  active: true
+  models: {LocalVol: true, Heston: false, DisplacedDiffusion: false, HestonSLV: false}
+- ticker: ISP IM Equity
+  active: true
+  models: {LocalVol: true, Heston: false, DisplacedDiffusion: false, HestonSLV: false}
+- ticker: UCG IM Equity
+  active: false
+  models: {LocalVol: true, Heston: false, DisplacedDiffusion: false, HestonSLV: false}
+- ticker: ENEL IM Equity
+  active: false
+  option_root: ENE IM
+  models: {LocalVol: true, Heston: false, DisplacedDiffusion: false, HestonSLV: false}
+- ticker: RACE IM Equity
+  active: false
+  option_root: RAC IM
+  models: {LocalVol: true, Heston: false, DisplacedDiffusion: false, HestonSLV: false}
+- ticker: AAPL US Equity
+  active: true
+  models: {LocalVol: true, Heston: false, DisplacedDiffusion: false, HestonSLV: false}
+- ticker: MSFT US Equity
+  active: true
+  models: {LocalVol: true, Heston: false, DisplacedDiffusion: false, HestonSLV: false}
+- ticker: AMZN US Equity
+  active: false
+  models: {LocalVol: true, Heston: false, DisplacedDiffusion: false, HestonSLV: false}
+- ticker: NVDA US Equity
+  active: false
+  models: {LocalVol: true, Heston: false, DisplacedDiffusion: false, HestonSLV: false}
+- ticker: JPM US Equity
+  active: false
+  models: {LocalVol: true, Heston: false, DisplacedDiffusion: false, HestonSLV: false}
+- ticker: SOXX US Equity
+  active: true
+  models: {LocalVol: true, Heston: false, DisplacedDiffusion: false, HestonSLV: false}
+- ticker: IGV US Equity
+  active: true
+  models: {LocalVol: true, Heston: false, DisplacedDiffusion: false, HestonSLV: false}
 - {ticker: EURUSD Curncy, active: true}
 - {ticker: GBPUSD Curncy, active: true}
 - {ticker: EURGBP Curncy, active: true}
@@ -31,8 +58,12 @@ instruments:
 - ticker: SX5E Index
   active: true
   equity_index: true
-  models: {Heston: true, DisplacedDiffusion: true, HestonSLV: true}
-- {ticker: SPX Index, active: true, equity_index: true, implied_spot: true}
+  models: {LocalVol: true, Heston: false, DisplacedDiffusion: false, HestonSLV: false}
+- ticker: SPX Index
+  active: true
+  equity_index: true
+  implied_spot: true
+  models: {LocalVol: true, Heston: false, DisplacedDiffusion: false, HestonSLV: false}
 curves:
 - {name: EUR ESTR, ticker: YCSW0514 Index, active: true}
 - {name: EUR 6M, ticker: YCSW0045 Index, active: true}

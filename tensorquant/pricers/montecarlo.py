@@ -2,8 +2,9 @@ import numpy as np
 import tensorflow as tf
 
 from .pricer import Pricer
-from ..instruments.autocallable import AutocallableOption
+from ..instruments.autocallable import AutocallableOption, AutocallableSwap
 from ..markethandles.marketenvironment import MarketEnvironment
+from ..models.brownian import FINE_HORIZON, FINE_TIME_STEP, simulation_grid
 from ..models.localvolatility import LocalVolatilityModel
 from ..models.equitymodel import bind, check_model
 from ..models.multiasset import MultiAssetProcess
@@ -33,8 +34,9 @@ class AutocallableMCPricer(Pricer):
     calibration: one ``pricer.tape.gradient(product.price, market_env.risk_factors())``), or an instance
     (:class:`EquityModel`) bound with ``model.process(equity)`` (parameters held: model greeks on
     ``model.parameters``, par greeks with :func:`par_greeks`); see :class:`VanillaMCPricer`.
-    Paths are simulated (stateless seed) on the union of the future fixing dates and a uniform
-    grid of step ``max_time_step``, with the vol-surface day count.
+    Paths are simulated (stateless seed) on the union of the future fixing dates and a grid of daily steps
+    (``fine_time_step``) up to ``fine_horizon`` years, of ``max_time_step`` after (:func:`simulation_grid`), with the
+    vol-surface day count.
 
     Coupon, autocall and put barriers are digitals: their pathwise derivative is zero, so AAD would
     miss most of delta and vega. With ``barrier_smoothing = eps > 0`` every indicator
@@ -48,6 +50,8 @@ class AutocallableMCPricer(Pricer):
         seed: Seed of the stateless Gaussian draws.
         max_time_step: Largest simulation step (years).
         barrier_smoothing: Width of the smoothed digitals as a fraction of the strike (0 = hard).
+        fine_time_step: Step over the first months (years).
+        fine_horizon: End of the fine steps (years; 0 = uniform grid of ``max_time_step``).
 
     After pricing: ``product.coupon_pv``, ``product.put_pv`` (both per unit notional, put as a
     positive value paid by the investor), ``product.standard_error`` (currency units);
@@ -62,6 +66,8 @@ class AutocallableMCPricer(Pricer):
         seed: int = 42,
         max_time_step: float = 1.0 / 52.0,
         barrier_smoothing: float = 0.01,
+        fine_time_step: float = FINE_TIME_STEP,
+        fine_horizon: float = FINE_HORIZON,
     ) -> None:
         super().__init__()
         for m in (model.values() if isinstance(model, dict) else [model]):     # one model, or one per ticker
@@ -72,6 +78,8 @@ class AutocallableMCPricer(Pricer):
         self._n_paths = n_paths
         self._seed = seed
         self._max_time_step = max_time_step
+        self._fine_time_step = fine_time_step
+        self._fine_horizon = fine_horizon
         self._eps = barrier_smoothing
         self.paths = None
         self.time_grid = None
@@ -97,6 +105,9 @@ class AutocallableMCPricer(Pricer):
         """
         if not isinstance(product, AutocallableOption):
             raise ValueError("AutocallableMCPricer only supports AutocallableOption")
+        if isinstance(product, AutocallableSwap) and not isinstance(self, AutocallableSwapPricer):
+            raise ValueError("an AutocallableSwap has a funding leg: price it with AutocallableSwapPricer")
+        self._market = market_env
         if product.underlying is None:
             raise ValueError("AutocallableOption.underlying must be set")
         if product.is_worst_of:
@@ -123,7 +134,8 @@ class AutocallableMCPricer(Pricer):
         n = 1
         if fixings:
             fixing_times = np.array([daycounter.year_fraction(eval_date, d) for d in fixings])
-            uniform = np.arange(self._max_time_step, fixing_times[-1], self._max_time_step)
+            uniform = simulation_grid(fixing_times[-1], self._max_time_step, self._fine_time_step,
+                                      self._fine_horizon)
             time_grid = np.unique(np.concatenate([uniform, fixing_times]))
             column = {d: i for i, d in enumerate(fixings)}     # paths are returned at the fixings only
 
@@ -183,7 +195,8 @@ class AutocallableMCPricer(Pricer):
         n = 1
         if fixings:
             fixing_times = np.array([daycounter.year_fraction(eval_date, d) for d in fixings])
-            uniform = np.arange(self._max_time_step, fixing_times[-1], self._max_time_step)
+            uniform = simulation_grid(fixing_times[-1], self._max_time_step, self._fine_time_step,
+                                      self._fine_horizon)
             time_grid = np.unique(np.concatenate([uniform, fixing_times]))
             column = {d: i for i, d in enumerate(fixings)}
 
@@ -263,7 +276,9 @@ class AutocallableMCPricer(Pricer):
 
         Returns:
             dict: ``cash_flows`` (per payment date after the evaluation date: ``coupon``, ``redemption`` (the notional
-            back, at an autocall or at maturity), ``put`` (minus the put paid by the investor at maturity), ``total``), ``autocall`` (per autocall observation:
+            back, at an autocall or at maturity), ``put`` (minus the put paid by the investor at maturity), ``funding``
+            (autocallable swap: minus the funding paid while alive), ``total``; the client's flows, all of the other
+            sign for the issuer), ``autocall`` (per autocall observation:
             ``probability`` of being called there, ``cumulative``), ``maturity`` (``reached`` and ``knock_in``
             probabilities, the expected ``put``, ``loss_given_knock_in``, ``expected_life``: the mean time to
             the redemption, autocall or maturity, in years), ``worst`` (worst-of: per underlying the share of the paths
@@ -289,9 +304,12 @@ class AutocallableMCPricer(Pricer):
         years = lambda pay: max((pay - eval_date).days, 0) / 365.0
         life = np.zeros(n)                                              # redemption time of each path (years)
 
+        survival = []                                                   # (autocall payment date, alive after)
+
         def add(pay, kind, values):
             if pay >= eval_date:
-                row = flows.setdefault(pay, {"date": pay, "coupon": 0.0, "redemption": 0.0, "put": 0.0})
+                row = flows.setdefault(pay, {"date": pay, "coupon": 0.0, "redemption": 0.0, "put": 0.0,
+                                             "funding": 0.0})
                 row[kind] += float(np.mean(values))
 
         for d in sorted(perf):
@@ -332,11 +350,20 @@ class AutocallableMCPricer(Pricer):
                 life = np.where(called, years(product.autocall_payment_dates[j]), life)
                 autocall.append({"date": d, "probability": float(called.mean()), "known": d in known})
                 alive = alive & ~called
+                survival.append((product.autocall_payment_dates[j], alive.copy()))
+        for start, pay, amount in last.get("funding", []):               # paid by the client while alive
+            alive_at = next((a for p, a in reversed(survival) if p <= start), np.ones(n, bool))
+            add(pay, "funding", -amount * alive_at)
+        sign = getattr(product, "side_sign", 1.0)                       # the issuer: every flow the other way
+        for row in flows.values():
+            for kind in ("coupon", "redemption", "put", "funding"):
+                row[kind] *= sign
         total = 0.0
         for row in autocall:
             total += row["probability"]
             row["cumulative"] = total
-        cash_flows = [dict(r, total=r["coupon"] + r["redemption"] + r["put"]) for _, r in sorted(flows.items())]
+        cash_flows = [dict(r, total=r["coupon"] + r["redemption"] + r["put"] + r["funding"])
+                      for _, r in sorted(flows.items())]
         maturity["expected_life"] = float(life.mean())
         forwards = []
         paths = None if self.paths is None else self.paths.numpy()
@@ -400,12 +427,21 @@ class AutocallableMCPricer(Pricer):
         """Price from the performance on every observation date (past ones as numbers, future ones on the paths)."""
         self._last = {"product": product, "perf": perf, "known": known, "eval_date": eval_date, "n": n}
         coupon_pv, put_pv = self._payoff(product, perf, known, curve, eval_date, n)
-        total = coupon_pv - put_pv
+        total = coupon_pv - put_pv                                     # the client's value, per unit notional
         product.coupon_pv = tf.reduce_mean(coupon_pv)
         product.put_pv = tf.reduce_mean(put_pv)
+        funding_pv = self._funding(product, eval_date, n)
+        if funding_pv is not None:                                     # autocallable swap: the client pays it
+            total = total - funding_pv
+            product.funding_pv = tf.reduce_mean(funding_pv)
         product.standard_error = (product.notional * tf.math.reduce_std(tf.stop_gradient(total)) / n ** 0.5
                                   if n > 1 else tf.constant(0.0, DTYPE))
-        return product.notional * tf.reduce_mean(total)
+        return getattr(product, "side_sign", 1.0) * product.notional * tf.reduce_mean(total)
+
+    def _funding(self, product, eval_date, n: int):
+        """Path-wise discounted funding leg per unit notional (``[n]``), or ``None`` (an autocallable without one:
+        :class:`AutocallableSwapPricer` prices it)."""
+        return None
 
     # ------------------------------------------------------------------
     # Payoff
@@ -431,6 +467,7 @@ class AutocallableMCPricer(Pricer):
         unpaid = tf.zeros([n], DTYPE)
         coupon_pv = tf.zeros([n], DTYPE)
         put_pv = tf.zeros([n], DTYPE)
+        self._survival = []             # (autocall payment date, alive after it): the end of a funding leg
 
         for d in sorted(perf):
             s = perf[d] * tf.ones([n], DTYPE)
@@ -453,4 +490,43 @@ class AutocallableMCPricer(Pricer):
             if d in autocall_index:
                 j = autocall_index[d]
                 alive = alive * (1.0 - self._above(s, product.autocall_barrier[j] / 100.0, hard))
+                self._survival.append((product.autocall_payment_dates[j], alive))
         return coupon_pv, put_pv
+
+
+class AutocallableSwapPricer(AutocallableMCPricer):
+    """:class:`AutocallableSwap` by Monte Carlo: the autocallable as :class:`AutocallableMCPricer` and the funding
+    leg weighted by the probability that the product is alive at the start of each period, on the same paths (the
+    same smoothed autocall indicators, so delta, vega and skew include the termination of the funding).
+
+    The rate is not simulated: period ``i`` pays ``(F_i + margin) tau_i`` at its end, ``F_i = (P(s_i) / P(e_i) - 1) /
+    tau_i`` on the funding curve (``get_ir_curve(payment_ccy, funding_curve)``), discounted on the payment currency's
+    default curve; rho per pillar reaches both curves by AAD. A period already started takes the forward from the
+    evaluation date to its end (no rate fixings in the market yet); periods paid before the evaluation date are
+    settled. Without an autocall the leg equals the floating leg of a swap on the same periods.
+    """
+
+    def _funding(self, product, eval_date, n: int):
+        if not isinstance(product, AutocallableSwap):
+            return None
+        ccy = product.payment_ccy
+        projection = self._market.get_ir_curve(ccy, ticker=product.funding_curve)
+        discount = self._market.get_ir_curve(ccy)
+        margin = product.funding_margin / 1e4
+        survival = getattr(self, "_survival", [])
+        pv = tf.zeros([n], DTYPE)
+        periods = []
+        for start, end, pay, tau in zip(product.funding_start_dates, product.funding_end_dates,
+                                        product.funding_payment_dates, product.funding_accruals):
+            if pay < eval_date:
+                continue
+            first = max(start, eval_date)
+            tau_fwd = product.funding_day_count.year_fraction(first, end)
+            forward = ((tf.cast(projection.discount(first), DTYPE) / tf.cast(projection.discount(end), DTYPE) - 1.0)
+                       / tau_fwd if tau_fwd > 0 else tf.constant(0.0, DTYPE))
+            amount = (forward + margin) * tau
+            alive = next((a for p, a in reversed(survival) if p <= start), tf.ones([n], DTYPE))
+            pv = pv + alive * amount * tf.cast(discount.discount(pay), DTYPE)
+            periods.append((start, pay, float(amount)))
+        self._last["funding"] = periods                                  # the projections
+        return pv

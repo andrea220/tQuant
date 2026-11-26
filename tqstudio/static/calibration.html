@@ -26,7 +26,7 @@
     <main>
       <div class="segmented" id="subtabs">
         <button data-tab="sets" class="active">Sets</button>
-        <button data-tab="universe">Universe</button>
+        <button data-tab="slv">Heston SLV</button>
       </div>
 
       <!-- new set form -->
@@ -38,18 +38,12 @@
           <button id="nf-start" class="compact">Start</button>
         </div>
         <p id="nf-plan" class="muted"></p>
-        <p class="muted">Calibrates the models flagged in Universe, in a separate process (Heston and displaced
+        <p class="muted">Calibrates the models flagged in Reference data on the Home, in a separate process (Heston and displaced
           diffusion: about 10-40 s per underlying; Heston SLV: longer). The set appears in the list when it is done.</p>
       </div>
 
-      <!-- universe: the models to calibrate per underlying -->
-      <div id="tab-universe" class="hidden">
-        <div class="panel">
-          <h2>Universe <span id="uv-saved" class="muted"></span></h2>
-          <div class="segmented" id="uv-classes"></div>
-          <div id="uv-table" class="hscroll" style="margin-top: 12px"></div>
-          <p id="uv-note" class="muted"></p>
-        </div>
+      <!-- Heston SLV: when to recalibrate (the model flags are in Reference data on the Home) -->
+      <div id="tab-slv" class="hidden">
         <div class="panel">
           <h2>Heston SLV: when to recalibrate <span id="slv-latest" class="muted"></span></h2>
           <div id="slv-table" class="hscroll"></div>

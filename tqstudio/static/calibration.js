@@ -156,12 +156,15 @@ function showModel() {
   const cols = rep.length ? Object.keys(rep[0]) : [];
   $("und-report").innerHTML = rep.length ? table(cols.map((c) => [c, (r) => (typeof r[c] === "number" ? fmt(r[c], 4) : r[c] ?? "")]), rep)
     : '<p class="muted">No report.</p>';
-  const shade = (x) => (x >= 0 ? `rgba(53, 99, 233, ${Math.min(0.08 + 0.12 * x, 0.6)})` : `rgba(194, 54, 47, ${Math.min(0.08 + 0.12 * -x, 0.6)})`);
+  const shade = (x) => (x === null ? "#eef1f6" : x >= 0 ? `rgba(53, 99, 233, ${Math.min(0.08 + 0.12 * x, 0.6)})` : `rgba(194, 54, 47, ${Math.min(0.08 + 0.12 * -x, 0.6)})`);
   const head = "<tr><th>Expiry</th>" + d.moneyness.map((x, j) => `<th>${(100 * x).toFixed(1).replace(/\.0$/, "")}%`
     + `<br><span class="muted">${fmt(d.strikes[j], d.spot < 50 ? 2 : d.spot < 1000 ? 1 : 0)}</span></th>`).join("") + "</tr>";
   const body = m.errors.map((row, i) => `<tr><td>${d.labels[i]} <span class="muted">${d.expiries[i]}</span></td>`
-    + row.map((x) => `<td style="background:${shade(x)}">${fmt(x, 2)}</td>`).join("") + "</tr>").join("");
-  $("und-errors").innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+    + row.map((x) => `<td style="background:${shade(x)}"${x === null ? ' title="too few Monte Carlo paths reach this strike"' : ""}>`
+      + `${fmt(x, 2)}</td>`).join("") + "</tr>").join("");
+  $("und-errors").innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`
+    + (m.errors.some((row) => row.includes(null))
+      ? '<p class="muted">Grey: too few Monte Carlo paths reach the strike to measure the model there (out of the rms).</p>' : "");
   smile();
   atm();
 }
@@ -173,7 +176,7 @@ function smile() {
   const traces = [{ x, y: d.market[i].map((v) => 100 * v), mode: "lines+markers", name: "market surface",
     line: { color: "#888", dash: "dash" }, marker: { size: 5 } }];
   d.models.filter((m) => m.status === "ok" && m.model === state.model).forEach((m) => traces.push({ x,
-    y: m.vols[i].map((v) => 100 * v), mode: "lines", name: LABEL[m.model] || m.model,
+    y: m.vols[i].map((v) => (v === null ? null : 100 * v)), mode: "lines", name: LABEL[m.model] || m.model,
     line: { color: MODEL_COLORS[m.model], width: 2 } }));
   const q = (d.quotes || {})[d.expiries[i]] || [];
   if (q.length) {
@@ -198,7 +201,7 @@ function atm() {
     const k = d.moneyness.reduce((b, x, j) => (Math.abs(x - 1) < Math.abs(d.moneyness[b] - 1) ? j : b), 0);
     traces[0] = { x: d.T, y: d.market.map((row) => 100 * row[k]), mode: "lines+markers", name: "market",
       line: { color: "#888", dash: "dash" } };
-    traces.push({ x: d.T, y: m.vols.map((row) => 100 * row[k]), mode: "lines+markers", name: LABEL[m.model] || m.model,
+    traces.push({ x: d.T, y: m.vols.map((row) => (row[k] === null ? null : 100 * row[k])), mode: "lines+markers", name: LABEL[m.model] || m.model,
       line: { color: MODEL_COLORS[m.model] }, marker: { size: 4 } });
     plot("chart-atm", traces, `Term structure at ${fmt(100 * d.moneyness[k], 0)}% of the spot`, "T (years)",
       "implied vol (%)");
@@ -211,9 +214,15 @@ function atm() {
 async function loadTest(rerun) {
   const d = state.und;
   $("test-run").disabled = true;
-  $("test-status").textContent = rerun ? "Running (about 10-20 s)…" : "Loading…";
+  $("test-status").textContent = rerun ? "Running (about 10-20 s)…" : "";
   try {
     const t = await post("/api/calibration/test", { date: state.set.date, set: state.set.set, ticker: d.ticker, rerun });
+    if (!t.ran) {                                 // not run yet: on request only (it takes some seconds)
+      $("test-table").innerHTML = "";
+      $("test-vols").innerHTML = "";
+      $("test-status").textContent = "not run yet: press Run test";
+      return;
+    }
     const engines = ["Black", ...t.engines];
     const price = (name) => [LABEL[name] || name, (r) => (r[name] === null ? "" : fmt(r[name], 3)
       + (r[`${name}_se`] ? ` <span class="muted">±${fmt(r[`${name}_se`], 3)}</span>` : ""))];
@@ -232,40 +241,7 @@ async function loadTest(rerun) {
   }
 }
 
-// ---------- universe ----------
-const CLASS_LABEL = { equity: "Equity", rates: "Rates", fx: "FX" };
-async function loadUniverse(cls) {
-  const u = await getJSON("/api/calibration/universe");
-  state.universe = u;
-  state.uvClass = cls || state.uvClass || "equity";
-  $("uv-classes").innerHTML = Object.keys(u.classes).map((c) => `<button data-cls="${c}" class="${c === state.uvClass ? "active" : ""}">`
-    + `${CLASS_LABEL[c] || c} <span class="muted">${u.classes[c].length}</span></button>`).join("");
-  $("uv-classes").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => loadUniverse(b.dataset.cls)));
-  const models = u.models[state.uvClass];
-  const rows = u.classes[state.uvClass];
-  const supported = new Set(u.supported);
-  const cell = (r, m) => `<label class="flag"><input type="checkbox" data-name="${r.name}" data-model="${m}"`
-    + `${r.flags[m] ? " checked" : ""}></label>`;
-  $("uv-table").innerHTML = !rows.length ? '<p class="muted">No underlying of this class in the latest snapshot.</p>'
-    : !models.length ? table([["Underlying", (r) => `<b>${r.name}</b>`], ["Models", () => '<span class="muted">none yet</span>']], rows)
-    : table([["Underlying", (r) => `<b>${r.name}</b>`], ...models.map((m) => [(LABEL[m] || m)
-      + (supported.has(m) ? "" : ' <span class="muted">(not in the sets yet)</span>'), (r) => cell(r, m)])], rows);
-  $("uv-note").textContent = state.uvClass === "equity"
-    ? "Flags saved at once in marketdata/config/calibration.yaml; New calibration set calibrates the flagged models."
-    : state.uvClass === "rates" ? "Rates models are listed but not calibrated in the sets yet: keep them off."
-    : "No FX model yet.";
-  $("uv-table").querySelectorAll("input[type=checkbox]").forEach((box) => box.addEventListener("change", async () => {
-    const row = state.universe.classes[state.uvClass].find((r) => r.name === box.dataset.name);
-    row.flags[box.dataset.model] = box.checked;
-    try {
-      await post("/api/calibration/universe", { asset_class: state.uvClass, name: row.name, flags: row.flags });
-      $("uv-saved").textContent = `saved ${row.name}`;
-      setTimeout(() => { $("uv-saved").textContent = ""; }, 1500);
-    } catch (e) {
-      $("uv-saved").innerHTML = `<span class="error">${e.message}</span>`;
-    }
-  }));
-}
+// ---------- Heston SLV ----------
 // Heston SLV: when to recalibrate (cheap indicators at once, the Monte Carlo fit on request)
 async function loadSlv() {
   $("slv-table").innerHTML = '<p class="muted">Loading…</p>';
@@ -305,8 +281,8 @@ async function loadSlv() {
 function showTab(tab) {
   document.querySelectorAll("#subtabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   $("tab-sets").classList.toggle("hidden", tab !== "sets");
-  $("tab-universe").classList.toggle("hidden", tab !== "universe");
-  if (tab === "universe") { loadUniverse(); loadSlv(); }
+  $("tab-slv").classList.toggle("hidden", tab !== "slv");
+  if (tab === "slv") loadSlv();
 }
 
 // ---------- new set ----------

@@ -93,6 +93,14 @@ another currency, new and live trades, with stable AAD greeks.
    Also: autocallable prices and vegas on the new surfaces
    (grid 30%-200%) against the old ones, on SX5E and a single stock; local vol arbitrage warnings on the wider grid
    (SX5E, 1.7% of the local vol grid on 2026-11-19); a new calibration set on the recalibrated snapshot.
+   Vega per expiry in the first year is Monte Carlo noise on high-vol underlyings: the default Tradepad product
+   (autocall 99999%, quarterly 2% coupons at 80%, put 80%, 3Y, local vol, 50k paths) on 2026-11-26 has similar
+   total vega on IGV and SOXX (1.11 / 1.31) and 3Y bucket (0.66 / 0.64), but SOXX's rows up to 1Y flip sign with the
+   seed (0.14Y +1.53 / -0.25, 0.23Y -2.07 / +0.04, 0.81Y +1.88 / -0.71; IGV the same, 4-5x smaller): ATM vol 79%-46%
+   puts the quarterly coupon digitals near the money (80% barrier 0.7 std at 3M vs 1.3 on IGV), their smoothed
+   pathwise vega rests on few paths, and the local vol spreads it with alternating signs over close expiries
+   (0.23 / 0.31, 0.02 / 0.06). To check: buckets against paths (200k, two seeds); then more paths for the risk,
+   wider short buckets (<= 1Y), or a wider barrier smoothing for the greeks only.
 
 ## 3. After the beta: equity
 

@@ -313,3 +313,21 @@ button.add-underlying { align-self: flex-start; margin: 2px 0 0; }
 .new-snapshot-box { width: min(560px, 94vw); }
 label.choice { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0; font-size: 13px; cursor: pointer; }
 label.choice input { width: auto; margin-top: 2px; }
+/* vega: the map and the vega per expiry side by side (stacked on a narrow screen) */
+.vega-row { display: flex; gap: 16px; align-items: flex-start; }
+.vega-row > .chart { flex: 1 1 auto; min-width: 0; }
+.vega-row > #vega-expiry { flex: 0 0 auto; }
+#vega-expiry td.num { text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 900px) { .vega-row { flex-direction: column; } }
+/* (i) with a tooltip on hover / focus */
+.info-tip { display: inline-flex; align-items: center; justify-content: center; position: relative; margin-left: 6px;
+  width: 15px; height: 15px; border-radius: 50%; border: 1px solid #8a94a6; color: #5b6575; font: italic 600 10px/1 Georgia, serif;
+  cursor: help; vertical-align: 1px; }
+.info-tip:hover::after, .info-tip:focus::after { content: attr(data-tip); position: absolute; left: 0; bottom: 140%;
+  width: 280px; padding: 8px 10px; border-radius: 6px; background: #18202f; color: #fff; z-index: 20;
+  font: 400 12px/1.4 "Segoe UI", system-ui, sans-serif; font-style: normal; white-space: normal; text-align: left;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2); }
+/* Market Data tab: the correlation matrix of the deal */
+.corr-table th, .corr-table td { text-align: center; }
+.corr-table input.corr-cell { width: 70px; text-align: right; font-variant-numeric: tabular-nums; }
+.corr-table input.corr-cell.edited { background: #fff6e0; border-color: #e8833a; }

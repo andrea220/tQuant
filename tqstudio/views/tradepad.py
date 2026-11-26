@@ -18,6 +18,7 @@ import math
 import re
 import time
 from contextlib import contextmanager
+from typing import Optional
 from datetime import date, timedelta
 
 import numpy as np
@@ -45,6 +46,8 @@ SAME_CCY = "Underlying currency"         # payment currency of a product that is
 PAYMENT_CCY = "Payment currency"         # price currency: the payment one (no conversion)
 NO_TICKER = "None"                       # an empty extra underlying (ignored)
 MAX_UNDERLYINGS = 5                      # underlyings of a worst-of autocallable (the form adds them one by one)
+AUTOCALLS = ("Autocallable", "Autocallable Swap")     # the autocallable screens (the swap adds a funding leg)
+SIDES = {"Receiver (client)": tq.SwapType.Receiver, "Payer (issuer)": tq.SwapType.Payer}
 WORST_OF_MODELS = ("Local vol", "GBM (debug)")    # models of a worst-of (one normal per step and underlying)
 
 
@@ -126,6 +129,17 @@ def _rate_currencies(mkt: tq.MarketEnvironment, needs: str) -> list[str]:
 
 
 FORWARD_STARTS = ["Spot", "1M", "3M", "6M", "1Y", "2Y", "3Y", "5Y", "10Y"]
+
+
+def funding_indices(mkt: tq.MarketEnvironment) -> list[str]:
+    """Indices of an autocallable swap's funding leg: the curves of *mkt* with market conventions (``EUR 6M``,
+    ``EUR ESTR``, ``USD SOFR``, ...), Ibor first."""
+    from tensorquant.markethandles.bootstrapping import QUOTE_CONVENTIONS
+
+    keys = mkt.risk_factors()
+    found = [(conv["kind"] == "ois", f"{ccy} {name}") for (ccy, name), conv in QUOTE_CONVENTIONS.items()
+             if f"IR:{ccy}:{name}:SPOT" in keys]
+    return [label for _, label in sorted(found)]
 
 
 def swap_generators(mkt: tq.MarketEnvironment) -> dict:
@@ -229,12 +243,13 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
                                       # one currency: the flows are paid and the price is shown in it
                                       _select("payment_ccy", "Currency", ccys, "EUR" if "EUR" in ccys else None),
                                       payment[1],
+                                      _select("side", "Side", list(SIDES), "Payer (issuer)"),
                                       _date("strike_date", "Strike date", strike_default.isoformat()),
                                       _date("maturity", "Maturity", maturity_default))
                              + _group("Coupon", _select("coupon_type", "Type", ["Standard", "Memory"]),
                                       _number("coupon", "Coupon per period (%)", 2.0, 0.25),
                                       _number("coupon_barrier", "Coupon barrier (%)", 80.0, 1.0),
-                                      _select("coupon_frequency", "Frequency", ["3M", "6M", "1Y"], "6M"))
+                                      _select("coupon_frequency", "Frequency", ["3M", "6M", "1Y"], "3M"))
                              + _group("Final redemption", _number("put_barrier", "Put barrier (%)", 80.0, 1.0),
                                       _number("put_strike", "Put strike (%)", 100.0, 1.0),
                                       _number("put_participation", "Put participation (%)", 100.0, 5.0))
@@ -249,6 +264,13 @@ def catalog(mkt: tq.MarketEnvironment) -> dict:
                              "spots": {t: float(mkt.get_equity(t).spot) for t in tickers}},
         },
     }
+    indices = funding_indices(mkt)
+    if indices:                                   # the autocallable with a funding leg (the same screen, plus Funding)
+        auto = products["Exotics"]["Autocallable"]
+        default = next((i for i in indices if i.endswith(" 6M")), indices[0])
+        products["Exotics"]["Autocallable Swap"] = {
+            **auto, "fields": auto["fields"] + _group("Funding leg", _select("funding_index", "Index", indices, default),
+                                                      _number("funding_margin", "Margin (bp)", 30.0, 1.0))}
     products["Rates"] = {name: spec for name, spec in products["Rates"].items()      # products with data only
                          if spec["fields"][0]["options"]}
     return {"snapshot": mkt.evaluation_date.isoformat(), "asset_classes": products}
@@ -307,15 +329,18 @@ def _months(term: str) -> int:
     return int(term[:-1]) * (12 if term.endswith("Y") else 1)
 
 
-def _backward_dates(today: date, maturity: date, months: int) -> list:
+def _backward_dates(today: date, maturity: date, months: int, after: date = None) -> list:
     """Observation dates rolled backward from the maturity every *months* (each from the unadjusted maturity, then
-    Modified Following): the maturity is always an observation and schedules of different frequencies align."""
+    Modified Following): the maturity is always an observation and schedules of different frequencies align. With
+    *after*, only the dates whose unadjusted date is on or after it (unadjusted: a date rolled to the next business
+    day is not lost against an adjusted bound)."""
     out, k = [], 0
     while True:
         d = maturity - relativedelta(months=k * months)
         if d <= today:
             return sorted(set(out))
-        out.append(CAL.adjust(d, MF))
+        if after is None or d >= after:
+            out.append(CAL.adjust(d, MF))
         k += 1
 
 
@@ -345,11 +370,14 @@ def _autocallable(mkt, f: dict):
     end = CAL.adjust(maturity, MF)
     if end <= strike_date:
         raise ValueError("the maturity must be after the strike date")
-    first = CAL.advance(strike_date, _months(f["first_autocall"]), tq.TimeUnit.Months, MF)
-    if first >= end:
-        raise ValueError("the first autocall observation must be before the maturity")
+    # first autocall: the first observation from strike date + first_autocall on (unadjusted dates: 1Y after a strike
+    # on 5 Dec is the observation of 5 Dec, also when it rolls to Monday 6 Dec and the strike to Monday 7 Dec)
+    strike_unadjusted = date.fromisoformat(f.get("strike_date") or today.isoformat())
+    first = strike_unadjusted + relativedelta(months=_months(f["first_autocall"]))
     coupons = _backward_dates(strike_date, maturity, _months(f["coupon_frequency"]))
-    autocalls = [d for d in _backward_dates(strike_date, maturity, _months(f["autocall_frequency"])) if d >= first]
+    autocalls = _backward_dates(strike_date, maturity, _months(f["autocall_frequency"]), after=first)
+    if not autocalls or CAL.adjust(first, MF) >= end:
+        raise ValueError("the first autocall observation must be before the maturity")
     step = float(f.get("autocall_step", 0.0) or 0.0)                      # step-down, with its floor only then
     tickers = _tickers(f)
     if len(tickers) > 1:                    # worst-of: in the payment currency, the foreign underlyings quanto
@@ -361,8 +389,17 @@ def _autocallable(mkt, f: dict):
     else:
         ccy, payment, underlying = eq.currency, _payment_ccy(f, eq), eq.ticker
         strike = None if not struck_today else float(f.get("_ref_spot", eq.spot)) * _composite_fx(mkt, f, eq)
-    return tq.AutocallableOption(
+    swap = {}
+    if f.get("funding_index"):                    # autocallable swap: the funding leg in the payment currency
+        index_ccy, curve = f["funding_index"].split(" ", 1)
+        pay_ccy = (payment or ccy).name
+        if index_ccy != pay_ccy:
+            raise ValueError(f"funding index {f['funding_index']}: not in the currency of the product ({pay_ccy})")
+        swap = {"funding_curve": curve, "funding_margin": float(f.get("funding_margin") or 0.0)}
+    cls = tq.AutocallableSwap if swap else tq.AutocallableOption
+    return cls(
         ccy=ccy, notional=float(f["notional"]), start_date=min(today, strike_date), end_date=end,
+        side=SIDES.get(f.get("side"), tq.SwapType.Receiver), **swap,
         strike=strike,
         strike_date=strike_date,
         coupon_fixing_dates=coupons, coupon_payment_dates=coupons,
@@ -483,9 +520,19 @@ def _equity_vega_map(eq, greeks: dict, scale: float) -> dict:
     vega = scale * np.asarray(greeks[vol_key][0], float) / 100
     vs = eq.vol_surface
     s0 = float(eq.spot)
+    by_expiry = tq.vega_by_expiry(vega, eq)            # level, running total and skew of each expiry
     return {"title": "Vega per surface node (1 vol point)", "z": vega.tolist(),
             "x": [f"{100 * float(k) / s0:.0f}%" for k in vs.strike], "x_title": "strike / spot",
-            "y": [f"{float(t):.2f}y" for t in vs.maturity], "y_title": "expiry", "total": float(vega.sum())}
+            "y": [f"{float(t):.2f}y" for t in vs.maturity], "y_title": "expiry", "total": float(vega.sum()),
+            "level": by_expiry["level"].tolist(), "skew": by_expiry["skew"].tolist(),
+            "buckets": tq.vega_by_tenor(by_expiry["level"], by_expiry["t"])[["label", "vega"]].to_dict("records"),
+            "skew_total": float(by_expiry["skew"].sum()),
+            "skew_note": f"Change of the price when the skew steepens on every expiry: the smile rotated around the "
+                         f"forward, +1 vol point per {tq.SKEW_STEP:.0%} of strike below it and -1 per "
+                         f"{tq.SKEW_STEP:.0%} above (e.g. +2 at 80%, -2 at 120%; held beyond "
+                         f"{tq.SKEW_RANGE[0]:.0%}-{tq.SKEW_RANGE[1]:.0%} of the forward). Negative: the position "
+                         f"loses when the skew steepens, gains when it flattens. A first-order estimate: larger moves "
+                         f"add a convexity term."}
 
 
 def _tenor(t: float) -> str:
@@ -512,10 +559,71 @@ def _fields(mkt, request: dict) -> tuple:
 
 def _equity_strike_expiry(mkt, kind: str, f: dict) -> tuple:
     """Strike and expiry the market inputs refer to (the autocallable: its initial fixing and final date)."""
-    product = _autocallable(mkt, f) if kind == "Autocallable" else _equity_option(mkt, f, kind)
+    product = _autocallable(mkt, f) if kind in AUTOCALLS else _equity_option(mkt, f, kind)
     strike = (product.strike[0] if isinstance(product.strike, list) else product.strike
               if product.strike is not None else float(f.get("_ref_spot", mkt.get_equity(f["ticker"]).spot)))
     return float(strike), product.end_date              # forward start: the spot (the strike is not known yet)
+
+
+def deal_correlations(mkt: tq.MarketEnvironment, product) -> Optional[dict]:
+    """Correlation matrix of a deal: its underlyings (asset / asset) and, for those in another currency than the
+    payment one, the stored FX pair of the two currencies (asset / currency: quanto, composite).
+
+    Returns:
+        dict or None: ``names`` (factors of the market matrix), ``labels`` (ticker, pair), ``matrix`` (as stored);
+        ``None`` with fewer than two factors or no market matrix.
+    """
+    try:
+        known = mkt.get_correlation_matrix().names
+    except ValueError:
+        return None
+    pay = product.payment_ccy.name
+    tickers = product.underlyings if hasattr(product, "underlyings") else [product.underlying]
+    names = []
+    for ticker in tickers:
+        und = mkt.get_equity(ticker).currency.name
+        if f"EQ:{und}:{ticker}" in known:
+            names.append(f"EQ:{und}:{ticker}")
+    for ticker in tickers:
+        und = mkt.get_equity(ticker).currency.name
+        if und == pay:
+            continue
+        fx = next((n for n in (f"FX:{pay}:{und}{pay}", f"FX:{und}:{pay}{und}") if n in known), None)
+        if fx is not None and fx not in names:
+            names.append(fx)
+    if len(names) < 2:
+        return None
+    return {"names": names, "labels": [n.split(":")[2] for n in names],
+            "matrix": np.asarray(mkt.get_correlation(names), float).tolist()}
+
+
+@contextmanager
+def _correlations_overridden(mkt, corr: dict):
+    """Temporarily set correlations of the market matrix (``{"<factor a>|<factor b>": value}``, both entries): the
+    view's what-if, the snapshot untouched (restored on exit; the variable keeps its identity, so the correlation
+    sensitivities still come from the tape)."""
+    if not corr:
+        yield
+        return
+    matrix = mkt.get_correlation_matrix()
+    var = matrix.variables[0]
+    saved = var.numpy().copy()
+    try:
+        values = saved.copy()
+        for key, value in corr.items():
+            a, b = key.split("|")
+            rho = float(value)
+            if not -1.0 < rho < 1.0:
+                raise ValueError(f"correlation {a.split(':')[-1]} / {b.split(':')[-1]}: {rho} not in (-1, 1)")
+            i, j = matrix.names.index(a), matrix.names.index(b)
+            values[i, j] = values[j, i] = rho
+        if np.linalg.eigvalsh(values).min() < -1e-10:
+            raise ValueError("the edited correlations do not form a valid correlation matrix (not positive "
+                             "semi-definite): change them together")
+        var.assign(values)
+        yield
+    finally:
+        var.assign(saved)
 
 
 def market_inputs(mkt: tq.MarketEnvironment, request: dict) -> dict:
@@ -649,7 +757,7 @@ def describe_trade(mkt: tq.MarketEnvironment, request: dict) -> dict:
     _, f = _fields(mkt, request)
     if request.get("product") == "Swap":
         return {**swap_legs(mkt, f), "schedule": None}
-    if request.get("product") != "Autocallable":
+    if request.get("product") not in AUTOCALLS:
         return {"summary": [], "schedule": None}
     product = _autocallable(mkt, f)
     table = product.schedule_dataframe()
@@ -689,7 +797,13 @@ def describe_trade(mkt: tq.MarketEnvironment, request: dict) -> dict:
                    + (f", floor {product.autocall_floor:g}%" if product.autocall_floor is not None else "")
                    if product.autocall_step else ""), None],
                ["Coupons / autocall dates", f"{len(product.coupon_fixing_dates)} / {len(product.autocall_fixing_dates)}",
-                None]]
+                None],
+               ["Side", next(k for k, v in SIDES.items() if v == product.side), None]]
+    if isinstance(product, tq.AutocallableSwap):
+        summary.append(["Funding leg", f"{product.payment_ccy.name} {product.funding_curve} + "
+                                       f"{product.funding_margin:g} bp, {len(product.funding_payment_dates)} periods from "
+                                       f"{product.funding_start_dates[0].isoformat()}, ACT/360, ended by the autocall",
+                        None])
     return {"summary": summary, "schedule": schedule, "market_data": _autocallable_market_data(mkt, product)}
 
 
@@ -732,14 +846,25 @@ def _autocallable_market_data(mkt, product) -> dict:
                "div_yield": None if eq.div_yield is None else 100 * float(eq.div_yield), "dividends": dividends,
                "quanto": None}
         if eq.currency != pay_ccy:
-            rho, sigma_x = mkt.get_quanto(ticker, eq.currency, pay_ccy, eq.year_fraction(end))
-            row["quanto"] = {"correlation": float(rho), "fx_vol": 100 * float(sigma_x)}
+            # quanto forward: the mean of S_T in the payment currency's measure, F exp(-rho sigma_S sigma_X T) with the
+            # ATM-forward vol (the closed form of a lognormal underlying; the local vol paths: the Projections tab)
+            T = eq.year_fraction(end)
+            rho, sigma_x = mkt.get_quanto(ticker, eq.currency, pay_ccy, T)
+            forward = float(eq.forward(end))
+            atm = float(eq.vol_surface.volatility(strike=forward, tenor=T))
+            und, pay = eq.currency.name, pay_ccy.name
+            fx, sign = (f"FX:{pay}:{und}{pay}", 1.0) if f"FX:{pay}:{und}{pay}:SPOT" in mkt.risk_factors()                 else (f"FX:{und}:{pay}{und}", -1.0)
+            row["quanto"] = {"correlation": float(rho), "fx_vol": 100 * float(sigma_x), "atm_vol": atm, "T": T,
+                             "sign": sign, "key": f"EQ:{und}:{ticker}|{fx}",
+                             "forward": forward * float(np.exp(-float(rho) * atm * float(sigma_x) * T))}
         underlyings.append(row)
     curves, seen = [], set()
-    roles = [(pay_ccy, "discounting of the payments")] + [(mkt.get_equity(t).currency, f"forward of {t}")
-                                                            for t in product.underlyings]
-    for ccy, role in roles:
-        curve = mkt.get_ir_curve(ccy)
+    roles = [(pay_ccy, None, "discounting of the payments")] + [(mkt.get_equity(t).currency, None, f"forward of {t}")
+                                                                  for t in product.underlyings]
+    if isinstance(product, tq.AutocallableSwap):
+        roles.append((pay_ccy, product.funding_curve, "funding index"))
+    for ccy, ticker, role in roles:
+        curve = mkt.get_ir_curve(ccy) if ticker is None else mkt.get_ir_curve(ccy, ticker=ticker)
         if curve.name in seen:
             next(c for c in curves if c["name"] == curve.name)["role"] += f", {role}"
             continue
@@ -752,7 +877,8 @@ def _autocallable_market_data(mkt, product) -> dict:
         curves.append({"name": curve.name, "label": f"{c} {name}", "role": role,
                        "zero_at_maturity": 100 * float(curve.zero_rate(end)), "df_at_maturity": float(curve.discount(end)),
                        "pillars": pillars})
-    return {"maturity": end.isoformat(), "underlyings": underlyings, "curves": curves}
+    return {"maturity": end.isoformat(), "payment_ccy": pay_ccy.name, "underlyings": underlyings, "curves": curves,
+            "correlations": deal_correlations(mkt, product)}
 
 
 def _projections(state: dict) -> dict:
@@ -766,10 +892,10 @@ def _projections(state: dict) -> dict:
     return {
         "n_paths": p["n_paths"],
         "cash_flows": [{"date": r["date"].isoformat(), "coupon": 100 * r["coupon"], "redemption": 100 * r["redemption"],
-                        "put": 100 * r["put"], "total": 100 * r["total"]} for r in p["cash_flows"]],
-        # the price split as priced (smoothed digitals): coupons and put, % of the notional
-        "pv": {"coupons": 100 * float(product.coupon_pv), "put": -100 * float(product.put_pv),
-               "total": 100 * (float(product.coupon_pv) - float(product.put_pv))},
+                        "put": 100 * r["put"], "funding": 100 * r["funding"], "total": 100 * r["total"]}
+                       for r in p["cash_flows"]],
+        # the price split as priced (smoothed digitals): coupons, put and funding, % of the notional, by side
+        "pv": _pv_split(product),
         "autocall": [{"date": r["date"].isoformat(), "probability": 100 * r["probability"],
                       "cumulative": 100 * r["cumulative"], "known": r["known"]} for r in p["autocall"]],
         "maturity": {k: v if k == "expected_life" else 100 * v for k, v in p["maturity"].items()},
@@ -779,6 +905,15 @@ def _projections(state: dict) -> dict:
                       "rows": [{"date": r["date"].isoformat(), "mean": r["mean"], "p10": r["p10"], "p90": r["p90"],
                                 "forward": r["forward"]} for r in f["rows"]]} for f in p["forwards"]],
     }
+
+
+def _pv_split(product) -> dict:
+    """The price split by leg, % of the notional, signed for the product's side."""
+    sign = getattr(product, "side_sign", 1.0)
+    coupons, put = 100 * float(product.coupon_pv), -100 * float(product.put_pv)
+    funding = -100 * float(product.funding_pv) if isinstance(product, tq.AutocallableSwap) else None
+    return {"coupons": sign * coupons, "put": sign * put, "funding": None if funding is None else sign * funding,
+            "total": sign * (coupons + put + (funding or 0.0))}
 
 
 def _worst_of_ccy(mkt, product) -> str:
@@ -871,7 +1006,8 @@ def _equity_price(mkt, cache, kind, f, model, n_paths, seed) -> dict:
     snap = mkt.evaluation_date.isoformat()
     s0 = float(eq.spot)
     calibration_s = 0.0
-    if kind == "Autocallable" and len(_tickers(f)) > 1:      # worst-of: one model per underlying
+    autocall_pricer = tq.AutocallableSwapPricer if kind == "Autocallable Swap" else tq.AutocallableMCPricer
+    if kind in AUTOCALLS and len(_tickers(f)) > 1:      # worst-of: one model per underlying
         product = _autocallable(mkt, f)
         qty, instance = 1.0, None
         if model not in WORST_OF_MODELS:
@@ -883,16 +1019,16 @@ def _equity_price(mkt, cache, kind, f, model, n_paths, seed) -> dict:
             for t in product.underlyings:
                 models[t], seconds = cache.get(mkt.get_equity(t), model, snap)
                 calibration_s += seconds
-        pricer = tq.AutocallableMCPricer(model=models, n_paths=int(n_paths), seed=int(seed))
-    elif kind == "Autocallable":
+        pricer = autocall_pricer(model=models, n_paths=int(n_paths), seed=int(seed))
+    elif kind in AUTOCALLS:
         product = _autocallable(mkt, f)
         qty = 1.0
         if model == GBM_DEBUG:                                           # class path, nothing calibrated
             instance = None
-            pricer = tq.AutocallableMCPricer(model=tq.GeometricBrownianMotion, n_paths=int(n_paths), seed=int(seed))
+            pricer = autocall_pricer(model=tq.GeometricBrownianMotion, n_paths=int(n_paths), seed=int(seed))
         else:
             instance, calibration_s = cache.get(eq, model, snap)
-            pricer = tq.AutocallableMCPricer(model=instance, n_paths=int(n_paths), seed=int(seed))
+            pricer = autocall_pricer(model=instance, n_paths=int(n_paths), seed=int(seed))
     else:
         product = _equity_option(mkt, f, kind)
         qty = float(f.get("quantity", 1.0))
@@ -913,7 +1049,7 @@ def _equity_price(mkt, cache, kind, f, model, n_paths, seed) -> dict:
     pricer.price(product, mkt, autodiff=True, price_currency=price_ccy)
     to_price = 1.0 if price_ccy is None else float(mkt.get_fx_spot(product.payment_ccy, price_ccy))
     # reference of the % in the price currency: the spot (in the payment currency for a composite) or the notional
-    ref = (s0 * _composite_fx(mkt, f, eq) if kind != "Autocallable" else product.notional) * to_price
+    ref = (s0 * _composite_fx(mkt, f, eq) if kind not in AUTOCALLS else product.notional) * to_price
     return {"kind": kind, "f": f, "model": model, "n_paths": n_paths, "seed": seed, "eq": eq, "s0": s0, "qty": qty,
             "product": product, "pricer": pricer, "instance": instance, "calibration_s": calibration_s, "t0": t0,
             "price_s": time.perf_counter() - t0, "ref": ref, "to_price": to_price}
@@ -923,7 +1059,7 @@ def _quick_headline(state: dict) -> list:
     """The price of the first phase, as the headline cards (the greeks follow)."""
     kind, product, qty, s0 = state["kind"], state["product"], state["qty"], state["s0"]
     return [["Price", qty * float(product.price), 4],
-            ["Premium (% spot)" if kind != "Autocallable" else "Price (% notional)",
+            ["Premium (% spot)" if kind not in AUTOCALLS else "Price (% notional)",
              100 * float(product.price) / state["ref"], 3],
             ["Pricing [s]", state["price_s"], 1]]
 
@@ -989,6 +1125,7 @@ def _worst_of_greeks(mkt, state: dict) -> dict:
                   for v in vs if v is not None)
     if fx_vega:
         info.append(["FX vega (1 vol pt)", fx_vega / 100, 4])
+    info += _funding_info(product)
     info.append(["Monte Carlo", f"{int(state['n_paths']):,} paths", None])
     # one vega map per underlying (a sub-tab each in the page)
     maps = [{**v, "ticker": eq.ticker, "title": f"Vega per surface node of {eq.ticker} (1 vol point)"}
@@ -1008,6 +1145,9 @@ def _equity_greeks(mkt, state: dict) -> dict:
     factors = eq.risk_factors()
     fx_product = product.is_quanto or product.is_composite
     converted = getattr(product, "price_currency", product.payment_ccy) != product.payment_ccy
+    if isinstance(product, tq.AutocallableSwap):     # the funding leg: its projection and discount curves
+        factors = {**factors, **{k: v for k, v in mkt.risk_factors().items()
+                                 if k.startswith(f"IR:{product.payment_ccy.name}:") and k.endswith(":SPOT")}}
     if fx_product or converted:                     # payment curve, FX vols and spots, correlations too
         factors = {**factors, **{k: v for k, v in mkt.risk_factors().items()
                                  if k.startswith(f"IR:{product.payment_ccy.name}:") or k.startswith("CORR:")
@@ -1022,14 +1162,14 @@ def _equity_greeks(mkt, state: dict) -> dict:
     vega = _equity_vega_map(eq, greeks, qty)
     rho = _rho_buckets(mkt, greeks, qty)
     price = qty * float(product.price)
-    headline = [["Price", price, 4], ["Premium (% spot)" if kind != "Autocallable" else "Price (% notional)",
+    headline = [["Price", price, 4], ["Premium (% spot)" if kind not in AUTOCALLS else "Price (% notional)",
                                       100 * float(product.price) / state["ref"], 3],
                 ["Std error", None if se is None else qty * float(se), 4],
                 ["Delta", qty * float(np.sum(greeks[spot_key][0])), 4], ["Vega (1 vol pt)", vega["total"], 4],
                 ["Rho (1 bp)", sum(r["total"] for r in rho), 4],
                 ["Calibration [s]", calibration_s, 1], ["Pricing [s]", pricing_s, 1]]
     deltas = None
-    if kind == "Autocallable":                      # the delta in a table of Risk, not in the bar
+    if kind in AUTOCALLS:                           # the delta in a table of Risk, not in the bar
         headline = [h for h in headline if h[0] != "Delta"]
         deltas = _delta_rows([eq], greeks, qty, product.notional)
     T = eq.year_fraction(product.end_date)
@@ -1037,13 +1177,14 @@ def _equity_greeks(mkt, state: dict) -> dict:
             ["Forward", float(eq.forward(T)), 2], ["Rate (zero, %)", 100 * float(eq.discount_curve.zero_rate(T)), 3],
             ["Discount factor", float(eq.discount_curve.discount(T)), 5], ["PV dividends", float(eq.pv_dividends(T)), 2],
             ["Vol ATM fwd (%)", 100 * float(eq.vol_surface.volatility(strike=float(eq.forward(T)), tenor=T)), 2]]
-    if kind == "Autocallable":
+    if kind in AUTOCALLS:
         today = mkt.evaluation_date
+        info += _funding_info(product)
         info.insert(1, ["Strike", float(product.strike) if product.strike is not None
                         else f"S({product.strike_date.isoformat()}), forward start" if product.strike_date > today
                         else f"{float(mkt.get_eq_fixing(eq.ticker, product.strike_date)):,.2f} "
                              f"(fixing of {product.strike_date.isoformat()})", 2])
-    if kind != "Autocallable":
+    if kind not in AUTOCALLS:
         info.insert(1, ["Strike", float(product.strike), 2])
         info.append(["Vol at strike (%)", 100 * float(eq.vol_surface.volatility(strike=float(product.strike), tenor=T)), 2])
     if fx_product or converted:                     # quanto / composite / converted: inputs and sensitivities
@@ -1066,7 +1207,7 @@ def _equity_greeks(mkt, state: dict) -> dict:
                     ["Theta (1 day)", qty * theta, 4], by_label["Vega (1 vol pt)"], by_label["Rho (1 bp)"]]
         vega, rho = None, []
     sensitivities = None
-    if kind != "Autocallable":                      # greeks per unit and the equivalent (times the size)
+    if kind not in AUTOCALLS:                       # greeks per unit and the equivalent (times the size)
         units = {"Delta": "per 1 of spot", "Gamma": "per 1 of spot", "Theta (1 day)": "per calendar day",
                  "Vega (1 vol pt)": "per vol point", "Rho (1 bp)": "per bp"}
         rows = [{"greek": label, "unit": units[label], "per_unit": None if value is None or not qty else value / qty,
@@ -1074,6 +1215,21 @@ def _equity_greeks(mkt, state: dict) -> dict:
         sensitivities = {"quantity": qty, "rows": rows}
     return {"headline": headline, "info": info, "vega": vega, "rho": rho, "sensitivities": sensitivities,
             "deltas": deltas}
+
+
+def _funding_info(product) -> list:
+    """Side and, for an autocallable swap, the two legs (% of the notional, the client's view signed by the side)."""
+    side = next(k for k, v in SIDES.items() if v == product.side)
+    rows = [["Side", side, None]]
+    if isinstance(product, tq.AutocallableSwap):
+        sign = product.side_sign
+        structured = 100 * (float(product.coupon_pv) - float(product.put_pv))
+        funding = 100 * float(product.funding_pv)
+        rows += [["Funding", f"{product.payment_ccy.name} {product.funding_curve} + {product.funding_margin:g} bp, "
+                             f"{len(product.funding_payment_dates)} periods", None],
+                 ["Structured leg (% notional)", sign * structured, 3],
+                 ["Funding leg (% notional)", -sign * funding, 3]]
+    return rows
 
 
 def _quanto_info(mkt, eq, product, greeks: dict, qty: float) -> list:
@@ -1180,7 +1336,7 @@ def price_trade(mkt: tq.MarketEnvironment, cache: ModelCache, request: dict, n_p
     model = request.get("model") or spec["models"][0]
     if model not in spec["models"]:
         raise ValueError(f"model {model} not available for {request['product']}: {spec['models']}")
-    overrides = {k: v for k, v in (request.get("overrides") or {}).items() if v is not None}
+    overrides = {k: v for k, v in (request.get("overrides") or {}).items() if v is not None and v != {}}
     if request["asset_class"] in ("Equity", "Exotics"):
         eq = mkt.get_equity(fields["ticker"])
         if eq.vol_surface is None:
@@ -1191,17 +1347,18 @@ def price_trade(mkt: tq.MarketEnvironment, cache: ModelCache, request: dict, n_p
         T = eq.year_fraction(expiry)
         meta = {"model": model, "product": request["product"], "overrides": overrides,
                 "snapshot": mkt.evaluation_date.isoformat()}
+        corr = overrides.get("corr") or {}
         if phase == "price":
-            with _overridden(eq, overrides, strike, T):
+            with _overridden(eq, overrides, strike, T), _correlations_overridden(mkt, corr):
                 state = _equity_price(mkt, cache, request["product"], fields, model, n_paths, seed)
 
             def finish() -> dict:                       # the greeks, under the same overrides
-                with _overridden(eq, overrides, strike, T):
+                with _overridden(eq, overrides, strike, T), _correlations_overridden(mkt, corr):
                     return {**_equity_greeks(mkt, state), **meta}
 
-            projections = (lambda: _projections(state)) if request["product"] == "Autocallable" else None
+            projections = (lambda: _projections(state)) if request["product"] in AUTOCALLS else None
             return {"headline": _quick_headline(state), "pending": finish, "projections": projections, **meta}
-        with _overridden(eq, overrides, strike, T):
+        with _overridden(eq, overrides, strike, T), _correlations_overridden(mkt, overrides.get("corr") or {}):
             out = _price_equity(mkt, cache, request["product"], fields, model, n_paths, seed)
         return {**out, **meta}
     out = _price_rates(mkt, request["product"], fields)

@@ -693,3 +693,64 @@ Order of the refactor: 1. market & time handles → 2. equity (analytic) → 3. 
       unchanged (SPX 96.0% -> 95.9%, one quote), AAPL, ENI, ISP, MSFT, SX5E identical. Tests (`test_equity_vol.py`):
       a 5-day expiry quoted 60%-140% uses 90%-110% only and is guided, a later one keeps all its quotes; NaN far
       points of a short expiry (forced) give a finite surface, the same as without it after one year.
+- [x] Calibration page: the Universe tab removed (the flags are in Reference data on the Home; the Heston SLV monitor
+      kept in its own tab); the model test only on request (Run test), the stored results otherwise. Local vol in the
+      calibration sets as a check (`LocalVol`, default on): `LocalVolatilityModel.calibrate` stores the diagnostics of
+      the local vol built on the snapshot (arbitrage, thin density, largest local vol, share at the 200% cap) and
+      `model_fit` reprices the nodes by Monte Carlo (as Heston SLV, about 3 s); the pricers still rebuild it on their
+      market. Tradepad: the snapshot time next to the pricing date (every call on that snapshot). 2026-11-25 SOXX:
+      local vol fit poor (rms 3.2 vol pts, max 7.7; arbitrage on 0.7% of the grid, 2.1% at the cap), displaced
+      diffusion fair (1.1). Test: on a flat surface no arbitrage, floor or cap, nodes repriced within 0.5 vol pts,
+      report round trip.
+- [x] Local vol fit and the Monte Carlo grid. The fit of the calibration sets simulated weekly steps: a local vol
+      builds a short smile only through small steps, so the 1-3 month wings came out low (SPX 2026-11-25, 50% strike:
+      1 month -14.6 vol pts, 1.7 months -6.7, 3 months -4.9; daily steps: -8.3, -1.5, -0.2). `simulation_grid`
+      (`models/brownian.py`): daily steps up to 3 months, weekly after, used by the fit and by
+      `AutocallableMCPricer` (`fine_time_step`, `fine_horizon`; 0 = the former uniform grid, kept by the pins).
+      Nodes with fewer than 30 paths expected beyond the strike are not measured (`MIN_PATHS_BEYOND`: NaN, grey in
+      the page, out of the rms; e.g. SX5E 200% calls within a year at a zero vol). Set 20261125/1153: local vol
+      SPX rms 0.50 -> 0.16 (max 2.6 -> 0.5), SX5E 0.30 -> 0.28 (1.4 -> 0.8), Heston SLV 0.56 -> 0.45. Left: expiries
+      of a few days (SPX 2 days, 90%: -50 vol pts with daily steps and 100k paths), local vols beyond the 200% cap
+      (Berestycki-Busca-Florent). SX5E 3Y quarterly phoenix: 1.175 -> 1.456 (SE 0.11, other draws), same time.
+- [x] Tradepad vega: next to the map a table of the vega per expiry (sum of the row: every strike of that expiry moved
+      together) and its running total.
+- [x] Vega by expiry and skew (`analytics/vega.py`: `vega_by_expiry`, `skew_weights`): from the node vegas,
+      level (row sum), cumulative, skew (the smile of the expiry rotated around its forward, +1 vol point per 10% of
+      strike below it, -1 above, held beyond 50%-150%). Tradepad: Skew column and total next to the vega map.
+      Notebook `autocallable_skew_sensy.ipynb` (3Y phoenix on TICKER1, local vol, 20k paths, same paths for the
+      bumps): whole-surface level AAD -0.6734 vs central bump -0.6733 (1 pt), -0.6746 (3 pts); skew AAD -1.0206 vs
+      central -1.0256 (0.5 pt), -1.0389 (1 pt), -1.1085 (2 pts), second-order part 0.10 at 1 pt; level by expiry
+      within 8% at 1 pt (exact as the bump shrinks); skew of one expiry not linear (2Y: -0.571 at 1 pt, -0.637 at
+      0.25, -0.737 at 0.05 vs AAD -0.759): one row rotated bends the surface in time. Test: Black-Scholes put, level
+      and skew = central bumps (1e-4).
+- [x] Tradepad equity vega: the map replaced by a table, one row per expiry of the surface (tenor and date) with its
+      vega, then the total vega and the skew sensitivity (rate vol maps unchanged).
+- [x] Tradepad equity vega by standard tenor (3M, 6M, 1Y, 2Y, ...): `vega_by_tenor` splits the vega of each expiry
+      of the surface linearly in time between its two nearest tenors (total kept); cells shaded blue / red by sign.
+- [x] Autocallable swap and the side of the autocallables. `side` on `AutocallableOption` (`SwapType.Receiver` client:
+      receives the coupons, sells the put, the default; `Payer` issuer: the other sign, projected flows too).
+      `AutocallableSwap` (`autocallable.py`): the autocallable plus a funding leg on `funding_curve` + `funding_margin`
+      (bp), ACT/360 periods from the strike date to each coupon payment date. `AutocallableSwapPricer`: the rate not
+      simulated, each period `(F + m) tau P(0, pay)` times the probability of being alive at its start (same paths and
+      smoothed indicators: delta / vega / skew include the termination), funding flows in `projections()`. Tradepad:
+      Autocallable Swap screen (funding index among the market curves, margin), Side on both, the legs in the info
+      and the projections, the funding curve in Market Data and Rho. Tests (`test_autocallable_swap.py`): no autocall
+      = the floating leg of a swap (`FloatingLegDiscounting`, 1.6e-15), called at the first date = the periods up to
+      it, swap = autocallable - funding on the same paths, payer = -receiver (autocallable too), projections (funding
+      flows discounted = funding leg, mirrored for the payer), rho on a 6M and an ESTR pillar (1e-4) and delta (3%) vs
+      bumps. SX5E 3Y on 2026-11-25 (EUR 6M + 30 bp, local vol, 20k paths): client -9.42% = structured -2.36% +
+      funding -7.06%.
+- [x] Tradepad autocallable: the first autocall observation is the first schedule date from strike date + first
+      observation on, on unadjusted dates (a 1Y date rolled from Sunday to Monday was dropped against the adjusted
+      bound: 1Y -> 1.5Y with the defaults of 2026-11-25).
+- [x] Tradepad correlations: the Market Data tab of the autocallables shows the underlyings, then the correlation
+      matrix of the deal (`deal_correlations`: the underlyings and, for those in another currency than the payment
+      one, the stored FX pair), editable for the pricing of the view only (an edit invalidates the price, not the
+      trade): `_correlations_overridden` sets both entries of the matrix variable, checks the edited matrix is
+      positive semi-definite and restores it (also on an error); the correlation sensitivities still from the tape.
+      Dividends and curves out of that tab (in the Market Data page). Test (`test_tqstudio_tradepad_quanto.py`):
+      worst-of matrix as stored, none with one factor, an override moves the price and leaves the matrix unchanged,
+      out of (-1, 1) and not positive semi-definite raise.
+- [x] Tradepad Market Data tab: the forward at maturity in the underlying's currency and, for a quanto one, the quanto
+      forward in the payment currency's measure, F exp(-rho sigma_ATM sigma_X T), recomputed when the correlation is
+      edited (SPX paid in EUR on 2026-11-25, 3Y: forward 8075.07, quanto 8160.50, local vol Monte Carlo mean 8161.23).

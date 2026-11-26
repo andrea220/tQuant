@@ -2,6 +2,7 @@ from datetime import date
 from typing import Sequence, Union
 
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 
 from .equitymodel import EquityModel
@@ -394,9 +395,25 @@ class LocalVolatilityModel(EquityModel):
 
     @classmethod
     def calibrate(cls, equity, **settings) -> "LocalVolatilityModel":
-        """Nothing to fit: records the settings and the underlying (the local vol is rebuilt at every pricing)."""
+        """Nothing to fit: records the settings and the underlying (the local vol is rebuilt at every pricing), with
+        the diagnostics of the local vol built on *equity* as the report: share of the grid with static arbitrage
+        where the surface has data (``g < 0`` or ``dw/dT <= 0``), share with ``g`` below its floor, the largest local
+        vol and the share at its 200% cap."""
+        import warnings
+
         model = cls(**settings)
         model._record_calibration(equity, {}, None)
+        with warnings.catch_warnings():                 # the arbitrage is reported in the table
+            warnings.simplefilter("ignore")
+            process = model.process(equity)
+        sigma = process.local_vol_grid[0].numpy()
+        diag = getattr(process, "arbitrage", None) or {}
+        model.report = pd.DataFrame([{
+            "arbitrage_fraction": float(diag.get("arbitrage_fraction", np.nan)),
+            "floored_fraction": float(diag.get("floored_fraction", np.nan)),
+            "min_g": float(diag.get("min_g", np.nan)),
+            "max_local_vol": float(sigma.max()),
+            "at_cap_fraction": float(np.mean(sigma >= 1.999))}])
         return model
 
     @classmethod

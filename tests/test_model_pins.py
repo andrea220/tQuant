@@ -183,7 +183,8 @@ class TestPins(unittest.TestCase):
         return greeks(tq.VanillaMCPricer(model=model, n_paths=4_000, n_steps=24, seed=3), call(self.eq), self.mkt, self.eq)
 
     def autocall(self, model):
-        return greeks(tq.AutocallableMCPricer(model=model, n_paths=2_000, seed=5, max_time_step=1 / 12),
+        return greeks(tq.AutocallableMCPricer(model=model, n_paths=2_000, seed=5, max_time_step=1 / 12,
+                                                 fine_horizon=0.0),
                       autocallable(self.eq), self.mkt, self.eq)
 
     def test_local_vol(self):

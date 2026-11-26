@@ -5,7 +5,8 @@ import numpy as np
 import pandas as pd
 
 from .product import Product
-from ..markethandles.utils import Currency
+from ..markethandles.utils import Currency, SwapType
+from ..timehandles.daycounter import DayCounter, DayCounterConvention
 
 
 class AutocallableOption(Product):
@@ -27,6 +28,8 @@ class AutocallableOption(Product):
       ``max(autocall_barrier[i] - i * autocall_step, autocall_floor)`` (``autocall_barrier = 100``, ``autocall_step = 1``,
       ``autocall_floor = 90`` -> 100, 99, 98, ..., 90, 90).
     - The simulation grid is built by the pricer (fixing dates merged with the model's time steps).
+    - Side (``side``): ``SwapType.Receiver`` the client (receives the coupons, sells the put; the default),
+      ``SwapType.Payer`` the issuer (pays the coupons, buys the put); the price is the value to that side.
     """
 
     def __init__(
@@ -58,6 +61,7 @@ class AutocallableOption(Product):
         payment_ccy: Optional[Currency] = None,
         fx_mode: str = "quanto",
         fixings: Optional[dict] = None,
+        side: SwapType = SwapType.Receiver,
     ) -> None:
         """
         Initialize an AutocallableOption.
@@ -90,6 +94,9 @@ class AutocallableOption(Product):
                 ``autocall_floor`` is above the first autocall barrier.
         """
         super().__init__(ccy=ccy, start_date=start_date, end_date=end_date, payment_ccy=payment_ccy, fx_mode=fx_mode)
+        if not isinstance(side, SwapType):
+            raise ValueError(f"side must be a SwapType (Payer: issuer, Receiver: client), got {side!r}")
+        self.side = side
 
         forward_start = strike_date is not None and strike_date > start_date
         if forward_start and strike is not None:
@@ -170,6 +177,12 @@ class AutocallableOption(Product):
         self.redemption_payoff: Optional[Callable[..., float]] = None
         if payoff_type.lower() == "put":
             self.redemption_payoff = self.put_redemption
+
+    @property
+    def side_sign(self) -> float:
+        """+1 for the client (``Receiver``), -1 for the issuer (``Payer``): the price is ``side_sign`` times the
+        client's value."""
+        return 1.0 if self.side == SwapType.Receiver else -1.0
 
     @property
     def underlyings(self) -> list:
@@ -253,3 +266,40 @@ class AutocallableOption(Product):
         Positive value; the investor is short it (``AutocallableMCPricer`` subtracts it).
         """
         return np.maximum(strike - S_T, 0) / strike * partecipation
+
+
+class AutocallableSwap(AutocallableOption):
+    """Autocallable swap: the autocallable's coupons and put against a funding leg (the index of a curve plus a
+    margin), terminated with the autocallable.
+
+    Funding periods: from the strike date (the start date when there is none) to the first coupon payment date, then
+    between consecutive coupon payment dates; each pays ``N (F + margin) tau`` at its end, ``F`` the forward of the
+    funding curve over the period and ``tau`` its year fraction (``funding_day_count``). A period is paid when the
+    product is still alive at its start: an autocall paid on a date ends the funding there (the period ending on it is
+    paid, the following ones are not). Without an autocall the leg is a plain floating leg.
+
+    Sides: ``SwapType.Receiver`` the client (receives the coupons, sells the put, pays the funding; the default),
+    ``SwapType.Payer`` the issuer (pays the coupons, buys the put, receives the funding).
+
+    Args:
+        funding_curve: Ticker of the curve of the funding index in the payment currency (``"6M"``, ``"ESTR"``).
+        funding_margin: Margin over the index, basis points.
+        funding_day_count: Day count of the funding periods (ACT/360 by default).
+        Other arguments: see :class:`AutocallableOption`.
+    """
+
+    def __init__(self, *args, funding_curve: str, funding_margin: float = 0.0,
+                 funding_day_count: Optional[DayCounter] = None, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.funding_curve = str(funding_curve)
+        self.funding_margin = float(funding_margin)
+        self.funding_day_count = funding_day_count or DayCounter(DayCounterConvention.Actual360)
+        start = self.strike_date if self.strike_date is not None else self.start_date
+        pays = list(self.coupon_payment_dates)
+        if not pays or pays[0] <= start:
+            raise ValueError(f"funding: the first coupon payment {pays[:1]} must follow the start {start}")
+        self.funding_start_dates: List[datetime.date] = [start] + pays[:-1]
+        self.funding_end_dates: List[datetime.date] = pays
+        self.funding_payment_dates: List[datetime.date] = pays
+        self.funding_accruals: List[float] = [self.funding_day_count.year_fraction(s, e)
+                                              for s, e in zip(self.funding_start_dates, self.funding_end_dates)]

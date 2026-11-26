@@ -25,11 +25,11 @@ const state = { catalog: null, dates: [], date: null, cls: null, product: null, 
 const spec = () => state.catalog.asset_classes[state.cls][state.product];
 
 // any change of an input clears the results: a price on screen always matches the inputs shown
-function invalidate() {
+function invalidate(keepTrade = false) {
   state.job = null;                                  // the Projections belong to the last price only
   state.projections = null;
   setPriced(false);
-  if (state.tradeReady || !$("trade-panel").classList.contains("hidden")) {
+  if (!keepTrade && (state.tradeReady || !$("trade-panel").classList.contains("hidden"))) {
     state.tradeReady = false;
     $("trade-panel").classList.add("hidden");
     renderMarketData(null);
@@ -167,8 +167,12 @@ function currentValues() {
 function renderForm(keep = {}) {
   const s = spec();
   const [head, ...rest] = s.fields;                                   // underlying (or currency) first
-  const dateField = `<div class="field wide"><label for="pricing-date">Pricing date</label><select id="pricing-date">${
-    state.dates.map((d) => `<option${d === state.date ? " selected" : ""}>${d}</option>`).join("")}</select></div>`;
+  const hhmm = (x) => (/^\d{4}$/.test(x) ? `${x.slice(0, 2)}:${x.slice(2)}` : x);
+  const dateField = `<div class="field"><label for="pricing-date">Pricing date</label><select id="pricing-date">${
+    state.dates.map((d) => `<option${d === state.date ? " selected" : ""}>${d}</option>`).join("")}</select></div>`
+    + `<div class="field"><label for="pricing-set">Snapshot</label><select id="pricing-set">${
+      (state.sets[state.date] || []).map((x) => `<option value="${x}"${x === state.set ? " selected" : ""}>${hhmm(x)}</option>`)
+        .join("")}</select></div>`;
   // several underlyings (autocallable): all of them in the deal, on the right; on the left the pricing date only
   $("head-fields").innerHTML = (s.more_underlyings ? "" : fieldHtml(head, keep[head.name])) + dateField;
   // fields with a group are drawn as sub-panels (in order of first appearance), the others as one grid
@@ -192,6 +196,7 @@ function renderForm(keep = {}) {
   updatePriceButton();
   clearValuation();
   $("pricing-date").addEventListener("change", () => changeDate($("pricing-date").value));
+  $("pricing-set").addEventListener("change", () => changeDate(state.date, $("pricing-set").value));
   $(`f-${head.name}`).addEventListener("change", () => { state.edited = {}; refreshMarket(); });
   rest.forEach((f) => $(`f-${f.name}`).addEventListener("change", refreshMarket));
   state.edited = {};
@@ -218,13 +223,14 @@ function selectClass(cls) {
 }
 
 async function loadCatalog() {
-  state.catalog = await (await fetch(`/api/tradepad/catalog?date=${state.date}`)).json();
+  state.catalog = await (await fetch(`/api/tradepad/catalog?date=${state.date}&set=${state.set}`)).json();
   $("snapshot").textContent = `${state.source || ""} · ${state.catalog.snapshot}`;
 }
 
-async function changeDate(day) {
+async function changeDate(day, set) {
   const keep = currentValues();
   state.date = day;
+  state.set = set || (state.sets[day] || [])[0];                     // a new date: its latest snapshot
   await loadCatalog();
   if (!state.catalog.asset_classes[state.cls][state.product]) { selectClass(state.cls); return; }
   renderForm(keep);
@@ -243,7 +249,7 @@ function dealRequest() {
   document.querySelectorAll("#underlyings select").forEach((e) => {          // worst-of: the other underlyings
     if (EXTRA.test(e.id.slice(2))) fields[e.id.slice(2)] = e.value;
   });
-  return { asset_class: state.cls, product: state.product, fields, date: state.date };
+  return { asset_class: state.cls, product: state.product, fields, date: state.date, set: state.set };
 }
 
 let marketTimer = null;
@@ -372,34 +378,94 @@ function setupDealTabs() {
 
 function renderMarketData(md) {
   if (!md) {
+    state.corrBase = {};
+    state.corrEdited = {};
     $("market-data").innerHTML = '<p class="muted">Press <b>Build trade</b> to see the market data of the trade.</p>';
     return;
   }
+  const corr = correlationHtml(md.correlations);          // first: it sets the stored correlations the forwards read
+  state.marketData = md;
+  $("market-data").innerHTML = `<h2>Underlyings</h2><div class="und-list">${md.underlyings.map(underlyingHtml).join("")}`
+    + `</div>${corr}`;
+  wireCorrelations(md.correlations);
+}
+
+// one underlying of the Market Data tab: the forward in its currency, then (quanto) in the payment currency's measure
+function underlyingHtml(u) {
+  const md = state.marketData;
   const info = (rows) => `<div class="mini-info wide-info">${rows.map(([l, v, d]) =>
     `<div><span class="muted">${l}</span><b>${fmtValue(v, d)}</b></div>`).join("")}</div>`;
-  const und = md.underlyings.map((u) => {
-    const rows = [["Spot", u.spot, 2], ["Currency", u.ccy + (u.quanto ? " (quanto)" : ""), null],
-      ["Level at the strike date", u.strike_level, 2], ["Source", u.strike_source, null],
-      [`Forward at maturity (${md.maturity})`, u.forward, 2], ["Repo to maturity (%)", u.repo, 3],
-      ["PV dividends to maturity", u.pv_dividends, 4]];
-    if (u.quanto) rows.push(["Correlation with the FX rate", u.quanto.correlation, 3], ["FX vol (%)", u.quanto.fx_vol, 2]);
-    const divs = u.dividends.length
-      ? `<table><thead><tr><th>Ex date</th><th>Pay date</th><th>Amount</th><th>% spot</th><th>PV</th></tr></thead><tbody>${
-        u.dividends.map((r) => `<tr><td>${r.ex_date}</td><td>${r.pay_date}</td><td>${fmtValue(r.amount, 4)}</td>
-        <td>${fmtValue(r.pct_spot, 2)}%</td><td>${fmtValue(r.pv, 4)}</td></tr>`).join("")}</tbody></table>`
-      : `<p class="muted">${u.dividend_model === "continuous" && u.div_yield !== null
-        ? `Continuous dividend yield ${fmtValue(u.div_yield, 3)}%.` : "No dividends before the maturity."}</p>`;
-    return `<div class="subpanel"><div class="subpanel-title">${u.ticker}</div>${info(rows)}
-      <div class="subpanel-title" style="margin-top: 12px">Dividends to maturity (${u.dividends.length})</div>
-      <div class="hscroll">${divs}</div></div>`;
-  }).join("");
-  const curves = md.curves.map((c) => `<div class="subpanel"><div class="subpanel-title">${c.label}
-      <span class="muted">(${c.role})</span></div>${info([["Zero rate at maturity (%)", c.zero_at_maturity, 3],
-      ["Discount factor at maturity", c.df_at_maturity, 5]])}
-      <div class="hscroll" style="margin-top: 10px"><table><thead><tr><th>Pillar</th><th>Zero rate (%)</th>
-      <th>Discount factor</th></tr></thead><tbody>${c.pillars.map((p) => `<tr><td>${p.date}</td>
-      <td>${fmtValue(p.zero, 3)}</td><td>${fmtValue(p.df, 5)}</td></tr>`).join("")}</tbody></table></div></div>`).join("");
-  $("market-data").innerHTML = `<h2>Underlyings</h2>${und}<h2 style="margin-top: 18px">Curves</h2>${curves}`;
+  const rows = [["Spot", u.spot, 2], ["Currency", u.ccy + (u.quanto ? " (quanto)" : ""), null],
+    ["Level at the strike date", u.strike_level, 2], ["Source", u.strike_source, null],
+    [`Forward at maturity, ${u.ccy} (${md.maturity})`, u.forward, 2]];
+  if (u.quanto) rows.push([`Quanto forward at maturity, ${md.payment_ccy} measure`, quantoForward(u.quanto), 2]);
+  rows.push(["Repo to maturity (%)", u.repo, 3], ["PV dividends to maturity", u.pv_dividends, 4]);
+  if (u.quanto) rows.push(["FX vol (%)", u.quanto.fx_vol, 2], ["ATM-forward vol (%)", 100 * u.quanto.atm_vol, 2]);
+  return `<div class="subpanel"><div class="subpanel-title">${u.ticker}</div>${info(rows)}</div>`;
+}
+
+// quanto forward F exp(-rho_X sigma_S sigma_X T): rho_X the correlation with X (1 unit of the underlying's currency in
+// the payment one), from the matrix as edited in this view (the stored pair, or its inverse: the other sign)
+function quantoForward(q) {
+  const stored = (state.corrEdited || {})[q.key] ?? (state.corrBase || {})[q.key];
+  const rho = stored === undefined ? q.correlation : q.sign * stored;
+  return q.forward * Math.exp((q.correlation - rho) * q.atm_vol * (q.fx_vol / 100) * q.T);
+}
+
+// the correlation matrix of the deal (asset / asset, asset / currency): editable for the pricing of this view only
+function correlationHtml(c) {
+  if (!c) return "";
+  state.corrBase = {};
+  state.corrEdited = state.corrEdited || {};
+  const head = `<tr><th></th>${c.labels.map((l) => `<th>${l}</th>`).join("")}</tr>`;
+  const body = c.names.map((a, i) => `<tr><th>${c.labels[i]}</th>${c.names.map((b, j) => {
+    if (i === j) return '<td class="num muted">1</td>';
+    const key = i < j ? `${a}|${b}` : `${b}|${a}`;
+    state.corrBase[key] = c.matrix[i][j];
+    const shown = state.corrEdited[key] ?? c.matrix[i][j];
+    return `<td><input class="corr-cell${state.corrEdited[key] !== undefined ? " edited" : ""}" data-key="${key}" `
+      + `type="text" inputmode="decimal" data-num data-digits="3" value="${fmtInput(shown, 3)}"></td>`;
+  }).join("")}</tr>`).join("");
+  return `<h2 style="margin-top: 18px">Correlations <button id="reset-corr" class="link${
+    Object.keys(state.corrEdited).length ? "" : " hidden"}" type="button">reset to market</button></h2>`
+    + `<div class="hscroll"><table class="corr-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>`
+    + `<p class="note">Asset / asset and asset / currency (quanto). An edit is used for the pricing of this view only;
+      the snapshot is not changed.</p>`;
+}
+
+function wireCorrelations(c) {
+  if (!c) return;
+  document.querySelectorAll(".corr-cell").forEach((cell) => cell.addEventListener("input", (ev) => {
+    const key = ev.target.dataset.key;
+    const v = parseNum(ev.target.value);
+    if (!Number.isFinite(v)) return;
+    state.corrEdited[key] = v;
+    document.querySelectorAll(`.corr-cell[data-key="${key}"]`).forEach((x) => {   // the symmetric cell too
+      x.classList.add("edited");
+      if (x !== ev.target) x.value = fmtInput(v, 3);
+    });
+    $("reset-corr").classList.remove("hidden");
+    invalidate(true);                              // the price is stale, the trade stays built
+    refreshQuantoForwards();
+  }));
+  $("reset-corr").addEventListener("click", () => {
+    state.corrEdited = {};
+    document.querySelectorAll(".corr-cell").forEach((x) => {
+      x.classList.remove("edited");
+      x.value = fmtInput(state.corrBase[x.dataset.key], 3);
+    });
+    $("reset-corr").classList.add("hidden");
+    invalidate(true);
+    refreshQuantoForwards();
+  });
+}
+
+// the underlyings' panels again, with the quanto forwards of the edited correlations
+function refreshQuantoForwards() {
+  const md = state.marketData;
+  if (!md) return;
+  const box = document.querySelector("#market-data .und-list");
+  if (box) box.innerHTML = md.underlyings.map(underlyingHtml).join("");
 }
 
 function renderDividends(data) {
@@ -429,6 +495,12 @@ function overrides() {
     const e = EDITABLE[k];
     if (Math.abs(v - state.market[k] * e.scale) > 1e-9) out[k] = v / e.scale;
   }
+  // correlations edited in the Market Data tab: this view only (the snapshot is not changed)
+  const corr = {};
+  for (const [k, v] of Object.entries(state.corrEdited || {})) {
+    if (Math.abs(v - state.corrBase[k]) > 1e-9) corr[k] = v;
+  }
+  if (Object.keys(corr).length) out.corr = corr;
   return out;
 }
 
@@ -440,7 +512,10 @@ function render(d) {
   $("model-info").textContent = `${d.product} · ${d.model} · ${d.snapshot}`;
   const ov = Object.entries(d.overrides || {});
   $("override-info").classList.toggle("hidden", !ov.length);
-  $("override-info").textContent = ov.map(([k, v]) => k === "vol" ? `vol ${(100 * v).toFixed(2)}%` : `spot ${v}`).join(" · ");
+  $("override-info").textContent = ov.map(([k, v]) => (k === "vol" ? `vol ${(100 * v).toFixed(2)}%`
+    : k === "corr" ? Object.entries(v).map(([p, x]) => `corr ${p.split("|").map((n) => n.split(":").pop()).join(" / ")} `
+      + `${Number(x).toFixed(3)}`).join(" · ")
+    : `spot ${v}`)).join(" · ");
   $("valuation-bar").classList.remove("stale");
   $("valuation").innerHTML = d.headline.map(([l, v, dd], i) =>
     `<div class="vb-card${i === 0 ? " main" : ""}"><div class="label">${l}</div><div class="value">${fmtValue(v, dd)}</div></div>`).join("");
@@ -535,17 +610,20 @@ function renderProjections(p) {
     plot_bgcolor: "rgba(0,0,0,0)", yaxis: { title: y }, legend: { orientation: "h", y: -0.2 }, ...extra });
   const cfg = { displaylogo: false, responsive: true };
   const f = p.cash_flows;
+  const funded = p.pv.funding !== null && p.pv.funding !== undefined;      // autocallable swap
   $("pv-info").innerHTML = [["PV coupons (% notional)", p.pv.coupons, 3], ["PV put (% notional)", p.pv.put, 3],
-    ["Price (% notional)", p.pv.total, 3]]
+    ...(funded ? [["PV funding (% notional)", p.pv.funding, 3]] : []), ["Price (% notional)", p.pv.total, 3]]
     .map(([l, v, d]) => `<div><span class="muted">${l}</span><b>${fmtValue(v, d)}</b></div>`).join("");
   Plotly.react($("chart-flows"), [
     { type: "bar", name: "Coupons", x: f.map((r) => r.date), y: f.map((r) => r.coupon) },
     { type: "bar", name: "Redemption", x: f.map((r) => r.date), y: f.map((r) => r.redemption) },
-    { type: "bar", name: "Put", x: f.map((r) => r.date), y: f.map((r) => r.put) }],
+    { type: "bar", name: "Put", x: f.map((r) => r.date), y: f.map((r) => r.put) },
+    ...(funded ? [{ type: "bar", name: "Funding", x: f.map((r) => r.date), y: f.map((r) => r.funding) }] : [])],
   layout("% of notional", { barmode: "relative" }), cfg);
   $("flows-table").innerHTML = `<table><thead><tr><th>Payment date</th><th>Coupon</th><th>Redemption</th><th>Put</th>
-    <th>Total</th></tr></thead><tbody>${f.map((r) => `<tr><td>${r.date}</td><td>${fmtValue(r.coupon, 3)}%</td>
-    <td>${fmtValue(r.redemption, 3)}%</td><td>${fmtValue(r.put, 3)}%</td><td><b>${fmtValue(r.total, 3)}%</b></td></tr>`)
+    ${funded ? "<th>Funding</th>" : ""}<th>Total</th></tr></thead><tbody>${f.map((r) => `<tr><td>${r.date}</td>
+    <td>${fmtValue(r.coupon, 3)}%</td><td>${fmtValue(r.redemption, 3)}%</td><td>${fmtValue(r.put, 3)}%</td>
+    ${funded ? `<td>${fmtValue(r.funding, 3)}%</td>` : ""}<td><b>${fmtValue(r.total, 3)}%</b></td></tr>`)
     .join("")}</tbody></table>`;
   const m = p.maturity;
   $("maturity-info").innerHTML = [["Paths", p.n_paths, 0], ["Expected life (years)", m.expected_life, 2],
@@ -584,6 +662,9 @@ function renderProjections(p) {
 }
 
 function drawVega(v) {
+  if (v.skew) { drawVegaTable(v); return; }           // equity surfaces: the table by expiry, no map
+  $("chart-vega").classList.remove("hidden");
+  $("vega-expiry").innerHTML = "";
   $("vega-title").textContent = `${v.title} · total ${fmtValue(v.total, 2)}`;
   const scale = Math.max(...v.z.flat().map(Math.abs), 1e-12);
   const text = v.z.map((row) => row.map((x) => (Math.abs(x) >= 0.01 * scale ? x.toPrecision(3) : "")));
@@ -592,6 +673,29 @@ function drawVega(v) {
   { margin: { l: 60, r: 20, t: 10, b: 50 }, font: FONT, paper_bgcolor: "rgba(0,0,0,0)",
     xaxis: { title: v.x_title }, yaxis: { title: v.y_title, autorange: "reversed" } },
   { displaylogo: false, responsive: true });
+}
+
+// an (i) that shows *text* on hover
+const info = (text) => `<span class="info-tip" tabindex="0" data-tip="${text.replace(/"/g, "&quot;")}">i</span>`;
+const TOTAL_VEGA_INFO = "Change of the price when every node of the vol surface rises by 1 vol point (a parallel, "
+  + "sticky-strike shift: spot and forward unchanged). It is the sum of the rows above.";
+
+// equity vega: one row per expiry of the surface (all its strikes up 1 vol point), then the total and the skew
+function drawVegaTable(v) {
+  $("vega-title").textContent = "Vega per maturity (1 vol point)";
+  Plotly.purge($("chart-vega"));
+  $("chart-vega").classList.add("hidden");
+  // standard tenors (each expiry split linearly between its two nearest); the cell shaded by sign and size
+  const b = v.buckets;
+  const scale = Math.max(...b.map((r) => Math.abs(r.vega)), 1e-12);
+  const shade = (x) => `rgba(${x >= 0 ? "53, 99, 233" : "194, 54, 47"}, ${(0.06 + 0.5 * Math.abs(x) / scale).toFixed(3)})`;
+  const rows = b.map((r) => `<tr><td>${r.label}</td>`
+    + `<td class="num" style="background:${shade(r.vega)}">${fmtValue(r.vega, 2)}</td></tr>`).join("");
+  $("vega-expiry").innerHTML = `<table><thead><tr><th>Maturity</th><th>Vega</th></tr></thead><tbody>${rows}</tbody>`
+    + `<tfoot><tr><td><b>Total vega</b>${info(TOTAL_VEGA_INFO)}</td><td class="num"><b>${fmtValue(v.total, 2)}</b></td></tr>`
+    + `<tr><td><b>Skew sensitivity</b>${info(v.skew_note)}</td><td class="num"><b>${fmtValue(v.skew_total, 2)}</b></td></tr>`
+    + "</tfoot></table>"
+    + '<p class="note">Each expiry of the surface split linearly in time between its two nearest tenors.</p>';
 }
 
 // first phase: the price only, in the valuation bar; the greeks panels wait for the second phase
@@ -641,8 +745,10 @@ async function price() {
 async function init() {
   const snaps = await (await fetch("/api/snapshots")).json();
   state.dates = snaps.snapshots.map((s) => s.date);
+  state.sets = Object.fromEntries(snaps.snapshots.map((s) => [s.date, s.sets]));   // the times of each date
   state.source = snaps.source;
   state.date = state.dates[0];
+  state.set = (state.sets[state.date] || [])[0];
   await loadCatalog();
   const classes = Object.keys(state.catalog.asset_classes);
   $("asset-classes").innerHTML = classes.map((c) => `<button data-cls="${c}">${c}</button>`).join("");

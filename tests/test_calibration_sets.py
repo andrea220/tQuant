@@ -38,6 +38,44 @@ def flat_market() -> MarketEnvironment:
                                       amounts=[1.0, 1.1], currency=Currency.EUR, daycounter_convention=A365)})
 
 
+class TestLocalVolCheck(unittest.TestCase):
+    def test_flat_surface(self):
+        """Local vol in a set (a check, pricing rebuilds it): on a flat surface no arbitrage, no cell at the floor or
+        the cap, and the Monte Carlo repricing of the nodes within 0.5 vol points; the report survives the round
+        trip."""
+        tq.Settings.evaluation_date = EVAL_DATE
+        eq = flat_market().get_equity("X")
+        model = tq.LocalVolatilityModel.calibrate(eq)
+        report = model.report.iloc[0]
+        self.assertEqual((report["arbitrage_fraction"], report["floored_fraction"], report["at_cap_fraction"]),
+                         (0.0, 0.0, 0.0))
+        self.assertAlmostEqual(report["max_local_vol"], VOL, delta=0.01)
+        fit = model_fit(model, eq, mc_paths=4_000)
+        inner = fit[(fit["t"] >= 0.25) & fit["moneyness"].between(0.7, 1.3)]
+        self.assertLess(float((inner["error_volpts"] ** 2).mean() ** 0.5), 0.5)
+        back = type(model).from_frames(model.to_frames())
+        self.assertEqual(float(back.report.iloc[0]["max_local_vol"]), float(report["max_local_vol"]))
+
+    def test_unreachable_nodes_and_grid(self):
+        """Nodes beyond the reach of the paths (fewer than 30 expected beyond the strike) are left out of the fit
+        (NaN, rms finite); the simulation grid is daily over three months, weekly after (uniform without them)."""
+        from tensorquant.calibration.models import MIN_PATHS_BEYOND, _fit_errors
+        from tensorquant.models.brownian import simulation_grid
+        tq.Settings.evaluation_date = EVAL_DATE
+        eq = flat_market().get_equity("X")
+        fit = model_fit(tq.LocalVolatilityModel.calibrate(eq), eq, mc_paths=2_000)
+        far = fit[fit["model_vol"].isna()]
+        self.assertGreater(len(far), 0)
+        self.assertFalse(((far["moneyness"] > 0.9) & (far["moneyness"] < 1.1)).any())   # near the money: measured
+        self.assertTrue(np.isfinite(_fit_errors(fit)["rms_volpts"]))
+        self.assertEqual(MIN_PATHS_BEYOND, 30)
+        grid = simulation_grid(1.0)
+        steps = np.diff(np.concatenate([[0.0], grid]))
+        np.testing.assert_allclose(steps[grid < 0.25], 1.0 / 365.0, atol=1e-12)
+        self.assertLessEqual(steps[grid > 0.3].max(), 1.0 / 52.0 + 1e-12)
+        np.testing.assert_allclose(simulation_grid(1.0, fine_horizon=0.0), np.arange(1.0 / 52.0, 1.0, 1.0 / 52.0))
+
+
 class TestBattery(unittest.TestCase):
     def test_products(self):
         products = _test_products(S0)
